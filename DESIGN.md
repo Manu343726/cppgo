@@ -406,3 +406,101 @@ mathx::Vector::x        inline, no symbol                    ERROR: define it ou
 libfoo::bar             abi from libfoo.so (unvalidated)     note emitted in generated code
 libbar::baz             abi from //cppgo:abi directive       as stated
 ```
+
+---
+
+# Dependency decision: purego stays
+
+Recorded 2026-11-03, after the question "is it not ironic for a project about an
+FFI to depend on somebody else's FFI?" was raised and then settled.
+
+**We use `github.com/ebitengine/purego` and this is deliberate. Do not "fix" it.**
+
+The reasoning, so the decision survives the next reader:
+
+- Reimplementing `dlopen`/`dlsym` without cgo is not magic, but it is a
+  maintenance liability: it means `//go:cgo_import_dynamic` directives plus
+  per-platform assembly stubs, and a dynamic loader that breaks quietly when a
+  libc changes its symbol versioning. purego has been doing exactly this, in
+  production, for years, on four platforms.
+- **The decisive reason, and it is not "purego is popular":** forcing a
+  dynamically linked binary does not turn a Go program into a normal C program.
+  Go's runtime installs its own `%fs` thread-control block, so any libc code that
+  reaches for thread-local storage — `errno`, `dlerror`'s per-thread result,
+  `pthread_getspecific` — executes against a TCB that glibc never initialised.
+  purego solves this in `internal/fakecgo`, which its non-cgo path imports on
+  purpose. Writing our own loader would have meant owning **fakecgo too**, and
+  that is a far bigger and less forgiving job than the loader itself. This is
+  the reason the dependency is correct, and it is not obvious from the outside.
+- Our differentiator is **not** the loader and **not** the calling convention.
+  It is the C++ layer: mangled symbols, implicit `this`, `const` methods, `sret`,
+  constructors, and — above all — *knowing at generation time whether the binding
+  is even possible*. That is where the value is, and that is what we spend the
+  effort on.
+- purego also happens to be the correct **long-tail fallback**: it classifies
+  structs passed by value on the stack and memory-class returns through the
+  hidden sret pointer. Those are exactly the signatures our hand-written
+  trampoline refuses, and the ones libclang needs. So the exotic cases get
+  correctness without us writing a second ABI implementation.
+
+The layering is therefore:
+
+| path | implementation | used for |
+|---|---|---|
+| hot path | our generated NOSPLIT trampoline | C++ calls with ≤6 INTEGER and ≤8 SSE slots, no by-value structs |
+| long tail | purego `RegisterLibFunc` | by-value struct params, exotic returns, libclang itself |
+| loading | purego `Dlopen`/`Dlsym` | every library |
+
+One honest consequence, which the README must state: a Go binary that loads
+shared libraries at run time is **dynamically linked by definition**. The claim
+is "no C toolchain, no `import \"C\"`, no cgo" — not "a static single file".
+
+## DSL for ABI mode
+
+Mode is chosen per package: `//cppgo:mode abi` (default when `//cppgo:header`
+is present) or `//cppgo:mode shim` (the v1 path, still supported).
+
+```go
+package mathx
+
+//cppgo:library libmathx
+//cppgo:header include/mathx/vector.hpp
+
+// Vector mirrors mathx::Vector. A defined type over cppgo.Handle, so the
+// receiver *is* the object pointer with no field convention to remember.
+//cppgo:class mathx::Vector
+type Vector cppgo.Handle
+
+//cppgo:ctor
+func New(x, y float64) (Vector, error)
+
+//cppgo:method norm
+func (v Vector) Norm() float64
+
+//cppgo:method dot
+func (v Vector) Dot(x []float64) (float64, error)
+
+//cppgo:dtor
+func (v Vector) Destroy()
+
+//cppgo:function mathx::saxpy
+func Saxpy(alpha float64, x, y []float64) int32
+```
+
+Rules:
+- `this` is the receiver, and takes the first INTEGER slot **after** the sret
+  pointer, exactly as the Itanium ABI lays it out.
+- `//cppgo:ctor` result 0 must be the handle type; the handle comes back through
+  the value slot. `//cppgo:dtor` takes no arguments.
+- `//cppgo:method <name>` resolves against the `//cppgo:class` of the receiver,
+  so overloads are disambiguated by the Go signature.
+- `//cppgo:external <symbol>` (shim mode) and `//cppgo:function <qualified>`
+  (ABI mode) are the free-function forms.
+- A binding that cannot be expressed is a **build error**, never a silent
+  fallback: inline/no symbol, virtual, by-value struct parameter, std type,
+  arity mismatch, type mismatch, register exhaustion.
+- ABI mode emits no `cppgo_shim.h`: the three remaining artifacts are the Go
+  wrapper, the trampoline, and the rewritten source.
+- The generated file records which tier resolved the binding
+  (`Clangd | Binary | Annotation`) in a comment next to each wrapper, so an
+  unvalidated binding is never invisible.

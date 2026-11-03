@@ -38,8 +38,10 @@ batch 10 000 rows into one call just to amortise the crossing.
 
 And unlike cgo:
 
-- `CGO_ENABLED=0` builds and runs. Your binary stays a static, single file.
+- `CGO_ENABLED=0` builds and runs. No `import "C"` anywhere.
 - No C toolchain needed to build the Go side, so cross-compilation works.
+- (A binary that loads a shared library at run time is dynamically linked by
+  definition. The promise is "no cgo, no C toolchain", not "a static file".)
 - The C++ library is loaded at runtime with `dlopen`, so it can be swapped,
   versioned, or shipped separately.
 
