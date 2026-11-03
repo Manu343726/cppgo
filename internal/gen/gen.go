@@ -1,15 +1,22 @@
 // Package gen implements the cppgo code generator.
 //
-// The generator reads a Go package whose files carry two kinds of directive:
+// The generator reads a Go package whose files carry directives, in one of two
+// modes.
+//
+// Shim mode (//cppgo:mode shim, or no //cppgo:header at all):
 //
 //	//cppgo:library libname       (once per package)
 //	//cppgo:external symbol_name  (on the doc comment of a function)
 //
-// An optional //cppgo:mode shim may be written down explicitly; it is the only
-// calling convention implemented, and any other mode is rejected rather than
-// generating a binding that could not work.
+// Direct ABI mode (//cppgo:mode abi, the default when //cppgo:header is
+// present):
 //
-// and writes four files:
+//	//cppgo:library libname       (once per package)
+//	//cppgo:header include/vec.hpp
+//	//cppgo:class mathx::Vector   (on type Vector cppgo.Handle)
+//	//cppgo:ctor | //cppgo:dtor | //cppgo:method <name> | //cppgo:function <qualified>
+//
+// Shim mode writes four files:
 //
 //	zz_cppgo.gen.go     idiomatic Go wrappers, lazy library binding, and the
 //	                    declarations of the assembly trampolines
@@ -17,6 +24,29 @@
 //	cppgo_shim.h        the extern "C" prototypes the C++ side implements
 //	zz_cppgo_stub.go    the input file with every bound function body
 //	                    replaced by a delegation to its wrapper
+//
+// The direct ABI mode writes three: the same Go file, the same trampoline file
+// without a shim in between, and the same rewrite of the source. Every binding
+// is resolved against the header through internal/cxx first, so a binding that
+// could not work — inline, virtual, a template, a struct by value, a std:: type
+// — is a build error instead of a trampoline that fails at load time.
+//
+// # What the direct ABI mode does not do (v1)
+//
+//   - A C++ function that returns a struct by value needs the Itanium sret
+//     convention. The layout reserves the hidden first INTEGER slot — which is
+//     why `this` lands where the ABI expects it — but nothing emits the call
+//     yet, so such a binding is rejected with a message pointing at the shim
+//     mode.
+//   - A constructor returns the address of storage this package allocates,
+//     because a C++ object needs memory the Go side controls: cppgoAlloc sizes
+//     it from a probe translation unit (cxx.Symbol carries no size for a
+//     class), keeps it in a registry so the collector cannot reclaim it, and
+//     the generated destructor drops the entry. An object that is never
+//     destroyed is never reclaimed, which is the same rule as C++: every
+//     constructor has a matching destructor.
+//   - Exceptions must not cross the boundary in this mode: there is no shim to
+//     catch them.
 //
 // # Where the fourth file goes
 //
@@ -38,8 +68,13 @@
 //   - a string or a slice is passed as (pointer, length), pointer first;
 //   - the result comes back in AX (integer/pointer) or X0 (float).
 //
-// A function with a trailing error result returns int32_t instead: zero means
-// success, anything else means the shim stored a message read with
+// In the direct ABI mode the Itanium layout applies to the same tables: a
+// reserved sret pointer (if any) takes the first INTEGER slot, `this` the one
+// after it, and the explicit arguments follow. The float registers are
+// unaffected by both.
+//
+// A shim-mode function with a trailing error result returns int32_t instead:
+// zero means success, anything else means the shim stored a message read with
 // cppgo_last_error(). Any other result is then written through a trailing
 // out-pointer, because the ABI only allows one return register.
 package gen
@@ -47,6 +82,7 @@ package gen
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -78,6 +114,20 @@ type Config struct {
 	// Check verifies that the generated files are up to date instead of
 	// writing them.
 	Check bool
+	// CompileCommands is the -compile-commands value: a compile_commands.json
+	// (or the directory holding one) to take the header's flags from. It
+	// overrides discovery, and is only used in the direct ABI mode.
+	CompileCommands string
+	// Force downgrades a direct-ABI validation failure to a warning: the
+	// binding is emitted as the Go declaration describes it, and both the
+	// report and the generated file say it was not validated.
+	Force bool
+	// Report receives the per-binding report of a direct-ABI run, one line per
+	// binding. Nil discards it.
+	Report io.Writer
+	// Warnings receives package-level warnings, such as assumed compilation
+	// flags or a shim header left over from an earlier run. Nil discards them.
+	Warnings io.Writer
 }
 
 // Output is one generated file.
@@ -86,9 +136,34 @@ type Output struct {
 	Data []byte
 }
 
+// Result is everything one generator run produced.
+type Result struct {
+	// Outputs are the files to write, sorted by name.
+	Outputs []Output
+	// Mode is the calling convention the package declared: ModeShim or
+	// ModeABI.
+	Mode string
+	// Report is the per-binding report of a direct-ABI run: the C++ declaration
+	// each binding resolved to, its mangled name, and what was assumed. It is
+	// empty in shim mode.
+	Report []string
+	// Warnings are package-level remarks for stderr.
+	Warnings []string
+}
+
 // Render parses the package described by cfg and returns the files Generate
 // would write, sorted by name. Nothing is written to disk.
 func Render(cfg Config) ([]Output, error) {
+	result, err := RenderResult(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return result.Outputs, nil
+}
+
+// RenderResult is Render with the report and the warnings a direct-ABI run
+// produces.
+func RenderResult(cfg Config) (*Result, error) {
 	dir := cfg.Dir
 	if dir == "" {
 		dir = "."
@@ -106,6 +181,19 @@ func Render(cfg Config) ([]Output, error) {
 	if err != nil {
 		return nil, err
 	}
+	result := &Result{Mode: pkg.Mode}
+	if pkg.Mode == ModeABI {
+		if err := resolveABI(pkg, cfg); err != nil {
+			return nil, err
+		}
+		result.Report = pkg.abi.report(pkg.Funcs)
+		if pkg.abi.assumed {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("the compilation flags for %s are an assumption (%s); a validation this misses comes from a parse without the header's real flags", pkg.Header, pkg.abi.detail))
+		}
+		if _, err := os.Stat(filepath.Join(absOut, ShimFileName)); err == nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s was left by an earlier shim-mode run: the direct ABI mode does not write it, and leaving it behind invites the C++ side to keep implementing entries nothing calls", filepath.Join(outDir, ShimFileName)))
+		}
+	}
 
 	sigs := make([]*signature, len(pkg.Funcs))
 	for i, f := range pkg.Funcs {
@@ -120,14 +208,20 @@ func Render(cfg Config) ([]Output, error) {
 	if err != nil {
 		return nil, err
 	}
-	asm := emitAsm(sigs)
-	shim := emitShim(pkg, sigs)
-
 	outs := []Output{
 		{Name: GenFileName, Data: genGo},
-		{Name: AsmFileName, Data: asm},
-		{Name: ShimFileName, Data: shim},
+		{Name: AsmFileName, Data: emitAsm(sigs)},
 	}
+	if pkg.Mode == ModeABI {
+		// No cppgo_shim.h: there is no extern "C" layer in this mode. The file
+		// must not be emitted, so a stale one cannot be mistaken for the
+		// contract the C++ side has to implement. A leftover from an earlier
+		// shim-mode run is reported by the warnings above rather than deleted:
+		// the generator only owns the files it wrote.
+	} else {
+		outs = append(outs, Output{Name: ShimFileName, Data: emitShim(pkg, sigs)})
+	}
+
 	first := true
 	for _, sf := range pkg.Files {
 		inPlace := filepath.Dir(sf.Abs) == absOut
@@ -147,12 +241,13 @@ func Render(cfg Config) ([]Output, error) {
 		outs = append(outs, Output{Name: name, Data: data})
 	}
 	sort.Slice(outs, func(i, j int) bool { return outs[i].Name < outs[j].Name })
-	return outs, nil
+	result.Outputs = outs
+	return result, nil
 }
 
 // Generate writes the generated files, or verifies them in check mode.
 func Generate(cfg Config) error {
-	outs, err := Render(cfg)
+	result, err := RenderResult(cfg)
 	if err != nil {
 		return err
 	}
@@ -163,9 +258,19 @@ func Generate(cfg Config) error {
 	if outDir == "" {
 		outDir = "."
 	}
+	if cfg.Warnings != nil {
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(cfg.Warnings, "cppgo: warning: %s\n", warning)
+		}
+	}
+	if cfg.Report != nil {
+		for _, line := range result.Report {
+			fmt.Fprintln(cfg.Report, line)
+		}
+	}
 	if cfg.Check {
 		var stale []string
-		for _, o := range outs {
+		for _, o := range result.Outputs {
 			old, err := os.ReadFile(filepath.Join(outDir, o.Name))
 			if err != nil || !bytes.Equal(old, o.Data) {
 				stale = append(stale, o.Name)
@@ -179,7 +284,7 @@ func Generate(cfg Config) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("creating output directory %s: %w", outDir, err)
 	}
-	for _, o := range outs {
+	for _, o := range result.Outputs {
 		path := filepath.Join(outDir, o.Name)
 		if err := os.WriteFile(path, o.Data, 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", path, err)

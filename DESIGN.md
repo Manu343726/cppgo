@@ -284,7 +284,7 @@ Resolution order for the translation unit's flags:
 | pointer / reference parameters | yes (both are pointers at the ABI level) |
 | scalar parameters, `bool`, enums | yes |
 | struct by value as a parameter | rejected (MEMORY class on the stack) |
-| struct returned by value | **yes**, via the sret hidden pointer |
+| struct returned by value | **rejected in ABI-mode v1** — the sret slot is reserved in the layout, but Go has no agreed layout for the type yet → use `shim` |
 | virtual function | rejected in this mode (needs vtable traversal) → use `shim` |
 | inline / header-only function | rejected with the actionable message |
 | template | rejected unless explicitly instantiated (then it is a normal symbol) |

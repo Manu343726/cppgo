@@ -26,8 +26,11 @@ func goldenDirs(name string) (in, out string) {
 
 // TestGolden compares every generated file with the checked-in copy.
 func TestGolden(t *testing.T) {
-	for _, name := range []string{"basic"} {
+	for _, name := range []string{"basic", "abi"} {
 		t.Run(name, func(t *testing.T) {
+			if name != "basic" && !libclangAvailable() {
+				t.Skip("libclang is not available: the direct ABI mode cannot resolve its bindings")
+			}
 			in, out := goldenDirs(name)
 			renderInto(t, in, out)
 		})
@@ -90,18 +93,25 @@ func TestGoldenCoversBothSources(t *testing.T) {
 // TestOutputIsValidGo parses and formats every .go output, which is the
 // strongest cheap guarantee that the generator emits legal Go.
 func TestOutputIsValidGo(t *testing.T) {
-	files := renderMap(t, Config{Dir: "testdata/golden/basic/in", Out: "testdata/golden/basic/out"})
-	for name, data := range files {
-		if !strings.HasSuffix(name, ".go") {
-			continue
-		}
-		fset := token.NewFileSet()
-		_, err := parser.ParseFile(fset, name, data, parser.ParseComments)
-		require.NoError(t, err, name)
+	for _, name := range []string{"basic", "abi"} {
+		t.Run(name, func(t *testing.T) {
+			if name != "basic" && !libclangAvailable() {
+				t.Skip("libclang is not available: the direct ABI mode cannot resolve its bindings")
+			}
+			files := renderMap(t, Config{Dir: filepath.Join("testdata", "golden", name, "in"), Out: t.TempDir()})
+			for file, data := range files {
+				if !strings.HasSuffix(file, ".go") {
+					continue
+				}
+				fset := token.NewFileSet()
+				_, err := parser.ParseFile(fset, file, data, parser.ParseComments)
+				require.NoError(t, err, file)
 
-		formatted, err := format.Source([]byte(data))
-		require.NoError(t, err, name)
-		assert.Equal(t, string(formatted), data, "%s is not gofmt'd", name)
+				formatted, err := format.Source([]byte(data))
+				require.NoError(t, err, file)
+				assert.Equal(t, string(formatted), data, "%s is not gofmt'd", file)
+			}
+		})
 	}
 }
 

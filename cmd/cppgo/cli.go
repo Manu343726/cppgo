@@ -117,7 +117,9 @@ func (c *cli) generate(args []string, checkMode bool) int {
 	dir := fs.String("dir", ".", "package directory holding the //cppgo: directives")
 	out := fs.String("out", "", "output directory (defaults to -dir, rewriting the sources in place)")
 	check := fs.Bool("check", checkMode, "report whether the generated files are up to date instead of writing them")
-	quiet := fs.Bool("q", false, "suppress the confirmation message")
+	quiet := fs.Bool("q", false, "suppress the per-binding report and the confirmation message")
+	force := fs.Bool("force", false, "downgrade direct-ABI validation failures to warnings for a binding you accept")
+	compileCommands := fs.String("compile-commands", "", "compile_commands.json (or its directory) to take the C++ header's flags from")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -139,7 +141,19 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		c.errorf("cppgo %s: %s is not a directory", verb, *dir)
 		return exitUsage
 	}
-	cfg := gen.Config{Dir: *dir, Out: *out, Check: *check}
+	cfg := gen.Config{
+		Dir:             *dir,
+		Out:             *out,
+		Check:           *check,
+		Force:           *force,
+		CompileCommands: *compileCommands,
+		Warnings:        c.stderr,
+	}
+	if !*quiet && !*check {
+		// The per-binding report is the answer to "what did this bind, and
+		// what did it assume?", so it goes to stdout for "gen".
+		cfg.Report = c.stdout
+	}
 	if err := gen.Generate(cfg); err != nil {
 		c.errorf("cppgo %s: %v", verb, err)
 		return exitError
@@ -186,18 +200,31 @@ func (c *cli) printUsage(w io.Writer) {
 // printGenUsage documents "cppgo gen".
 func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: cppgo gen -dir <pkgdir> [-out <outdir>] [-check] [-q]")
+	fmt.Fprintln(w, "                  [-force] [-compile-commands <path>]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "gen reads the Go package in -dir and writes four files:")
+	fmt.Fprintln(w, "gen reads the Go package in -dir and writes its bindings.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "In the direct ABI mode (//cppgo:header present, or //cppgo:mode abi) it")
+	fmt.Fprintln(w, "writes three files, calls the C++ symbols directly and prints one report")
+	fmt.Fprintln(w, "line per binding:")
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  %-18s %s\n", gen.GenFileName, "idiomatic wrappers, lazy library binding and the")
 	fmt.Fprintf(w, "  %-18s %s\n", "", "declarations of the assembly trampolines")
 	fmt.Fprintf(w, "  %-18s %s\n", gen.AsmFileName, "one NOSPLIT trampoline per bound function")
-	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimFileName, "the extern \"C\" prototypes the C++ side implements")
 	fmt.Fprintf(w, "  %-18s %s\n", gen.SourceFileName, "the input file with every bound function body")
 	fmt.Fprintf(w, "  %-18s %s\n", "", "replaced by a delegation to its wrapper")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "The input package declares the library once with //cppgo:library <name>")
-	fmt.Fprintln(w, "and every bound function with //cppgo:external <symbol> on its doc comment.")
+	fmt.Fprintln(w, "In the shim mode (//cppgo:mode shim, or no header at all) it writes the")
+	fmt.Fprintf(w, "same three plus %s, the extern \"C\" prototypes the C++ side\n", gen.ShimFileName)
+	fmt.Fprintln(w, "implements, and the bindings are declared with //cppgo:external <symbol>.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "The direct ABI mode declares the library once with //cppgo:library <name>,")
+	fmt.Fprintln(w, "the header with //cppgo:header <path>, each mirror type with")
+	fmt.Fprintln(w, "//cppgo:class <qualified C++ name> on a `type X cppgo.Handle`, and each")
+	fmt.Fprintln(w, "binding with //cppgo:ctor, //cppgo:dtor, //cppgo:method <name> or")
+	fmt.Fprintln(w, "//cppgo:function <qualified name>. Every binding is resolved against the")
+	fmt.Fprintln(w, "header: an inline member, a virtual function, a template, a struct passed")
+	fmt.Fprintln(w, "by value or a std:: type is a build error, not a runtime crash.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "flags:")
 	fmt.Fprintln(w, "  -dir string")
@@ -208,7 +235,13 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "  -check")
 	fmt.Fprintln(w, "        report whether the generated files are up to date instead of writing")
 	fmt.Fprintln(w, "  -q")
-	fmt.Fprintln(w, "        suppress the confirmation message")
+	fmt.Fprintln(w, "        suppress the per-binding report and the confirmation message")
+	fmt.Fprintln(w, "  -force")
+	fmt.Fprintln(w, "        downgrade a direct-ABI validation failure to a warning, for a")
+	fmt.Fprintln(w, "        binding you accept anyway; the generated file says so")
+	fmt.Fprintln(w, "  -compile-commands string")
+	fmt.Fprintln(w, "        compile_commands.json (or the directory holding one) to take the")
+	fmt.Fprintln(w, "        header's compilation flags from, instead of discovering them")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "example:")
 	fmt.Fprintln(w, "  cppgo gen -dir ./bindings/mathx -out ./bindings/mathx")

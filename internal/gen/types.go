@@ -18,12 +18,13 @@ const (
 	kindPointer             // *T
 	kindHandle              // cppgo.Handle, i.e. void*
 	kindError               // error, delivered as an int32_t status
+	kindObject              // a C++ class of the bound package, i.e. its this pointer
 )
 
 // supportedTypes is the list quoted back to the user in rejection messages.
 const supportedTypes = "int8/16/32/64, uint8/16/32/64, int, uint, uintptr, " +
 	"float32, float64, bool, string, []T (T numeric), *T, cppgo.Handle, " +
-	"and error as the last result"
+	"a //cppgo:class type, and error as the last result"
 
 // typeInfo describes one Go type on both sides of the boundary.
 type typeInfo struct {
@@ -38,6 +39,10 @@ type typeInfo struct {
 	// size is the width of the mirror slot in bytes: 4 for float32/int32,
 	// 8 for everything else.
 	size int
+	// width is the width of the C type the Go type stands for: 1 for int8, 4
+	// for int32/float32, 8 for int64/float64. It is what the ABI validator
+	// compares against sizeof of the C++ parameter.
+	width int
 	// cType is the C type used in the shim header. For types that expand to
 	// a (pointer, length) pair it is the pointer half only.
 	cType string
@@ -47,21 +52,40 @@ type typeInfo struct {
 	// named is the C name of a user-declared pointee type, empty when the
 	// pointee is a builtin.
 	named string
+	// class is the C++ class a kindObject value refers to.
+	class *classInfo
 }
 
 // align is the natural alignment of the mirror slot, which for every
 // supported type equals its size.
 func (t *typeInfo) align() int { return t.size }
 
-// resolveType maps a Go type expression to its ABI description.
-func resolveType(expr ast.Expr) (*typeInfo, error) {
+// resolver maps Go type expressions to their ABI description. It knows the
+// package's //cppgo:class types, which is the only thing that distinguishes a
+// C++ class handle from an unsupported named type.
+type resolver struct {
+	classes map[string]*classInfo
+}
+
+// resolveType maps a Go type expression to its ABI description, without any
+// class in scope.
+func resolveType(expr ast.Expr) (*typeInfo, error) { return resolveIn(nil, expr) }
+
+// resolveIn maps a Go type expression, treating the given class types as C++
+// object handles.
+func resolveIn(classes map[string]*classInfo, expr ast.Expr) (*typeInfo, error) {
+	return (&resolver{classes: classes}).resolve(expr)
+}
+
+// resolve maps a Go type expression to its ABI description.
+func (r *resolver) resolve(expr ast.Expr) (*typeInfo, error) {
 	switch e := expr.(type) {
 	case *ast.ParenExpr:
-		return resolveType(e.X)
+		return r.resolve(e.X)
 	case *ast.Ellipsis:
 		return nil, fmt.Errorf("variadic parameters are not supported: pass a slice instead")
 	case *ast.Ident:
-		return resolveIdent(e.Name, expr)
+		return r.ident(e.Name, expr)
 	case *ast.SelectorExpr:
 		if x, ok := e.X.(*ast.Ident); ok && x.Name == "cppgo" && e.Sel.Name == "Handle" {
 			return &typeInfo{
@@ -69,17 +93,18 @@ func resolveType(expr ast.Expr) (*typeInfo, error) {
 				goType: "cppgo.Handle",
 				slot:   "unsafe.Pointer",
 				size:   8,
+				width:  8,
 				cType:  "void*",
 			}, nil
 		}
 		return nil, unsupportedType(expr)
 	case *ast.StarExpr:
-		return resolvePointer(e, expr)
+		return r.pointer(e, expr)
 	case *ast.ArrayType:
 		if e.Len != nil {
 			return nil, fmt.Errorf("unsupported type %s: only slices ([]T) cross the boundary, arrays must be passed as pointers", types.ExprString(expr))
 		}
-		return resolveSlice(e.Elt, expr)
+		return r.slice(e.Elt, expr)
 	case *ast.InterfaceType:
 		if e.Methods == nil || len(e.Methods.List) == 0 {
 			return nil, fmt.Errorf("unsupported type %s: use cppgo.Handle to pass an opaque C++ object", types.ExprString(expr))
@@ -92,32 +117,33 @@ func resolveType(expr ast.Expr) (*typeInfo, error) {
 	}
 }
 
-// resolveIdent maps a builtin type name.
-func resolveIdent(name string, expr ast.Expr) (*typeInfo, error) {
+// ident maps a builtin type name, or a class type of the bound package.
+func (r *resolver) ident(name string, expr ast.Expr) (*typeInfo, error) {
 	type scalar struct {
 		kind   kind
 		slot   string
 		size   int
+		width  int
 		cType  string
 		signed bool
 	}
 	table := map[string]scalar{
-		"int8":    {kindInt, "int64", 8, "int8_t", true},
-		"int16":   {kindInt, "int64", 8, "int16_t", true},
-		"int32":   {kindInt, "int64", 8, "int32_t", true},
-		"rune":    {kindInt, "int64", 8, "int32_t", true},
-		"int64":   {kindInt, "int64", 8, "int64_t", true},
-		"int":     {kindInt, "int64", 8, "int64_t", true},
-		"uint8":   {kindInt, "uint64", 8, "uint8_t", false},
-		"byte":    {kindInt, "uint64", 8, "uint8_t", false},
-		"uint16":  {kindInt, "uint64", 8, "uint16_t", false},
-		"uint32":  {kindInt, "uint64", 8, "uint32_t", false},
-		"uint64":  {kindInt, "uint64", 8, "uint64_t", false},
-		"uint":    {kindInt, "uint64", 8, "uint64_t", false},
-		"uintptr": {kindInt, "uintptr", 8, "uint64_t", false},
-		"float32": {kindFloat, "float32", 4, "float", true},
-		"float64": {kindFloat, "float64", 8, "double", true},
-		"bool":    {kindBool, "int64", 8, "int32_t", false},
+		"int8":    {kindInt, "int64", 8, 1, "int8_t", true},
+		"int16":   {kindInt, "int64", 8, 2, "int16_t", true},
+		"int32":   {kindInt, "int64", 8, 4, "int32_t", true},
+		"rune":    {kindInt, "int64", 8, 4, "int32_t", true},
+		"int64":   {kindInt, "int64", 8, 8, "int64_t", true},
+		"int":     {kindInt, "int64", 8, 8, "int64_t", true},
+		"uint8":   {kindInt, "uint64", 8, 1, "uint8_t", false},
+		"byte":    {kindInt, "uint64", 8, 1, "uint8_t", false},
+		"uint16":  {kindInt, "uint64", 8, 2, "uint16_t", false},
+		"uint32":  {kindInt, "uint64", 8, 4, "uint32_t", false},
+		"uint64":  {kindInt, "uint64", 8, 8, "uint64_t", false},
+		"uint":    {kindInt, "uint64", 8, 8, "uint64_t", false},
+		"uintptr": {kindInt, "uintptr", 8, 8, "uint64_t", false},
+		"float32": {kindFloat, "float32", 4, 4, "float", true},
+		"float64": {kindFloat, "float64", 8, 8, "double", true},
+		"bool":    {kindBool, "int64", 8, 1, "int32_t", false},
 	}
 	if name == "error" {
 		return &typeInfo{kind: kindError, goType: "error", cType: "int32_t"}, nil
@@ -134,35 +160,49 @@ func resolveIdent(name string, expr ast.Expr) (*typeInfo, error) {
 			elemC:  "char",
 		}, nil
 	}
-	s, ok := table[name]
-	if !ok {
-		return nil, unsupportedType(expr)
+	if s, ok := table[name]; ok {
+		return &typeInfo{
+			kind:   s.kind,
+			goType: name,
+			slot:   s.slot,
+			size:   s.size,
+			width:  s.width,
+			cType:  s.cType,
+		}, nil
 	}
-	return &typeInfo{
-		kind:   s.kind,
-		goType: name,
-		slot:   s.slot,
-		size:   s.size,
-		cType:  s.cType,
-	}, nil
+	if c := r.classes[name]; c != nil {
+		// A class handle is a pointer with no Go-side layout: the value is the
+		// `this` pointer, and it travels in one integer slot.
+		return &typeInfo{
+			kind:   kindObject,
+			goType: name,
+			slot:   "uintptr",
+			size:   8,
+			width:  8,
+			class:  c,
+		}, nil
+	}
+	return nil, unsupportedType(expr)
 }
 
-// resolvePointer maps *T. The pointee crosses as-is, so T must be a type the
+// pointer maps *T. The pointee crosses as-is, so T must be a type the
 // C++ side can name: a builtin or a type of the bound package, which the shim
 // header forward-declares.
-func resolvePointer(e *ast.StarExpr, expr ast.Expr) (*typeInfo, error) {
+func (r *resolver) pointer(e *ast.StarExpr, expr ast.Expr) (*typeInfo, error) {
 	var elemGo, elemC, named string
 	switch inner := e.X.(type) {
 	case *ast.ParenExpr:
-		return resolvePointer(&ast.StarExpr{X: inner.X}, expr)
+		return r.pointer(&ast.StarExpr{X: inner.X}, expr)
 	case *ast.Ident:
 		elemGo = inner.Name
-		if info, err := resolveIdent(inner.Name, inner); err == nil {
+		if info, err := r.ident(inner.Name, inner); err == nil {
 			switch info.kind {
 			case kindError:
 				return nil, fmt.Errorf("unsupported type %s: a pointer to error has no C representation", types.ExprString(expr))
 			case kindString, kindSlice:
 				return nil, fmt.Errorf("unsupported type %s: a pointer to %s has no C representation", types.ExprString(expr), inner.Name)
+			case kindObject:
+				return nil, fmt.Errorf("unsupported type %s: %s is already the object pointer, pass it by value", types.ExprString(expr), inner.Name)
 			}
 			elemC = info.cType
 		} else {
@@ -183,6 +223,7 @@ func resolvePointer(e *ast.StarExpr, expr ast.Expr) (*typeInfo, error) {
 		goType: "*" + elemGo,
 		slot:   "unsafe.Pointer",
 		size:   8,
+		width:  8,
 		cType:  elemC + "*",
 		elemGo: elemGo,
 		elemC:  elemC,
@@ -190,13 +231,13 @@ func resolvePointer(e *ast.StarExpr, expr ast.Expr) (*typeInfo, error) {
 	}, nil
 }
 
-// resolveSlice maps []T. T must be a numeric builtin.
-func resolveSlice(elt ast.Expr, expr ast.Expr) (*typeInfo, error) {
+// slice maps []T. T must be a numeric builtin.
+func (r *resolver) slice(elt ast.Expr, expr ast.Expr) (*typeInfo, error) {
 	id, ok := elt.(*ast.Ident)
 	if !ok {
 		return nil, fmt.Errorf("unsupported type %s: only slices of numeric builtin types are supported", types.ExprString(expr))
 	}
-	info, err := resolveIdent(id.Name, id)
+	info, err := r.ident(id.Name, id)
 	if err != nil {
 		return nil, fmt.Errorf("unsupported type %s: only slices of numeric builtin types are supported", types.ExprString(expr))
 	}

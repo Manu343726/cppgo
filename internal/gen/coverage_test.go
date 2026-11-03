@@ -252,14 +252,24 @@ func TestModeDirective(t *testing.T) {
 		require.Len(t, pkg.Funcs, 1)
 	})
 
-	t.Run("abi is rejected", func(t *testing.T) {
+	t.Run("abi requires a header", func(t *testing.T) {
 		dir := writePkg(t, map[string]string{
 			"x.go": "package x\n\n//cppgo:library libx\n\n//cppgo:mode abi\n\n//cppgo:external f\nfunc F() int32\n",
 		})
 		_, err := parsePackage(dir)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), `unsupported //cppgo:mode "abi"`)
-		assert.Contains(t, err.Error(), "not implemented yet")
+		assert.Contains(t, err.Error(), "//cppgo:mode abi needs //cppgo:header")
+		assert.Contains(t, err.Error(), ".go:")
+	})
+
+	t.Run("unknown mode is rejected", func(t *testing.T) {
+		dir := writePkg(t, map[string]string{
+			"x.go": "package x\n\n//cppgo:library libx\n\n//cppgo:mode direct\n\n//cppgo:external f\nfunc F() int32\n",
+		})
+		_, err := parsePackage(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `unsupported //cppgo:mode "direct"`)
+		assert.Contains(t, err.Error(), `"abi"`)
 		assert.Contains(t, err.Error(), ".go:")
 	})
 

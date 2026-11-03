@@ -10,16 +10,33 @@ goroutine as being in a syscall).
 
 ```go
 //cppgo:library libmathx
-//cppgo:external dot
-func Dot(a, b []float64) (float64, error)
+//cppgo:header include/mathx/vector.hpp
+
+//cppgo:class mathx::Vector
+type Vector cppgo.Handle
+
+//cppgo:ctor
+func New(x, y float64) (Vector, error)
+
+//cppgo:method norm
+func (v Vector) Norm() float64
+
+//cppgo:method dot
+func (v Vector) Dot(ys []float64) float64
 ```
 
 ```console
 $ cppgo gen -dir ./mathx
 ```
 
-That is the whole interface. `cppgo gen` writes the idiomatic Go wrapper, the
-assembly trampolines, and the `extern "C"` header your C++ side implements.
+That is the whole interface — and there is no C layer to write. `cppgo` reads
+your headers through libclang (with the flags clangd would use, from
+`compile_commands.json` or `.clangd`), resolves `mathx::Vector::norm` to its
+mangled symbol `_ZNK5mathx6Vector4normEv`, and emits the trampoline that passes
+`this` in `RDI`. If the binding is impossible — the method is defined inline and
+has no symbol, or it is virtual, or it takes a `std::string` by value — `cppgo
+gen` fails the build and says why, instead of emitting something that segfaults
+in production.
 
 ## Why
 

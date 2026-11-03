@@ -106,9 +106,14 @@ func rewriteBodies(pkg *packageInfo, sf *sourceFile) []byte {
 
 // delegationText is the body that hands the call over to the wrapper.
 func delegationText(f *Func) string {
-	args := make([]string, len(f.Params))
-	for i, p := range f.Params {
-		args[i] = p.Name
+	args := make([]string, 0, len(f.Params)+1)
+	if f.Recv != nil {
+		// The wrapper takes the receiver as its first argument: it becomes the
+		// C++ `this` pointer.
+		args = append(args, f.Recv.Name)
+	}
+	for _, p := range f.Params {
+		args = append(args, p.Name)
 	}
 	call := f.wrapperName() + "(" + strings.Join(args, ", ") + ")"
 	if len(f.Results) > 0 {

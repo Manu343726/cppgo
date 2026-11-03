@@ -80,6 +80,15 @@ type signature struct {
 	total   int     // frame size for the TEXT $0-N directive
 	ret     *retSlot
 	cParams []cParam
+	// abi is true for a direct C++ ABI binding.
+	abi bool
+	// sret is true when the trampoline reserves the hidden first INTEGER slot
+	// for a struct returned by value. It is reserved so `this` lands in the
+	// slot the Itanium ABI puts it in, and never emitted: the validator rejects
+	// by-value class results in v1. See the TODO in buildSignature.
+	sret bool
+	// shape is how a direct ABI binding returns its value.
+	shape abiShape
 }
 
 // usesUnsafe reports whether the generated Go wrapper (or trampoline
@@ -96,6 +105,26 @@ func (s *signature) usesUnsafe() bool {
 // buildSignature validates a function's signature and computes its ABI.
 func buildSignature(f *Func) (*signature, error) {
 	sig := &signature{fn: f, slots: []*slot{{label: "fn", goType: "uintptr", class: classInt, size: 8}}}
+	if f.abi != nil {
+		sig.abi = true
+		sig.shape = f.abi.shape
+		sig.sret = f.abi.sym.HasSret
+		if sig.sret {
+			// TODO(abi): a class returned by value comes back through this
+			// hidden pointer, which the caller has to own and pass in the first
+			// INTEGER slot (Itanium C++ ABI §3.2.3). The validator rejects such
+			// bindings in v1 (see resultShape), so the slot is only reserved:
+			// `this` must already sit in the slot the ABI expects, but nothing
+			// writes the destination address here yet.
+			sig.slots = append(sig.slots, &slot{label: "sret", goType: "unsafe.Pointer", class: classInt, size: 8})
+		}
+		if f.Kind.hasThis() {
+			// `this` is an ordinary pointer argument for the ABI: it takes the
+			// first INTEGER slot after the reserved sret pointer, and the float
+			// registers are not affected by it at all.
+			sig.slots = append(sig.slots, &slot{label: "this", goType: "uintptr", class: classInt, size: 8})
+		}
+	}
 
 	for i, p := range f.Params {
 		if p.Info.kind == kindError {
@@ -120,28 +149,58 @@ func buildSignature(f *Func) (*signature, error) {
 		}
 	}
 
-	ret, err := buildResult(f)
-	if err != nil {
-		return nil, err
-	}
-	sig.ret = ret
-
-	if ret.kind == resStatusValue {
-		// The value is written through a trailing out-pointer.
-		sig.slots = append(sig.slots, &slot{label: "out", goType: "unsafe.Pointer", class: classInt, size: 8})
-	}
-	if ret.kind == resValue {
-		ret.slot.label = "ret"
-	}
-	if ret.kind == resStatus || ret.kind == resStatusValue {
-		ret.slot = &slot{label: "ret", goType: "int32", class: classInt, size: 4}
+	if sig.abi {
+		sig.ret = buildABIResult(f)
+	} else {
+		ret, err := buildResult(f)
+		if err != nil {
+			return nil, err
+		}
+		if ret.kind == resStatusValue {
+			// The value is written through a trailing out-pointer.
+			sig.slots = append(sig.slots, &slot{label: "out", goType: "unsafe.Pointer", class: classInt, size: 8})
+		}
+		if ret.kind == resValue {
+			ret.slot.label = "ret"
+		}
+		if ret.kind == resStatus || ret.kind == resStatusValue {
+			ret.slot = &slot{label: "ret", goType: "int32", class: classInt, size: 4}
+		}
+		sig.ret = ret
 	}
 
 	if err := layout(sig); err != nil {
 		return nil, err
 	}
-	sig.cParams = buildCParams(f, ret)
+	if !sig.abi {
+		sig.cParams = buildCParams(f, sig.ret)
+	}
 	return sig, nil
+}
+
+// buildABIResult describes how a direct ABI binding's value comes back. The
+// shape was decided by the validator, which is the only place that knows both
+// the Go and the C++ types.
+func buildABIResult(f *Func) *retSlot {
+	switch f.abi.shape {
+	case abiStatus:
+		// The status is whatever integer the C++ function returns: read it at
+		// its own width, so a non-zero high word is not lost.
+		sl := &slot{label: "ret", goType: "int32", class: classInt, size: 4}
+		if f.abi.statusWidth > 4 {
+			sl = &slot{label: "ret", goType: "int64", class: classInt, size: 8}
+		}
+		return &retSlot{kind: resStatus, slot: sl}
+	case abiValue, abiValueError:
+		value := f.Results[0]
+		sl := resultSlot(value.Info)
+		sl.label = "ret"
+		return &retSlot{kind: resValue, info: value.Info, goType: value.Info.goType, slot: sl}
+	default:
+		// abiVoid, abiObject and abiErrorOnly return nothing from the call: a
+		// constructor's handle is the storage Go allocated for it.
+		return &retSlot{kind: resNone}
+	}
 }
 
 // buildResult validates the result list and describes how it comes back.
