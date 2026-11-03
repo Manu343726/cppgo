@@ -1,0 +1,14 @@
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="{{ site.Home.RelPermalink }}">
+      <span class="brand-mark">cpp<span class="brand-go">go</span></span>
+      <span class="brand-sub">no cgo</span>
+    </a>
+    <nav class="topnav" aria-label="Main">
+      <a href="{{ "docs/" | relURL }}"{{ if eq .Section "docs" }} class="active"{{ end }}>Docs</a>
+      <a href="{{ "tutorials/" | relURL }}"{{ if eq .Section "tutorials" }} class="active"{{ end }}>Tutorials</a>
+      <a href="{{ site.Params.github }}" rel="noopener">GitHub</a>
+      <a href="{{ site.Params.pkg }}" rel="noopener">API</a>
+    </nav>
+  </div>
+</header>

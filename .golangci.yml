@@ -1,0 +1,110 @@
+# golangci-lint configuration — v2 schema (golangci-lint >= 2.0).
+#
+# CI pins golangci-lint v2.15.0 via golangci/golangci-lint-action@v8; a local
+# binary older than v2 will refuse this file. Validate with:
+#   golangci-lint config verify
+#
+# Philosophy: catch real defects (unchecked errors, dead code, wrong vet
+# analyses) and style drift that reviewers would otherwise argue about
+# (docs on exported identifiers, import grouping, spelling). Everything here
+# must be fixable by hand — nothing that requires rewriting generated code.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  # Generated trampolines are .s files and are never linted; sources under
+  # internal/gen/testdata and zz_cppgo*.go are excluded below.
+
+linters:
+  # "standard" = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+  disable:
+    # depguard without a configured rule set flags every import; not useful here.
+    - depguard
+
+  settings:
+    misspell:
+      locale: US
+    revive:
+      # Only the rules that matter for a small library with a documented API.
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: unused-parameter
+          disabled: true # interface implementations and trampolines legitimately ignore args
+        - name: unreachable-code
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    govet:
+      enable-all: true
+      disable:
+        # fieldalignment is an optimisation opinion, not a defect; cppgo passes
+        # structs by pointer across the ABI and layout is deliberate.
+        - fieldalignment
+        # shadow is noisy on idiomatic `if err := ...` blocks.
+        - shadow
+
+  exclusions:
+    # Skip files carrying a "Code generated ... DO NOT EDIT." header, plus the
+    # two paths the design treats as machine-written:
+    #   internal/gen/testdata/  fixtures emitted by the generator and diffed
+    #   **/zz_cppgo*.go         generator output committed in the tree
+    generated: lax
+    paths:
+      - internal/gen/testdata
+      - internal/gen/testdata/.*
+      - internal/gen/testdata/.*/.*
+      - .*/zz_cppgo.*\.go
+      - zz_cppgo.*\.go
+    rules:
+      # Assembly-backed packages have no Go bodies to document in places the
+      # linters expect; the trampolines are generated.
+      - path: .*zz_cppgo.*\.go
+        linters:
+          - revive
+          - errcheck
+          - govet
+          - staticcheck
+          - unused
+          - ineffassign
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Manu343726/cppgo
+  exclusions:
+    generated: lax
+    paths:
+      - internal/gen/testdata
+      - internal/gen/testdata/.*
+      - .*/zz_cppgo.*\.go
+      - zz_cppgo.*\.go
+
+issues:
+  # Report everything: a 99%-coverage library should not need a cap to look clean.
+  max-issues-per-linter: 0
+  max-same-issues: 0

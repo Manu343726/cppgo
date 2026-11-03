@@ -1,0 +1,47 @@
+# cppgo documentation site.
+#
+# No external theme, no Hugo modules, no git submodules: every layout and every
+# stylesheet in this directory is hand-written, so `hugo --minify` needs no
+# network access at all.
+
+baseURL = "https://manu343726.github.io/cppgo/"
+title = "cppgo"
+locale = "en-US"
+defaultContentLanguage = "en"
+enableRobotsTXT = true
+disableKinds = ["taxonomy", "term"]
+
+[params]
+  description = "Call C++ from Go without cgo, without import \"C\", and without paying the cgo tax on every call."
+  tagline = "Call C++ from Go with no cgo."
+  github = "https://github.com/Manu343726/cppgo"
+  releases = "https://github.com/Manu343726/cppgo/releases"
+  pkg = "https://pkg.go.dev/github.com/Manu343726/cppgo"
+  license = "MIT"
+  author = "Manu Sánchez"
+
+[markup]
+  [markup.highlight]
+    style = "monokai"
+    noClasses = true
+    guessSyntax = false
+    lineNumbersInTable = false
+    tabWidth = 4
+
+  [markup.goldmark.renderer]
+    hardWraps = false
+    unsafe = false
+
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 3
+    ordered = false
+
+[outputs]
+  home = ["HTML"]
+  section = ["HTML"]
+  page = ["HTML"]
+
+[minify]
+  [minify.tdewolff.html]
+    keepWhitespace = false

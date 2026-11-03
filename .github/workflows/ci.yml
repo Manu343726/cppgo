@@ -1,0 +1,88 @@
+name: CI
+
+# Build, vet, lint, race-test and enforce the 99% coverage contract from
+# DESIGN.md on every push and pull request. Releases are handled by release.yml.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'site/**'
+      - '**/*.md'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COVERAGE_THRESHOLD: '99.0'
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go:
+          - stable
+          - '1.25.x'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+          cache: true
+
+      - name: Install C++ toolchain
+        run: |
+          # ubuntu-latest ships g++ already; this is a guard, not a payload.
+          if ! command -v g++ >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends build-essential
+          fi
+          g++ --version | head -n 1
+
+      - name: Build without cgo (the no-cgo contract)
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+          args: --timeout=5m
+
+      - name: Test without cgo (proves the library needs no cgo)
+        run: CGO_ENABLED=0 go test -count=1 ./...
+
+      - name: Test (race + atomic coverage)
+        run: |
+          go test -race -count=1 -covermode=atomic \
+            -coverprofile=coverage.out ./...
+
+      - name: Coverage gate (>= 99%)
+        run: ./scripts/coverage-gate.sh coverage.out "${COVERAGE_THRESHOLD}"
+
+      - name: Build C++ example fixtures
+        run: ./scripts/build-examples.sh
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-go${{ matrix.go }}
+          path: coverage.out
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,10 @@
+/cppgo
+/bin/
+/dist/
+*.test
+*.out
+*.so
+*.dylib
+/site/public
+/site/resources
+.DS_Store

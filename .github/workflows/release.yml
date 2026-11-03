@@ -1,0 +1,100 @@
+name: Release
+
+# Tag pushes (v*) run the full test suite and then publish a GitHub release
+# with generated notes and the cross-built CLI binaries.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: verify before release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+          cache: true
+
+      - name: Install C++ toolchain
+        run: |
+          if ! command -v g++ >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends build-essential
+          fi
+          g++ --version | head -n 1
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Test (race + atomic coverage)
+        run: |
+          go test -race -count=1 -covermode=atomic \
+            -coverprofile=coverage.out ./...
+
+      - name: Coverage gate (>= 99%)
+        run: ./scripts/coverage-gate.sh coverage.out 99.0
+
+      - name: Build C++ example fixtures
+        run: ./scripts/build-examples.sh
+
+  release:
+    name: publish
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+          cache: true
+
+      - name: Build CLI binaries
+        run: |
+          mkdir -p dist
+          if [ ! -d cmd/cppgo ]; then
+            echo "cmd/cppgo not present — releasing sources only."
+            exit 0
+          fi
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            echo "building $os/$arch"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w" \
+                -o "dist/cppgo_${os}_${arch}" ./cmd/cppgo
+          done
+          ( cd dist && sha256sum ./* > SHA256SUMS )
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            dist/*

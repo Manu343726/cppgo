@@ -1,0 +1,58 @@
+#include "textflag.h"
+
+TEXT ·AddI64(SB), NOSPLIT, $0-24
+	ADDQ	SI, DI
+	MOVQ	DI, AX
+	RET
+
+TEXT ·Mix(SB), NOSPLIT, $0-40
+	CVTSS2SD X1, X1
+	ADDSD	X1, X0
+	MOVQ	SI, AX
+	SHLQ	$10, AX
+	ADDQ	DI, AX
+	CVTSQ2SD AX, X1
+	ADDSD	X1, X0
+	RET
+
+TEXT ·Scale(SB), NOSPLIT, $0-40
+	CVTSQ2SD SI, X1
+	MULSD	X0, X1
+	MOVSD	X1, (DX)
+	MOVL	$0, AX
+	RET
+
+TEXT ·Boom(SB), NOSPLIT, $0-24
+	MOVL	$1, AX
+	RET
+
+TEXT ·SumU8(SB), NOSPLIT, $0-24
+	XORQ	AX, AX
+	XORQ	CX, CX
+loop:
+	CMPQ	CX, SI
+	JGE	done
+	MOVBQZX	(DI)(CX*1), DX
+	ADDQ	DX, AX
+	INCQ	CX
+	JMP	loop
+done:
+	RET
+
+TEXT ·SetPoint(SB), NOSPLIT, $0-8
+	MOVSD	X0, (DI)
+	MOVSD	X1, 8(DI)
+	RET
+
+GLOBL	·AddI64Addr(SB), NOPTR, $8
+DATA	·AddI64Addr+0(SB)/8, $·AddI64(SB)
+GLOBL	·MixAddr(SB), NOPTR, $8
+DATA	·MixAddr+0(SB)/8, $·Mix(SB)
+GLOBL	·ScaleAddr(SB), NOPTR, $8
+DATA	·ScaleAddr+0(SB)/8, $·Scale(SB)
+GLOBL	·BoomAddr(SB), NOPTR, $8
+DATA	·BoomAddr+0(SB)/8, $·Boom(SB)
+GLOBL	·SumU8Addr(SB), NOPTR, $8
+DATA	·SumU8Addr+0(SB)/8, $·SumU8(SB)
+GLOBL	·SetPointAddr(SB), NOPTR, $8
+DATA	·SetPointAddr+0(SB)/8, $·SetPoint(SB)

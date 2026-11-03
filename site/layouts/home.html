@@ -1,0 +1,120 @@
+{{ define "main" }}
+<article class="home">
+  <section class="hero">
+    <p class="eyebrow">Go &rarr; C++</p>
+    <h1>Call C++ from Go<br>without cgo.</h1>
+    <p class="hero-lede">
+      No cgo. No <code>import "C"</code>. No C toolchain needed to build your Go side.
+      <strong>cppgo</strong> generates one <code>NOSPLIT</code> assembly trampoline per bound
+      function, so a goroutine enters the System&nbsp;V C ABI directly instead of going
+      through the runtime's <code>cgocall</code> path.
+    </p>
+    <pre class="hero-code"><code>//cppgo:library libmathx
+//cppgo:external dot
+func Dot(a, b []float64) (float64, error)</code></pre>
+    <div class="hero-actions">
+      <a class="button" href="{{ "docs/installation/" | relURL }}">Install</a>
+      <a class="button button-ghost" href="{{ "docs/quickstart/" | relURL }}">Quickstart</a>
+      <a class="button button-ghost" href="{{ site.Params.github }}" rel="noopener">GitHub</a>
+    </div>
+  </section>
+
+  <section class="section-card">
+    <h2>What it is</h2>
+    <div class="prose">
+      {{ .Content }}
+    </div>
+  </section>
+
+  <section>
+    <h2>The numbers</h2>
+    <p class="note">
+      Measured on a Ryzen 7 6800HS with the CPU pinned to <strong>964&nbsp;MHz</strong>
+      (<code>power-saver</code> profile), so the absolute nanoseconds are inflated roughly
+      4.5x by the clock — <strong>cycles and ratios are the honest numbers</strong>.
+    </p>
+    <table class="bench-table">
+      <thead>
+        <tr><th>path</th><th>ns/op</th><th>~cycles</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>plain Go indirect call</td>
+          <td>2.1</td>
+          <td>2</td>
+          <td>baseline</td>
+        </tr>
+        <tr class="highlight">
+          <td><strong>cppgo trampoline</strong></td>
+          <td><strong>13.9</strong></td>
+          <td><strong>13</strong></td>
+          <td><strong>7.5x cheaper than cgo</strong></td>
+        </tr>
+        <tr>
+          <td>cgo (same function, same dlopen'd symbol)</td>
+          <td>105</td>
+          <td>101</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      A call is not free — 13 cycles is not 2 — but it is close enough to a normal Go call
+      that the boundary stops dictating your architecture. You no longer have to batch ten
+      thousand rows into one call just to amortise the crossing.
+    </p>
+  </section>
+
+  <section>
+    <h2>Install in three steps</h2>
+    <ol class="steps">
+      <li>
+        <h3>Get the generator</h3>
+        <pre><code>go install github.com/Manu343726/cppgo/cmd/cppgo@latest</code></pre>
+      </li>
+      <li>
+        <h3>Annotate and generate</h3>
+        <pre><code>//cppgo:library libmathx
+//cppgo:external dot
+func Dot(a, b []float64) (float64, error)</code></pre>
+        <pre><code>cppgo gen -dir ./mathx</code></pre>
+      </li>
+      <li>
+        <h3>Implement the shim, build your .so, open it</h3>
+        <pre><code>#include "cppgo_shim.h"
+extern "C" int32_t mathx_dot(const double *a, size_t an, const double *b, size_t bn, double *out) { ... }</code></pre>
+      </li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Navigate</h2>
+    <div class="link-columns">
+      <div>
+        <h3>Documentation</h3>
+        <ul>
+          {{- range (where site.RegularPages "Section" "docs").ByWeight }}
+          <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>
+          {{- end }}
+        </ul>
+      </div>
+      <div>
+        <h3>Tutorials</h3>
+        <ul>
+          {{- range (where site.RegularPages "Section" "tutorials").ByWeight }}
+          <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>
+          {{- end }}
+        </ul>
+      </div>
+      <div>
+        <h3>Project</h3>
+        <ul>
+          <li><a href="{{ site.Params.github }}" rel="noopener">Source on GitHub</a></li>
+          <li><a href="{{ site.Params.releases }}" rel="noopener">Releases</a></li>
+          <li><a href="{{ site.Params.pkg }}" rel="noopener">Go API reference</a></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</article>
+{{ end }}

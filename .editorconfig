@@ -1,0 +1,37 @@
+# Editor defaults for the cppgo tree. Keeps Go (tabs), C++ (4 spaces) and
+# YAML/Markdown (2 spaces) from fighting each other in editors that honour
+# EditorConfig (most do; VS Code and JetBrains need no plugin).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.go]
+indent_style = tab
+
+[Makefile]
+indent_style = tab
+indent_size = 4
+
+[*.{mk,c,cc,cpp,cxx,h,hh,hpp,hxx}]
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml,json,toml}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.sh]
+indent_style = space
+indent_size = 2
+
+[*.{s,S}]
+indent_style = tab

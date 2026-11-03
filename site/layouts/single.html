@@ -1,0 +1,35 @@
+{{ define "main" }}
+<article class="page">
+  <header class="page-header">
+    <p class="eyebrow">{{ with .Section }}{{ . }}{{ else }}cppgo{{ end }}</p>
+    <h1>{{ .Title }}</h1>
+    {{- with .Description }}
+    <p class="lede">{{ . }}</p>
+    {{- end }}
+  </header>
+  <div class="prose">
+    {{ .Content }}
+  </div>
+  {{- $prev := .PrevInSection }}
+  {{- $next := .NextInSection }}
+  {{- if or $prev $next }}
+  <nav class="pager" aria-label="Pagination">
+    {{- with $next }}
+    <a class="pager-next" href="{{ .RelPermalink }}">
+      <span class="pager-label">Next</span>
+      <span class="pager-title">{{ .Title }}</span>
+    </a>
+    {{- end }}
+    {{- with $prev }}
+    <a class="pager-prev" href="{{ .RelPermalink }}">
+      <span class="pager-label">Previous</span>
+      <span class="pager-title">{{ .Title }}</span>
+    </a>
+    {{- end }}
+  </nav>
+  {{- end }}
+  <footer class="page-foot">
+    <a href="{{ site.Params.github }}/blob/main/site/content/{{ .File.Path }}" rel="noopener">Edit this page</a>
+  </footer>
+</article>
+{{ end }}
