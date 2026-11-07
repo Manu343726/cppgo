@@ -1,0 +1,7 @@
+# The image ships no project files: every tool is downloaded from its pinned
+# release inside the build, and the repository is bind-mounted at run time
+# (CI mounts it at /__w/<repo>/<repo>). Ignoring everything keeps the build
+# context at ~1 file, so a checkout with a site/ tree or coverage profiles in
+# it does not get shipped to the daemon on every build.
+*
+!Dockerfile
