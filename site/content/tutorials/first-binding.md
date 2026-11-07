@@ -146,7 +146,7 @@ it needed no C toolchain to build, and it contains no `import "C"`.
 
 ## What just happened
 
-The generated wrapper did five things, in this order:
+The generated wrapper did four things, in this order:
 
 ```go
 func cppgoCallAdd(a int32, b int32) int32 {
