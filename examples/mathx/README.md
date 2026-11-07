@@ -49,7 +49,7 @@ the parse used the same `-std=c++17 -fPIC -I…` a real build uses.
 | the whole binding is one Go file with `//cppgo:` directives | [`mathx.go`](mathx.go) |
 | C++ members must be defined **out of line** to have a symbol | [`src/vector.cpp`](src/vector.cpp) |
 | an inline member is refused at build time, not at run time | `make inline-demo` |
-| `this` in RDI, floats in XMM0/XMM1, slice as (pointer, length) | [`zz_cppgo_amd64.s`](zz_cppgo_amd64.s) |
+| the method trampoline: arguments in registers, result copied back | [`zz_cppgo_amd64.s`](zz_cppgo_amd64.s) |
 | the object is Go-allocated, sized by libclang, freed by the dtor | [`zz_cppgo.gen.go`](zz_cppgo.gen.go) |
 | generated files are checked in and verifiable | `make check` |
 

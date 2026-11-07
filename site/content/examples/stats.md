@@ -84,14 +84,11 @@ func DataPointer(xs []float64) *float64
 func Histogram(xs, bins []float64, lo, hi float64) error
 ```
 
-Note what each signature says about the wire:
-
-| Go | C++ | registers |
-|---|---|---|
-| `Mean(xs []float64)` | `mean(const double *, size_t)` | `xs=RDI`, `xs_len=RSI`, result `XMM0` |
-| `CountAbove(xs []float64, threshold float64)` | `count_above(const double *, size_t, double)` | `RDI`, `RSI`, `XMM0`, result `RAX` |
-| `Histogram(xs, bins []float64, lo, hi float64)` | `histogram(const double *, size_t, double *, size_t, double, double)` | `RDI`, `RSI`, `RDX`, `RCX`, `XMM0`, `XMM1`, status `EAX` |
-| `DataPointer(xs []float64) *float64` | `data_pointer(const double *, size_t)` | `RDI`, `RSI`, result `RAX` |
+What crosses is worth reading off the signatures: a `[]float64` is two integer
+arguments (pointer, length), a `float64` is one argument in an XMM register, and
+a function that declares **only** an `error` result is read as an integer
+status. [Register assignment]({{< ref "manual/calling-convention.md" >}}) has the
+full table and the exhaustion limit.
 
 `Histogram` declares only `error`, and the C++ function returns `int32_t`, so the
 integer is read as the **status**: `0` is `nil`, anything else becomes an error

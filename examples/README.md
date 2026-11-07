@@ -46,8 +46,10 @@ mathx::Vector::~Vector             mangled _ZN5mathx6VectorD1Ev                 
 ```
 
 Then open [`examples/mathx/zz_cppgo_amd64.s`](mathx/zz_cppgo_amd64.s): ten
-instructions per function, `this` in `RDI`, a slice as `RSI`/`RDX`, the double
-back in `XMM0`.
+instructions per function — the arguments loaded into registers, the call, the
+result copied back. [Register
+assignment](https://manu343726.github.io/cppgo/manual/calling-convention/) says
+which register holds what.
 
 ## Measured numbers
 

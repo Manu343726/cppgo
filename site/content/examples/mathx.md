@@ -149,10 +149,9 @@ the release because the handle is a `uintptr`.
   broke.
 - **Constructor and destructor symbols are `C1`/`D1`**, chosen by libclang, never
   by a mangled name guessed in Go. The report prints them.
-- **`this` is the first integer argument.** `New(3, 4)` is `this` in `RDI`, `3`
-  in `XMM0`, `4` in `XMM1`; `Norm()` is `this` in `RDI` and the result in `XMM0`.
-- **A slice costs two registers**, not a copy: `Dot` passes `RSI`/`RDX` after
-  `this`.
+- **`this` is the first integer argument and a slice is two more** — pointer,
+  then length — not a copy. Which slot each argument takes is in [register
+  assignment]({{< ref "manual/calling-convention.md" >}}).
 - **A static member is not a method.** One directive changes the whole shape of
   the call.
 - **Objects are independent.** Two `New` calls return two handles and two

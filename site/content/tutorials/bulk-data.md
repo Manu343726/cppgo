@@ -104,16 +104,10 @@ func Dot(xs, ys []float64) float64
 
 Each Go slice spends **two** C++ parameters, at its own position: pointer, then
 length. That is why `saxpy` takes `x, x_len, y, y_len` and not a single shared
-`n`. The register assignment follows the declaration order exactly:
-
-| slot | register | value |
-|---|---|---|
-| `alpha` | `XMM0` | the scale |
-| `x` | `RDI` | `&x[0]` |
-| `x_len` | `RSI` | `len(x)` |
-| `y` | `RDX` | `&y[0]` |
-| `y_len` | `RCX` | `len(y)` |
-| result (dot) | `XMM0` | the `double` |
+`n` — the arguments are assigned to `RDI`, `RSI`, `RDX`, `RCX` in declaration
+order, and a `double` takes an XMM slot instead of an integer one
+([register assignment]({{< ref "manual/calling-convention.md" >}}) has the whole
+table).
 
 A C++ signature `saxpy(double, const double *, double *, std::size_t)` with one
 shared `n` does **not** match: it has four parameters, the Go declaration

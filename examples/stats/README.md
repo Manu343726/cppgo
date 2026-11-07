@@ -71,14 +71,10 @@ position in the declaration. That is why `histogram` is
 int32_t histogram(const double *xs, size_t n, double *bins, size_t nbins, double lo, double hi);
 ```
 
-and not six arguments in some other order. The registers follow the declaration:
-
-| call | integer registers | float registers | result |
-|---|---|---|---|
-| `Mean(xs)` | `RDI=&xs[0]`, `RSI=len(xs)` | — | `XMM0` |
-| `CountAbove(xs, t)` | `RDI`, `RSI` | `XMM0=t` | `RAX` |
-| `Histogram(xs, bins, lo, hi)` | `RDI`, `RSI`, `RDX=&bins[0]`, `RCX` | `XMM0=lo`, `XMM1=hi` | `EAX` (status) |
-| `DataPointer(xs)` | `RDI`, `RSI` | — | `RAX` |
+and not six arguments in some other order. A slice is two integer arguments
+(pointer, length) and a `double` is one XMM argument, assigned in declaration
+order; [register assignment](https://manu343726.github.io/cppgo/manual/calling-convention/)
+has the full table.
 
 Note the `size_t` in the header and the `using std::size_t;` above it: the
 generator reports a result type as it is spelled in the source, and
