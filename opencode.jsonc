@@ -1,0 +1,64 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Project-scoped OpenCode configuration for cppgo.
+  //
+  // It is deliberately here and not in ~/.config/opencode/opencode.jsonc: what
+  // this project needs is a Go + C++ toolchain with an FFI boundary, Hugo docs
+  // and a container image, and none of that belongs to every other project on
+  // the machine.
+  //
+  // Install: nothing to run. OpenCode reads this file when the session starts in
+  // this directory; the plugin clones what it needs into
+  // ~/.cache/opencode/git-skills/ and registers the entries for the session.
+  "plugins": [
+    {
+      // One package, several plugins: `plugins` below picks which of them this
+      // project activates. Pinned to `main` on purpose while the bundle is young;
+      // switch to a tag once there is one to pin.
+      "package": "git+ssh://git@github.com/Manu343726/opencode-plugins.git#main",
+      // `plugins` is deliberately omitted. The bundle shares one list between
+      // its server half and its terminal half, but the server registers only
+      // `git-skills` while the terminal registers `git-skills` and
+      // `subagent-monitor`: naming the monitor here would make the server warn
+      // that no such plugin exists, and naming only git-skills would silently
+      // drop the sidebar. Absent, both halves activate everything they ship.
+      "options": {
+        "git-skills": {
+          // Skills this project actually uses. Each one is a procedure the
+          // agents below are expected to follow, not decoration:
+          //   orchestrator-pattern      how a task is split into workstreams and verified
+          //   go-quality                conventions for the Go half
+          //   cpp-quality               conventions for the C++ half
+          //   documentation-standards   the shape of the manual, the reference and the ADRs
+          //   git-workflow              branch, commit and green-head discipline
+          //   release-policy            when a trunk becomes a version
+          "skills": [
+            "orchestrator-pattern@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "go-quality@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "cpp-quality@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "documentation-standards@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "git-workflow@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "release-policy@ssh://git@github.com/Manu343726/skills-and-agents.git:main"
+          ],
+
+          // Agents this project is worked by. `orchestrator` holds the thread and
+          // delegates; the specialists own their half of the boundary, and the
+          // gate agents are the ones that refuse a change.
+          "agents": [
+            "orchestrator@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "go-engineer@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "cpp-engineer@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "test-engineer@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "docs-writer@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "ci-environment-engineer@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "release-manager@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "security-reviewer@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "reviewer@ssh://git@github.com/Manu343726/skills-and-agents.git:main",
+            "verifier@ssh://git@github.com/Manu343726/skills-and-agents.git:main"
+          ]
+        }
+      }
+    }
+  ]
+}
