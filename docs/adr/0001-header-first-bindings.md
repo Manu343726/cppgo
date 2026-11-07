@@ -1,65 +1,106 @@
-# ADR-0001: Bind C++ headers directly, and retire the directive DSL and the shim mode
+# ADR-0001: Bind C++ headers, and generate the shim that makes every construct bindable
 
 - Status: accepted
-- Date: 2026-11-07
+- Date: 2026-11-07 (revised the same day; see *Revision history*)
 - Deciders: operator
 
 ## Context
 
 v1 bound functions declared in a Go file: `//cppgo:external <symbol>` named the C symbol and a
-generated `extern "C"` shim caught exceptions. v2 added a direct C++ ABI mode, still driven by Go
+hand-written `extern "C"` shim caught exceptions. v2 added a direct C++ ABI mode, still driven by Go
 directives: `//cppgo:class mathx::Vector` on `type Vector cppgo.Handle`, `//cppgo:ctor`,
-`//cppgo:method <name>`, `//cppgo:dtor`, plus an `//cppgo:abi` directive for the cases where neither
-libclang nor the binary could describe the call. Three tiers existed side by side — clangd,
-inference from the loaded `.so` by demangling the mangled name, and the hand-written directive — and
-all three produced the same `cxx.Symbol`.
+`//cppgo:method <name>`, `//cppgo:dtor`, plus an `//cppgo:abi` directive for what neither libclang
+nor the binary could describe. Three tiers produced the same `cxx.Symbol`: clangd, inference from
+the loaded `.so` by demangling, and the hand-written annotation.
 
-Three problems accumulated:
+Two problems were real:
 
-1. **The Go declaration was the source of truth and could lie.** The directive describes a
-   signature; libclang's job was then to check it. Every mismatch needed a handwritten error path,
-   and a signature nobody declared (a constructor overload, a field) could not be bound at all
-   without first writing a Go mirror.
-2. **The shim and the annotation tier were unvalidated paths.** What the direct ABI could not
-   express was pushed through a second, hand-written C-like layer, or asserted into existence. The
-   generated API therefore contained bindings the generator could not prove, which is the one thing
-   this project exists to prevent.
-3. **The API showed the machinery.** `type Vector cppgo.Handle`, `New`/`Destroy`, and a repeated
-   ABI comment on every wrapper made generated code read like a binding, not like a Go package.
+1. **The Go declaration was the source of truth and could lie**, and every signature nobody declared
+   (an overload, a constructor, a field) needed a hand-written Go mirror before it could be bound.
+2. **The API showed the machinery**: `type Vector cppgo.Handle`, `New`/`Destroy`, and the same ABI
+   lecture on every wrapper.
+
+The first accepted decision of 2026-11-07 replaced the directive file with header-first generation
+and made **generation-time validation a refusal**: an inline body, a virtual call, a `std::` type or
+a by-value non-POD was a build error. The operator then corrected the posture:
+
+> "se tiene que soportar todo, no vale rechazar" — everything must be supported; rejection is not an
+> acceptable answer.
+
+The correction is right on the product level. A binding generator whose answer to idiomatic C++ is
+"change your C++" is not a completeness tool, and the constructs being refused — inline accessors,
+virtual dispatch, `std::string`, by-value objects — are exactly what real headers are made of.
 
 ## Decision
 
-`cppgo gen` reads **C++ headers** and emits a Go package. It never reads a Go file, never rewrites
-one, and has no directive language. Everything it emits is derived from the C++ declaration
-(libclang, with the project's `compile_commands.json`/`.clangd` flags) and cross-checked against the
-built library's dynamic symbol table when the library is available.
+`cppgo gen` reads **C++ headers** and emits a Go package **plus a C++ translation unit**,
+`zz_cppgo_shim.cpp`/`.h`, containing one `extern "C"` thunk per binding the direct ABI cannot
+express. The user's normal C++ build compiles that unit into the library the Go side loads; the Go
+build still uses no cgo and no `import "C"`.
 
-Generated shapes: class → Go struct with methods, constructor → `New<Type>(...) (*Type, error)`,
-destructor → `Close() error`, POD struct → Go struct with matching exported fields, free and static
-functions → package functions, enums → named Go types, values in Go-native types. `cppgo.Handle`
-appears in no exported signature.
+Every binding gets exactly one **carrier**:
 
-The shim mode, the Go directive DSL, the hand-written ABI tier and `-force` are removed. A binding
-that cannot be expressed is a build error naming the declaration and the fix.
+- **direct** — the measured NOSPLIT trampoline calls the mangled C++ symbol. Reserved for
+  `noexcept`, non-virtual, out-of-line functions whose arguments fit the register rules. This is the
+  fast path;
+- **thunk** — the generated C++ function calls the target as C++: inline bodies, virtual methods
+  (real dispatch), template instantiations, `std::` types, by-value non-PODs, `this` adjustment for
+  multiple and virtual inheritance, exception catching, and argument blocks when registers run out.
 
-The runtime package at the repository root keeps owning only the ABI and the loader; it never
+The shim is **generated infrastructure, not a user-authored escape hatch**. It is derived from the
+same header parse as the Go API, it is parsed back through libclang before it is written, and the
+Go side resolves every one of its symbols at `Open`. There is no user-written `extern "C"` layer and
+no directive language.
+
+Generated shapes stay: class → Go struct with methods, `New<Type>(...) (*Type, error)`,
+`Close() error`, mirrorable POD → Go struct with matching exported fields, other records → opaque
+value types with `Close`, `Clone` and generated field accessors, free and static functions →
+package functions, enums → named Go types, values in Go-native types, `cppgo.Handle` in no exported
+signature.
+
+The **binding manifest** is the command line: `-bind`/`-exclude` name roots, `-instantiate` names
+the template specialisations the API uses, `-rename` resolves a Go-name collision, `-status` marks
+the C++ status convention. These name declarations; they never describe a signature.
+
+The runtime package at the repository root still owns only the C ABI and the loader; it never
 imports `internal/cxx` and needs no libclang. `purego`, the NOSPLIT trampoline, `ProbeStack` and the
 two-pass test contract survive unchanged.
 
 ## Consequences
 
-Easier: one source of truth; no mirror file to maintain; every binding validated; the generated
-package is ordinary Go; a header change that is not regenerated fails the build (compile-time layout
-assertions) instead of a call.
+Easier: every construct in the bound API is reachable; a header does not have to be rewritten into
+"bindable" C++; virtual dispatch is real; exceptions become Go errors; `std::` containers and smart
+pointers have stated ownership; the user sees one ordinary Go package.
 
-Harder, and accepted: a library author who wants a Go binding must make the API bindable — members
-defined out of line, no `std::` types in bound signatures, no by-value aggregates above 16 bytes,
-no exceptions escaping. There is no escape hatch for what C++ can express and the ABI mode cannot:
-the answer is a plain, non-inline C++ function taking pointers and lengths, which remains
-expressible and validated. The binary-inference tier can no longer produce bindings; it is kept only
-as a cross-check, so "no headers" is no longer a supported input. The generator now requires
-libclang at generation time (it already did) and its golden tests must regenerate through a real
-header parse.
+The costs, stated rather than hidden:
 
-`Handle` survives in the runtime as a low-level type for hand-written callers, but generated code
-does not use it.
+- **The build gains a C++ translation unit.** The generated shim has to be compiled with the
+  library, with the project's flags. Forgetting it is a load-time error naming the file, not a
+  crash: `Open` resolves every thunk before anything runs.
+- **The direct path is narrower than "the ABI".** A non-`noexcept` function cannot be called
+  directly (there is no handler above a NOSPLIT trampoline), so it goes through a thunk even when
+  its signature is register-representable. The measured 13.9 ns is the direct path; a thunk adds a
+  C++ call frame.
+- **Error signatures follow exceptions.** A thunk returns an error when the call can throw or its
+  marshalling allocates; a direct call returns none. The contract states the exact rule so the
+  generated signatures are predictable.
+- **Some inputs must be named by the user**, because the C++ does not say them: which template
+  specialisation to build (`-instantiate`) and which Go name to use when two C++ names collide
+  (`-rename`). That is input, not refusal: the construct itself is supported.
+- **The binary-inference tier no longer produces bindings.** It is kept as the ELF cross-check for
+  direct symbols; an unvalidated binding is not emitted.
+- The generator requires libclang at generation time (it already did), and its golden tests must
+  compile the generated shim with a real C++ compiler.
+
+`long double` and `__int128` remain outside the type map (no Go value type); the fix is a wrapper
+with a representable signature, which is a one-line C++ change rather than a manual binding layer.
+C++→Go callbacks are a separate direction and a separate feature, not a gap in this one.
+
+## Revision history
+
+- 2026-11-07, first accepted: header-first generation with refusal for constructs the direct ABI
+  could not express, and the shim mode retired.
+- 2026-11-07, revised: the operator's correction replaced refusal with a generated shim and made
+  completeness the product. This file was rewritten in place rather than superseded because the
+  first version had not landed on `main`; from its merge onward, a change of this decision is a new
+  ADR that supersedes this one.
