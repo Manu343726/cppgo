@@ -21,6 +21,10 @@ concurrency:
 
 env:
   COVERAGE_THRESHOLD: '99.0'
+  # A skipped introspection test is a lie in CI: it silently drops most of
+  # internal/cxx from the coverage profile and the gate then fails with a
+  # number nobody can explain. Require libclang instead of skipping.
+  CPPGO_REQUIRE_LIBCLANG: '1'
 
 jobs:
   test:

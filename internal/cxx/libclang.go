@@ -431,7 +431,7 @@ func loadPath(path string) (*Libclang, error) {
 	// Smoke-test the struct layouts before anybody relies on them: a wrong
 	// CXString or a missing hidden-pointer return shows up here as garbage
 	// rather than as a mystery three layers down.
-	if v := l.str(l.f.getClangVersion()); !strings.HasPrefix(v, "clang version") {
+	if v := l.str(l.f.getClangVersion()); !clangVersionLooksSane(v) {
 		_ = purego.Dlclose(handle)
 		return nil, &NotFoundError{
 			Paths: []string{path},
@@ -439,6 +439,17 @@ func loadPath(path string) (*Libclang, error) {
 		}
 	}
 	return l, nil
+}
+
+// clangVersionLooksSane reports whether v is a plausible clang version banner.
+//
+// It is a smoke test for the CXString layout: a wrong struct would give garbage
+// or an empty string. It must not be a prefix test, because distributions patch
+// the banner - Debian's libclang answers "Debian clang version 14.0.6" and
+// Ubuntu's "Ubuntu clang version 18.1.3" - and rejecting those made every
+// introspection test skip on a stock CI runner.
+func clangVersionLooksSane(v string) bool {
+	return strings.Contains(v, "clang version")
 }
 
 func (l *Libclang) retain() (*Libclang, error) {

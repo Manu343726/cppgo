@@ -20,6 +20,12 @@ func skipWithoutLibclang(t *testing.T) *Libclang {
 	library, err := Load()
 	if err != nil {
 		if errors.Is(err, ErrLibclangNotFound) {
+			// In CI a skip is a lie: it hides the fact that the introspection
+			// tests - and therefore most of this package's coverage - did not
+			// run. require it there, skip only on a developer machine.
+			if os.Getenv("CPPGO_REQUIRE_LIBCLANG") != "" {
+				require.FailNowf(t, "libclang is required but could not be loaded", "%v", err)
+			}
 			t.Skipf("libclang is not installed, so C++ introspection cannot run: %v", err)
 		}
 		require.NoError(t, err, "loading libclang")

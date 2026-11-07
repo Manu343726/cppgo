@@ -281,12 +281,14 @@ func TestSymbolsAgainstNm(t *testing.T) {
 			continue
 		}
 		if sym.QualifiedName == "mathx::Shape::Shape" {
-			// Known and documented exception: clang emits only the base-object
-			// constructor (C2) for an abstract class, while libclang reports the
-			// complete-object one (C1). The symbol model still names C1, and the
-			// library exports C2; see the note on Symbol.HasExportedSymbol.
-			assert.False(t, exported["_ZN5mathx5ShapeC1Ei"])
-			assert.True(t, exported["_ZN5mathx5ShapeC2Ei"])
+			// Known and documented exception: for an abstract class libclang
+			// names the complete-object constructor (C1) and the compiler may
+			// emit only the base-object one (C2) - clang++ does, g++ emits both.
+			// Which variant exists is a property of the compiler, not of the
+			// model, so assert the invariant that holds either way rather than
+			// pinning one toolchain's choice. See Symbol.HasExportedSymbol.
+			assert.True(t, exported["_ZN5mathx5ShapeC1Ei"] || exported["_ZN5mathx5ShapeC2Ei"],
+				"an abstract class must export at least one constructor variant")
 			continue
 		}
 		checked++

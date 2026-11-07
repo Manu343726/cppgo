@@ -2,6 +2,7 @@ package cxx
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -241,7 +242,11 @@ func TestCursorDisplayName(t *testing.T) {
 	// renders "norm()" where the model needs "mathx::Vector::norm".
 	assert.Contains(t, displayNames, "make(double, double)")
 	assert.Contains(t, displayNames, "norm()")
-	assert.Contains(t, displayNames, "pick(int Vector::*)")
+	// libclang qualifies a member-pointer parameter differently across
+	// versions: clang 22 renders "pick(int Vector::*)" and clang 19 renders
+	// "pick(int mathx::Vector::*)". Match the shape, not the spelling.
+	assert.True(t, anyDisplayNameMatches(displayNames, "pick(int", "Vector::*)"),
+		"no display name looks like a member-pointer parameter: %v", displayNames)
 }
 
 func TestSignatureWithoutSpelling(t *testing.T) {
@@ -304,4 +309,23 @@ func TestMergeInto(t *testing.T) {
 	assert.True(t, into.HasOutOfLineBody)
 	assert.Equal(t, "/src/mathx.cpp", into.DefFile)
 	assert.Len(t, into.Params, 1)
+}
+
+// anyDisplayNameMatches reports whether some display name contains all the
+// given fragments. It exists so a test can assert the shape of a libclang
+// rendering without pinning the qualification rules of one clang version.
+func anyDisplayNameMatches(names []string, fragments ...string) bool {
+	for _, n := range names {
+		all := true
+		for _, f := range fragments {
+			if !strings.Contains(n, f) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return true
+		}
+	}
+	return false
 }
