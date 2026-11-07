@@ -1,0 +1,3 @@
+# Build outputs of the examples: the shared library, the locally built cppgo
+# binary, the compilation database and the scratch trees the make targets use.
+build/
