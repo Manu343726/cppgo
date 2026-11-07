@@ -325,8 +325,10 @@ Rules that the API shape follows:
   byte offset); its constructors, destructor, methods and static member functions (`Record.Members`
   for a specialisation, the project's symbols otherwise); **operators** (`Symbol.IsOperator`,
   `Symbol.Operator`) and **conversion operators** (`Symbol.IsConversion`, target type in
-  `Symbol.Result`); **static data members** (`Record.StaticFields`: type, access, `IsConst`, the
-  definition's mangled name); **nested types** as records of their own (`Outer::Inner`); and **member
+  `Symbol.Result`); **static data members** (`Record.StaticFields`: type, access, `IsConst`, and the
+  definition's mangled name when libclang names the instantiation's definition — empty for a
+  specialisation's static member, whose pattern mangling is not the instantiation's); **nested types**
+  as records of their own (`Outer::Inner`); and **member
   function templates** as patterns (`Record.MemberTemplates`) plus the concrete instantiations the
   manifest names (`Project.InstantiateMember`). A member function template without an instantiation
   is not bindable, and the error names the `-instantiate` entry to add.
@@ -592,14 +594,18 @@ reached through a one-line C++ wrapper with a representable signature.
   `operator new`/`operator delete` are allocation hooks; the Go side allocates, so they are not bound
   as ordinary members and need `-rename` if a caller really needs the C++ hook.
 - A **static data member** is a package function `<Type><Field>()` returning the value (the getter
-  copies for `std::string`/containers, per the type map), and `<Type>Set<Field>(v)` only when it is
-  not `const`. `mathx::Operators::counter` → `OperatorsCounter()` / `OperatorsSetCounter(v)`;
+  copies for `std::string`/containers, per the type map; a non-mirrorable record is copied into a new
+  owning Go value, and a `static T *` is borrowed by the pointer rule), and `<Type>Set<Field>(v)` only
+  when it is not `const`. `mathx::Operators::counter` → `OperatorsCounter()` / `OperatorsSetCounter(v)`;
   `limit` (const) has only the getter. A static data member of a specialisation takes the
   specialisation's Go name: `BoxIntShared()`.
 - A **member function template** is bound for each instantiation the manifest names
   (`-instantiate 'mathx::Box<int>::convert<double>'`) or that a bound signature reaches; the Go name
   follows the function rule on the instantiated signature (`convert<double>` → `ConvertFloat64`).
-  Selecting the pattern without an instantiation is an error naming the instantiation to add.
+  The instantiation carries its substituted signature. libclang exposes no cursor — and so no
+  mangled name — for an explicit member instantiation, so the binding is a thunk that calls the
+  instantiated member directly; the Go API is the same as for any other member. Selecting the
+  pattern without an instantiation is an error naming the instantiation to add.
 - When the derived name collides with another binding, the manifest supplies the name:
   `-rename 'mathx::Vector::dot(const double *)'=DotSlice`. A `-rename` that matches nothing is an
   error, so a typo cannot silently do nothing.
