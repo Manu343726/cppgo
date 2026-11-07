@@ -171,8 +171,8 @@ crossing is a fixed ~35 ns did not. Run it on an idle machine, or compare cycles
 rather than nanoseconds.
 
 **Read the ratios, not the nanoseconds.** The clock is pinned at 964.8 MHz, so
-everything absolute is inflated by roughly 3.3x against the same code on a
-boosting core; the cycle column is derived from the ns at 0.9648 GHz and is the
+everything absolute is inflated by roughly 4.5x against the same code running
+with boost; the cycle column is derived from the ns at 0.9648 GHz and is the
 number that travels.
 
 What the rows mean:
