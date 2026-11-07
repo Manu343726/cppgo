@@ -64,51 +64,33 @@ And unlike cgo:
 
 ## How it works
 
-```
-your Go code
-  └── generated wrapper        idiomatic types: []float64, string, error
-        └── generated asm      NOSPLIT, one per signature, no runtime involvement
-              └── your C++     an extern "C" shim we generate the header for
-```
+One Go declaration becomes a generated Go wrapper and one generated `NOSPLIT`
+assembly trampoline. The wrapper converts between Go types (`[]float64`,
+`string`, `error`) and the registers the C ABI expects; the trampoline switches
+`SP` and calls the mangled C++ symbol directly. No `entersyscall`, no `P`
+handoff, no `g0` switch.
 
-The trampoline is deliberately small:
-
-```asm
-TEXT ·Dot(SB), NOSPLIT, $0-24
-	MOVQ	fn+0(FP), R12
-	MOVQ	a+8(FP), DI          // pointer
-	MOVQ	n+16(FP), SI         // length
-	MOVQ	SP, R13
-	ANDQ	$~15, SP             // SysV wants RSP 16-aligned before the CALL
-	CALL	R12
-	MOVQ	R13, SP
-	MOVSD	X0, ret+24(FP)
-	RET
-```
-
-No `entersyscall`, no `P` handoff, no `g0` switch, no safepoint bookkeeping.
-Because the runtime never treats an assembly function as preemptible
-(`isAsyncSafePoint` returns false for any `FuncFlagAsm` frame), and a foreign
-stack pointer is never inside `g.stack`, the GC simply skips the goroutine while
-the call is in flight.
+The trampoline itself, what the collector sees while a foreign frame sits on the
+goroutine's stack, and how the library is loaded are in the [architecture
+page](https://manu343726.github.io/cppgo/project/architecture/).
 
 ## What you give up
 
 Being honest about the trade-offs is the point of this project, so:
 
 - **The `P` is not released during the call.** A foreign call in flight delays a
-  GC cycle by up to its duration (measured: a 2 ms call delayed the worst GC
-  cycle by 1.1 ms, versus 2.4 ms for a spinning Go goroutine). This is the right
-  trade for short, compute-bound calls and the wrong one for calls that block.
-  For long or blocking work, move the C++ to a separate process.
+  GC cycle by up to its duration. This is the right trade for short,
+  compute-bound calls and the wrong one for calls that block — for long or
+  blocking work, move the C++ to a separate process. The measurement is on the
+  [benchmarks page](https://manu343726.github.io/cppgo/project/benchmarks/).
 - **No callbacks from C++ into Go.** Not supported in v1. Batch instead.
 - **The C++ frame lives on the goroutine stack.** `cppgo` reserves
-  `StackReserve` (32 KiB) of headroom before each call, so shims must stay well
-  inside that.
+  `StackReserve` (32 KiB) of headroom before each call.
 - **Linux/amd64 only for now.** The package builds everywhere else and panics
   with a clear message. arm64 is next.
-- **No exceptions across the boundary.** The generated shim catches
-  `std::exception` and `...` and turns them into Go errors.
+- **No exceptions across the boundary.** In shim mode the generated entry point
+  catches `std::exception` and `...` and turns them into Go errors; in the
+  direct ABI mode there is nothing to catch, so a throw is undefined behaviour.
 
 ## Requirements
 

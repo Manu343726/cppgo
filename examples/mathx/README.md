@@ -115,26 +115,16 @@ here, a static member.
 
 ## What the generator produced
 
-The trampoline for `dot` is the ABI in ten instructions:
+One `NOSPLIT` trampoline per bound symbol: `this` in `RDI`, a slice as
+`RSI`/`RDX`, the `double` back in `XMM0`. The file is checked in at
+[`zz_cppgo_amd64.s`](zz_cppgo_amd64.s), and the [generated-files
+reference](https://manu343726.github.io/cppgo/reference/generated-code/)
+documents it line by line.
 
-```asm
-TEXT ·cppgo__ZNK5mathx6Vector3dotEPKdm(SB), NOSPLIT, $0-40
-	MOVQ	fn+0(FP), R12
-	MOVQ	this+8(FP), DI        // this
-	MOVQ	a0+16(FP), SI         // &ys[0]
-	MOVQ	a0_len+24(FP), DX     // len(ys)
-	MOVQ	SP, R13
-	ANDQ	$~15, SP              // SysV wants RSP 16-aligned before the CALL
-	CALL	R12
-	MOVQ	R13, SP
-	MOVSD	X0, ret+32(FP)        // the double comes back in XMM0
-	RET
-```
-
-And the wrapper around it is ordinary Go: a `sync.Once` for the `dlopen`, a
-`ProbeStack()` for the 32 KiB of stack headroom the foreign frame may need, the
-call, then `cppgo.KeepAlive(ys)` so the backing array is still there while C++
-is reading it.
+The wrapper around it is ordinary Go: a `sync.Once` for the `dlopen`, a
+`ProbeStack()` for the stack headroom the foreign frame may need, the call, then
+`cppgo.KeepAlive(ys)` so the backing array is still there while C++ is reading
+it.
 
 The constructor is the one place with real work on the Go side. libclang was
 asked for `sizeof`/`alignof` (16/8 for two doubles), the wrapper allocates that

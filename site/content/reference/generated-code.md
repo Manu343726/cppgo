@@ -268,13 +268,10 @@ TEXT ·cppgo__ZNK5mathx6Vector3dotEPKdm(SB), NOSPLIT, $0-40
 - `$0-40` is a zero-frame function whose argument block plus result is 40 bytes;
   the offsets in `x+off(FP)` come from that layout and are generated, never
   typed by hand.
-- Arguments are loaded **before** `SP` is switched, because `FP` is relative to
-  `SP`.
-- `ANDQ $~15, SP` aligns the stack to 16 bytes, which SysV requires before the
-  `CALL` pushes the return address.
-- The result is stored **after** `SP` is restored, for the same reason.
-- `R12` and `R13` are callee-saved in SysV, so the C++ function preserves them
-  across the call.
+- The `SP` switch, its 16-byte alignment and the store-after-restore rule are
+  explained once in [How it works]({{< ref "project/architecture.md" >}}); which
+  register carries each argument is in [register
+  assignment]({{< ref "manual/calling-convention.md" >}}).
 
 The file uses Go's assembler, not GNU `as`: `·` is the package-local symbol
 separator and `textflag.h` provides `NOSPLIT`.
