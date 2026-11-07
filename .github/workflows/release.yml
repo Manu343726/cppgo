@@ -41,6 +41,15 @@ jobs:
           fi
           g++ --version | head -n 1
 
+      - name: Install libclang (the generator parses C++ headers with it)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libclang-dev
+          # internal/cxx skips itself when libclang is absent, which silently
+          # drops its coverage and fails the gate. Fail loudly instead.
+          ls /usr/lib/llvm-*/lib/libclang.so* 2>/dev/null || {
+            echo "::error::libclang not found after installing libclang-dev"; exit 1; }
+
       - name: go vet
         run: go vet ./...
 
