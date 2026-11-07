@@ -120,6 +120,12 @@ const (
 	cursorFunctionTemplate                   int32 = 30
 	cursorClassTemplate                      int32 = 31
 	cursorClassTemplatePartialSpecialization int32 = 32
+
+	// Template parameters, in declaration order. They are what the model
+	// substitutes when it reads a specialisation through its pattern.
+	cursorTemplateTypeParameter     int32 = 27
+	cursorNonTypeTemplateParameter  int32 = 28
+	cursorTemplateTemplateParameter int32 = 29
 )
 
 // CXTypeKind values used by this package, also checked at run time by
@@ -328,6 +334,7 @@ type libclangFuncs struct {
 	methodIsVirtual              func(CXCursor) int32
 	methodIsConst                func(CXCursor) int32
 	methodIsDefaulted            func(CXCursor) int32
+	methodIsDeleted              func(CXCursor) int32
 	constructorIsCopyConstructor func(CXCursor) int32
 	constructorIsMoveConstructor func(CXCursor) int32
 
@@ -345,6 +352,7 @@ type libclangFuncs struct {
 	getArgType            func(CXType, uint32) CXType
 	typeGetSizeOf         func(CXType) int64
 	typeGetAlignOf        func(CXType) int64
+	typeGetOffsetOf       func(CXType, *byte) int64
 	getTypeDeclaration    func(CXType) CXCursor
 
 	// Records.
@@ -415,6 +423,7 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_CXXMethod_isVirtual", &f.methodIsVirtual},
 		{"clang_CXXMethod_isConst", &f.methodIsConst},
 		{"clang_CXXMethod_isDefaulted", &f.methodIsDefaulted},
+		{"clang_CXXMethod_isDeleted", &f.methodIsDeleted},
 		{"clang_CXXConstructor_isCopyConstructor", &f.constructorIsCopyConstructor},
 		{"clang_CXXConstructor_isMoveConstructor", &f.constructorIsMoveConstructor},
 		{"clang_getCanonicalType", &f.getCanonicalType},
@@ -430,6 +439,7 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_getArgType", &f.getArgType},
 		{"clang_Type_getSizeOf", &f.typeGetSizeOf},
 		{"clang_Type_getAlignOf", &f.typeGetAlignOf},
+		{"clang_Type_getOffsetOf", &f.typeGetOffsetOf},
 		{"clang_getTypeDeclaration", &f.getTypeDeclaration},
 		{"clang_getCXXAccessSpecifier", &f.getCXXAccessSpecifier},
 		{"clang_Cursor_getOffsetOfField", &f.cursorOffsetOfField},

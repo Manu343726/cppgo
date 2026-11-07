@@ -52,20 +52,104 @@ func TestExceptionSpecFromHeader(t *testing.T) {
 
 func TestTemplateArgumentStrings(t *testing.T) {
 	for _, tc := range []struct {
-		arg  TemplateArgument
+		kind TemplateArgumentKind
 		want string
 	}{
-		{TemplateArgument{Kind: TemplateArgumentType, Spelling: "int"}, "int"},
-		{TemplateArgument{Kind: TemplateArgumentIntegral, Spelling: "4"}, "4"},
-		{TemplateArgument{Kind: TemplateArgumentPack}, "pack"},
-		{TemplateArgument{Kind: TemplateArgumentTemplate}, "template"},
-		{TemplateArgument{Kind: TemplateArgumentDeclaration}, "declaration"},
-		{TemplateArgument{Kind: TemplateArgumentExpression}, "expression"},
-		{TemplateArgument{Kind: TemplateArgumentUnknown}, "unknown"},
-		{TemplateArgument{Kind: TemplateArgumentKind(99)}, "unknown"},
+		{TemplateArgumentType, "type"},
+		{TemplateArgumentIntegral, "integral"},
+		{TemplateArgumentDeclaration, "declaration"},
+		{TemplateArgumentTemplate, "template"},
+		{TemplateArgumentExpression, "expression"},
+		{TemplateArgumentPack, "pack"},
+		{TemplateArgumentUnknown, "unknown"},
+		{TemplateArgumentKind(99), "unknown"},
 	} {
-		assert.Equal(t, tc.want, tc.arg.String())
+		assert.Equal(t, tc.want, tc.kind.String())
 	}
+	assert.Equal(t, "int", TemplateArgument{Kind: TemplateArgumentType, Spelling: "int"}.String())
+	assert.Equal(t, "pack", TemplateArgument{Kind: TemplateArgumentPack}.String())
+}
+
+func TestExceptionSpecFromKind(t *testing.T) {
+	for _, tc := range []struct {
+		kind int32
+		want ExceptionSpec
+	}{
+		{exceptionSpecNone, ExceptionUnspecified},
+		{exceptionSpecDynamicNone, ExceptionNone},
+		{exceptionSpecDynamic, ExceptionDynamic},
+		{exceptionSpecMSAny, ExceptionDynamic},
+		{exceptionSpecBasicNoexcept, ExceptionNoexcept},
+		{exceptionSpecComputedNoexcept, ExceptionComputedNoexcept},
+		{exceptionSpecUnevaluated, ExceptionUnknown},
+		{exceptionSpecUninstantiated, ExceptionUnknown},
+		{exceptionSpecUnparsed, ExceptionUnknown},
+		{exceptionSpecNoThrow, ExceptionNoThrow},
+		{-1, ExceptionUnknown},
+		{99, ExceptionUnknown},
+	} {
+		assert.Equal(t, tc.want, exceptionSpecFromKind(tc.kind), "kind %d", tc.kind)
+	}
+}
+
+func TestTemplateArgumentKindFromLibclang(t *testing.T) {
+	for _, tc := range []struct {
+		kind int32
+		want TemplateArgumentKind
+	}{
+		{templateArgumentNull, TemplateArgumentUnknown},
+		{templateArgumentType, TemplateArgumentType},
+		{templateArgumentDeclaration, TemplateArgumentDeclaration},
+		{templateArgumentNullPtr, TemplateArgumentUnknown},
+		{templateArgumentIntegral, TemplateArgumentIntegral},
+		{templateArgumentTemplate, TemplateArgumentTemplate},
+		{templateArgumentExpansion, TemplateArgumentPack},
+		{templateArgumentExpression, TemplateArgumentExpression},
+		{templateArgumentPack, TemplateArgumentPack},
+		{templateArgumentInvalid, TemplateArgumentUnknown},
+		{-1, TemplateArgumentUnknown},
+	} {
+		assert.Equal(t, tc.want, TemplateArgumentKindFromLibclang(tc.kind), "kind %d", tc.kind)
+	}
+}
+
+func TestInnerTemplateArguments(t *testing.T) {
+	for _, tc := range []struct {
+		spelling string
+		want     []string
+	}{
+		{"Box<int>", []string{"int"}},
+		{"mathx::Fixed<double, 4>", []string{"double", "4"}},
+		{"Pair<Box<int>, double>", []string{"Box<int>", "double"}},
+		{"Box", nil},
+		{"Box<>", []string{""}},
+	} {
+		assert.Equal(t, tc.want, innerTemplateArguments(tc.spelling), tc.spelling)
+	}
+}
+
+func TestTemplateArgumentsOnNonTemplate(t *testing.T) {
+	library := skipWithoutLibclang(t)
+	dir := copyFixture(t)
+	tu, err := library.ParseTranslationUnit(filepath.Join(dir, "mathx.hpp"),
+		[]string{"-std=c++17", "-I" + dir, "-x", "c++-header"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tu.Close() })
+
+	var free CXCursor
+	require.NoError(t, library.visit(library.f.getTranslationUnitCursor(tu.tu), func(cursor, parent CXCursor) int32 {
+		if library.f.getCursorKind(cursor) == cursorFunctionDecl &&
+			library.str(library.f.getCursorSpelling(cursor)) == "add" {
+			free = cursor
+			return visitBreak
+		}
+		if library.f.getCursorKind(cursor) == cursorNamespace {
+			return visitRecurse
+		}
+		return visitContinue
+	}))
+	require.True(t, library.cursorIsValid(free))
+	assert.Empty(t, library.templateArguments(free), "a non-template declaration has no arguments")
 }
 
 func TestSpecializationName(t *testing.T) {

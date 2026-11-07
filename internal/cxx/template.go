@@ -63,6 +63,28 @@ func (s ExceptionSpec) CanThrow() bool {
 	}
 }
 
+// TemplateArgumentKindFromLibclang maps one CXTemplateArgumentKind onto the
+// model. It is exported for the tests and the report, which must name what an
+// argument is even when the platform cannot produce one.
+func TemplateArgumentKindFromLibclang(kind int32) TemplateArgumentKind {
+	switch kind {
+	case templateArgumentType:
+		return TemplateArgumentType
+	case templateArgumentIntegral:
+		return TemplateArgumentIntegral
+	case templateArgumentDeclaration:
+		return TemplateArgumentDeclaration
+	case templateArgumentTemplate:
+		return TemplateArgumentTemplate
+	case templateArgumentExpression:
+		return TemplateArgumentExpression
+	case templateArgumentPack, templateArgumentExpansion:
+		return TemplateArgumentPack
+	default:
+		return TemplateArgumentUnknown
+	}
+}
+
 // TemplateArgumentKind is what one template argument is: a type, an integral
 // value, a template, an expression, or a pack.
 type TemplateArgumentKind uint8
@@ -143,7 +165,13 @@ func (a TemplateArgument) String() string {
 
 // exceptionSpec maps libclang's exception specification kind onto the model.
 func (l *Libclang) exceptionSpec(cursor CXCursor) ExceptionSpec {
-	switch l.f.cursorExceptionSpec(cursor) {
+	return exceptionSpecFromKind(l.f.cursorExceptionSpec(cursor))
+}
+
+// exceptionSpecFromKind is the mapping on its own, so every kind libclang can
+// report is tested even when the platform cannot declare it.
+func exceptionSpecFromKind(kind int32) ExceptionSpec {
+	switch kind {
 	case exceptionSpecNone:
 		return ExceptionUnspecified
 	case exceptionSpecDynamicNone:
@@ -183,6 +211,54 @@ func (l *Libclang) specialization(cursor CXCursor) (CXCursor, bool) {
 	return template, true
 }
 
+// innerTemplateArguments splits the text between the outermost angle brackets
+// of a type spelling at its top-level commas. It is the only source of a name
+// for a template or pack argument, which libclang does not expose.
+func innerTemplateArguments(spelling string) []string {
+	start := strings.Index(spelling, "<")
+	end := strings.LastIndex(spelling, ">")
+	if start < 0 || end <= start {
+		return nil
+	}
+	inner := spelling[start+1 : end]
+	parts := make([]string, 0, 2)
+	depth, from := 0, 0
+	for i := 0; i < len(inner); i++ {
+		switch inner[i] {
+		case '<', '(', '[':
+			depth++
+		case '>', ')', ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, strings.TrimSpace(inner[from:i]))
+				from = i + 1
+			}
+		}
+	}
+	parts = append(parts, strings.TrimSpace(inner[from:]))
+	return parts
+}
+
+// fillArgumentSpellings gives a name to the arguments libclang does not spell
+// (a template or a pack), by taking it from the type spelling.
+func (l *Libclang) fillArgumentSpellings(args []TemplateArgument, typ CXType) []TemplateArgument {
+	parts := innerTemplateArguments(l.str(l.f.getTypeSpelling(typ)))
+	if len(parts) == 0 {
+		return args
+	}
+	if len(args) == 1 && args[0].Kind == TemplateArgumentPack {
+		args[0].Spelling = strings.Join(parts, ",")
+		return args
+	}
+	for i := range args {
+		if args[i].Spelling == "" && i < len(parts) {
+			args[i].Spelling = parts[i]
+		}
+	}
+	return args
+}
+
 // templateArguments reads the concrete arguments of a specialization.
 func (l *Libclang) templateArguments(cursor CXCursor) []TemplateArgument {
 	n := int(l.f.getNumTemplateArguments(cursor))
@@ -192,28 +268,16 @@ func (l *Libclang) templateArguments(cursor CXCursor) []TemplateArgument {
 	args := make([]TemplateArgument, 0, n)
 	for i := 0; i < n; i++ {
 		index := uint32(i)
-		arg := TemplateArgument{}
-		switch l.f.getTemplateArgumentKind(cursor, index) {
-		case templateArgumentType:
-			arg.Kind = TemplateArgumentType
+		arg := TemplateArgument{Kind: TemplateArgumentKindFromLibclang(l.f.getTemplateArgumentKind(cursor, index))}
+		switch arg.Kind {
+		case TemplateArgumentType:
 			typ := l.f.getTemplateArgumentType(cursor, index)
 			arg.Spelling = l.str(l.f.getTypeSpelling(typ))
 			arg.Type = l.param(typ)
-		case templateArgumentIntegral:
-			arg.Kind = TemplateArgumentIntegral
+		case TemplateArgumentIntegral:
 			arg.Value = l.f.getTemplateArgumentValue(cursor, index)
 			arg.UnsignedValue = l.f.getTemplateArgumentUnsignedValue(cursor, index)
 			arg.Spelling = fmt.Sprintf("%d", arg.Value)
-		case templateArgumentDeclaration:
-			arg.Kind = TemplateArgumentDeclaration
-		case templateArgumentTemplate:
-			arg.Kind = TemplateArgumentTemplate
-		case templateArgumentExpression:
-			arg.Kind = TemplateArgumentExpression
-		case templateArgumentPack, templateArgumentExpansion:
-			arg.Kind = TemplateArgumentPack
-		default:
-			arg.Kind = TemplateArgumentUnknown
 		}
 		args = append(args, arg)
 	}

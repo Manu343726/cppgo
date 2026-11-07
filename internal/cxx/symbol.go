@@ -157,6 +157,12 @@ type Symbol struct {
 	// IsVariadic is true for a C variadic function (`...`), which has no
 	// fixed argument list to lay out.
 	IsVariadic bool
+	// IsDeleted is true for a `= delete`d special member. A deleted
+	// constructor or copy constructor is what makes a record not
+	// default-constructible or not copyable.
+	IsDeleted bool
+	// IsDefaulted is true for a special member declared `= default`.
+	IsDefaulted bool
 	// IsTemplate is true when the declaration is a template. It has no
 	// mangled name and no layout until it is instantiated.
 	IsTemplate bool
@@ -174,6 +180,27 @@ type Symbol struct {
 	// DefFile and DefLine locate the out-of-line definition, when there is one.
 	DefFile string
 	DefLine int
+}
+
+// isDeleted and isDefaulted read the special-member flags, but only for the
+// cursor kinds where the clang_CXXMethod_* casts are valid.
+func (l *Libclang) isDeleted(cursor CXCursor, kind Kind) bool {
+	switch kind {
+	case Method, StaticMethod, Constructor, Destructor:
+		return l.f.methodIsDeleted(cursor) != 0
+	default:
+		return false
+	}
+}
+
+// isDefaulted reports a special member declared `= default`.
+func (l *Libclang) isDefaulted(cursor CXCursor, kind Kind) bool {
+	switch kind {
+	case Method, StaticMethod, Constructor, Destructor:
+		return l.f.methodIsDefaulted(cursor) != 0
+	default:
+		return false
+	}
 }
 
 // isPureVirtual reads the pure-virtual flag, but only for the cursor kinds
@@ -335,19 +362,22 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 		return
 	}
 	spec := e.l.exceptionSpec(cursor)
+	symKind := e.l.kind(cursor)
 	sym := Symbol{
 		QualifiedName: name,
 		Mangled:       e.l.str(e.l.f.cursorMangling(cursor)),
-		Kind:          e.kind(cursor),
+		Kind:          symKind,
 		Parent:        parentOf(name),
 		Access:        e.l.access(cursor),
 		IsPureVirtual: e.l.isPureVirtual(cursor),
+		IsDeleted:     e.l.isDeleted(cursor, symKind),
+		IsDefaulted:   e.l.isDefaulted(cursor, symKind),
 		IsNoExcept:    !spec.CanThrow(),
 		ExceptionSpec: spec,
 		IsVariadic:    e.l.f.cursorIsVariadic(cursor) != 0,
 		IsTemplate:    isTemplateParent(e.l.f.getCursorKind(cursor)) || isTemplateParent(e.l.f.getCursorKind(parent)),
 	}
-	sym.IsConst, sym.IsVirtual, sym.IsStatic = e.qualifiers(cursor, sym.Kind)
+	sym.IsConst, sym.IsVirtual, sym.IsStatic = e.l.qualifiers(cursor, sym.Kind)
 	sym.DeclFile, sym.DeclLine = e.l.locationValues(loc)
 
 	if e.l.f.isCursorDefinition(cursor) != 0 {
@@ -431,6 +461,8 @@ func mergeInto(into *Symbol, from Symbol) {
 		into.Access = from.Access
 	}
 	into.IsPureVirtual = into.IsPureVirtual || from.IsPureVirtual
+	into.IsDeleted = into.IsDeleted || from.IsDeleted
+	into.IsDefaulted = into.IsDefaulted || from.IsDefaulted
 	into.IsVariadic = into.IsVariadic || from.IsVariadic
 	into.IsTemplate = into.IsTemplate || from.IsTemplate
 	if into.ExceptionSpec == ExceptionUnspecified && from.ExceptionSpec != ExceptionUnspecified {
@@ -459,19 +491,19 @@ func isTemplateParent(kind int32) bool {
 }
 
 // kind maps a cursor kind (plus the storage class) to a Symbol Kind.
-func (e *extractor) kind(cursor CXCursor) Kind {
-	switch e.l.f.getCursorKind(cursor) {
+func (l *Libclang) kind(cursor CXCursor) Kind {
+	switch l.f.getCursorKind(cursor) {
 	case cursorConstructor:
 		return Constructor
 	case cursorDestructor:
 		return Destructor
 	case cursorCXXMethod:
-		if e.l.f.methodIsStatic(cursor) != 0 {
+		if l.f.methodIsStatic(cursor) != 0 {
 			return StaticMethod
 		}
 		return Method
 	case cursorFunctionTemplate:
-		switch e.l.f.getCursorKind(e.l.f.getSemanticParent(cursor)) {
+		switch l.f.getCursorKind(l.f.getSemanticParent(cursor)) {
 		case cursorClassDecl, cursorStructDecl, cursorClassTemplate, cursorClassTemplatePartialSpecialization:
 			// A member function template needs `this` like any method.
 			return Method
@@ -486,29 +518,29 @@ func (e *extractor) kind(cursor CXCursor) Kind {
 // qualifiers reads the const/virtual/static flags. The clang_CXXMethod_*
 // accessors cast the cursor to a CXXMethodDecl, so they are only called for
 // kinds where that cast is valid.
-func (e *extractor) qualifiers(cursor CXCursor, kind Kind) (isConst, isVirtual, isStatic bool) {
-	if e.l.f.getCursorKind(cursor) == cursorFunctionTemplate {
+func (l *Libclang) qualifiers(cursor CXCursor, kind Kind) (isConst, isVirtual, isStatic bool) {
+	if l.f.getCursorKind(cursor) == cursorFunctionTemplate {
 		// The clang_CXXMethod_* accessors cast the cursor to a CXXMethodDecl;
 		// a template cursor is not one, so none of them is asked.
 		return false, false, false
 	}
 	switch kind {
 	case Method, StaticMethod:
-		isConst = e.l.f.methodIsConst(cursor) != 0
-		isVirtual = e.l.f.methodIsVirtual(cursor) != 0
-		isStatic = e.l.f.methodIsStatic(cursor) != 0
+		isConst = l.f.methodIsConst(cursor) != 0
+		isVirtual = l.f.methodIsVirtual(cursor) != 0
+		isStatic = l.f.methodIsStatic(cursor) != 0
 	case Constructor:
 		// Constructors are never const, and the only "virtual" a constructor
 		// can be is a virtual base, which is not a vtable entry.
 		isVirtual = false
 	case Destructor:
 		// A destructor can be virtual, and that is worth reporting.
-		isVirtual = e.l.f.methodIsVirtual(cursor) != 0
+		isVirtual = l.f.methodIsVirtual(cursor) != 0
 	case FreeFunc:
 		// A namespace-scope `static` function has internal linkage and emits no
 		// exported symbol. clang_CXXMethod_isStatic only understands methods,
 		// so the storage class is the right question here.
-		isStatic = e.l.f.getCursorStorageClass(cursor) == storageClassStatic
+		isStatic = l.f.getCursorStorageClass(cursor) == storageClassStatic
 	}
 	return isConst, isVirtual, isStatic
 }
@@ -616,7 +648,7 @@ func (l *Libclang) param(t CXType) Param {
 func (l *Libclang) declarationName(t CXType) string {
 	decl := l.f.getTypeDeclaration(t)
 	if template, ok := l.specialization(decl); ok {
-		if args := l.templateArguments(decl); len(args) > 0 {
+		if args := l.fillArgumentSpellings(l.templateArguments(decl), t); len(args) > 0 {
 			name, _ := l.qualifiedName(template)
 			return specializationName(name, args)
 		}

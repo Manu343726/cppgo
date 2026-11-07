@@ -186,6 +186,55 @@ struct FixedHolder {
 };
 
 template <typename T>
+struct Pair2 {
+    T first;
+    T second;
+    Pair2(T a, T b) : first(a), second(b) {}
+    ~Pair2() {}
+    T sum() const { return first + second; }
+};
+template struct Pair2<int>;
+
+template <typename T>
+struct NoCopy {
+    T value;
+    NoCopy() = default;
+    NoCopy(const NoCopy &) = delete;
+};
+template struct NoCopy<int>;
+
+template <typename... Ts>
+struct Pack {
+    int n;
+};
+template struct Pack<int, double>;
+
+// A derived specialization: the base name is substituted, and the thunk has to
+// adjust this for the base subobject.
+template <typename T>
+struct DerivedBox : Box<T> {
+    T extra;
+};
+template struct DerivedBox<int>;
+
+// A polymorphic specialization: synthesis has to carry the vtable facts.
+template <typename T>
+struct VirtualBox {
+    virtual ~VirtualBox() {}
+    virtual T get() const { return T{}; }
+    T value;
+};
+template struct VirtualBox<int>;
+
+// A field whose type is itself a specialization of a parameter: the
+// RecordName has to be substituted, not only the scalar spellings.
+template <typename T>
+struct Wrapper {
+    Box<T> inner;
+};
+template struct Wrapper<int>;
+
+template <typename T>
 T max_of(T a, T b) { return a < b ? b : a; }
 template double max_of<double>(double, double);
 struct WithMemberTemplate {
