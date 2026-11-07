@@ -171,6 +171,7 @@ private:
 };
 
 struct Tiny { int value; ~Tiny(); };          // non-POD by value
+Tiny produce();                               // non-POD by-value result
 
 class Shape {
 public:
@@ -295,6 +296,12 @@ func (t *Tiny) SetValue(value int32)
 //
 // C++: mathx::consume_tiny(Tiny)
 func ConsumeTiny(t *Tiny) error
+
+// Produce returns mathx::Tiny by value: the result is constructed in Go-owned
+// storage and returned as an owning value.
+//
+// C++: mathx::produce(), _ZN5mathx7produceEv
+func Produce() (*Tiny, error)
 ```
 
 Rules that the API shape follows:
@@ -428,6 +435,12 @@ The complete rules:
 A non-const `std::vector<T> &` parameter is an in/out slice: the generated function takes `[]T` and
 puts the resulting `[]T` in its result list, because a Go slice is a value and a mutation of a copy
 would otherwise be invisible.
+
+A `std::` type outside the table is still supported: it crosses as an **opaque value** (by pointer,
+or as an owning value with `Close`), and the generated thunk constructs, copies and destroys it. Its
+own members are not bound, because binding the standard library is a different job; bind a C++
+wrapper when a Go caller has to call one. The single exclusion is a callback: `std::function` and
+function pointers are a C++→Go call direction, a separate feature, not a value that crosses.
 
 ## Type map
 
@@ -684,6 +697,12 @@ the loader: it is knowing at generation time what every binding compiles to at a
   `// C++: mathx::Vector::norm() const, _ZNK5mathx6Vector4normEv` — and, when the ELF cross-check
   ran, it ends `, verified against libmathx.so`. Nothing else is generated into a comment: the ABI
   register layout belongs in this file, not repeated on every wrapper.
+
+**Validation is coverage, not permission.** For every binding the generator proves that a carrier
+exists and that the code generated for it compiles: a direct symbol is cross-checked against the
+library's dynamic symbols, a thunk is parsed through libclang with the same flags. Nothing is judged
+acceptable or unacceptable; the only errors left are the inputs below, which name no Go construct and
+come with what the user supplies.
 
 ## What remains a generation error
 
