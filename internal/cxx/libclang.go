@@ -98,12 +98,13 @@ const (
 	cursorNoDeclFound     int32 = 71
 	cursorTranslationUnit int32 = 350
 
-	cursorStructDecl   int32 = 2
-	cursorUnionDecl    int32 = 3
-	cursorClassDecl    int32 = 4
-	cursorEnumDecl     int32 = 5
-	cursorFieldDecl    int32 = 6
-	cursorFunctionDecl int32 = 8
+	cursorStructDecl       int32 = 2
+	cursorUnionDecl        int32 = 3
+	cursorClassDecl        int32 = 4
+	cursorEnumDecl         int32 = 5
+	cursorFieldDecl        int32 = 6
+	cursorEnumConstantDecl int32 = 7
+	cursorFunctionDecl     int32 = 8
 
 	cursorCXXMethod      int32 = 21
 	cursorNamespace      int32 = 22
@@ -112,6 +113,13 @@ const (
 	cursorDestructor     int32 = 25
 	cursorNamespaceAlias int32 = 33
 	cursorBaseSpecifier  int32 = 44
+
+	// Templates. They are declarations with no layout and no symbol until they
+	// are instantiated, and both the record and the function model have to say
+	// so instead of leaving them out.
+	cursorFunctionTemplate                   int32 = 30
+	cursorClassTemplate                      int32 = 31
+	cursorClassTemplatePartialSpecialization int32 = 32
 )
 
 // CXTypeKind values used by this package, also checked at run time by
@@ -155,6 +163,32 @@ const (
 
 // CX_StorageClass values, as returned by clang_Cursor_getStorageClass.
 const storageClassStatic int32 = 3
+
+// CX_CXXAccessSpecifier values, as returned by clang_getCXXAccessSpecifier.
+// accessInvalid is what a namespace-scope declaration reports.
+const (
+	accessInvalid   int32 = 0
+	accessPublic    int32 = 1
+	accessProtected int32 = 2
+	accessPrivate   int32 = 3
+)
+
+// CXCursor_ExceptionSpecificationKind values, as returned by
+// clang_getCursorExceptionSpecificationType. Only the three noexcept spellings
+// are treated as a promise that nothing escapes; throw() is a dynamic
+// specification and throw(...) is the opposite of a promise.
+const (
+	exceptionSpecNone             int32 = 0
+	exceptionSpecDynamicNone      int32 = 1
+	exceptionSpecDynamic          int32 = 2
+	exceptionSpecMSAny            int32 = 3
+	exceptionSpecBasicNoexcept    int32 = 4
+	exceptionSpecComputedNoexcept int32 = 5
+	exceptionSpecUnevaluated      int32 = 6
+	exceptionSpecUninstantiated   int32 = 7
+	exceptionSpecUnparsed         int32 = 8
+	exceptionSpecNoThrow          int32 = 9
+)
 
 // CXChildVisitResult, the return value of the visitor callback.
 const (
@@ -282,6 +316,10 @@ type libclangFuncs struct {
 
 	// Types.
 	getCanonicalType      func(CXType) CXType
+	getPointeeType        func(CXType) CXType
+	getNonReferenceType   func(CXType) CXType
+	isConstQualifiedType  func(CXType) int32
+	isPODType             func(CXType) int32
 	getTypeSpelling       func(CXType) CXString
 	getTypeKindSpelling   func(kind int32) CXString
 	getCursorKindSpelling func(kind int32) CXString
@@ -289,7 +327,29 @@ type libclangFuncs struct {
 	getNumArgTypes        func(CXType) int32
 	getArgType            func(CXType, uint32) CXType
 	typeGetSizeOf         func(CXType) int64
+	typeGetAlignOf        func(CXType) int64
 	getTypeDeclaration    func(CXType) CXCursor
+
+	// Records.
+	getCXXAccessSpecifier func(CXCursor) int32
+	cursorOffsetOfField   func(CXCursor) int64
+	cursorIsBitField      func(CXCursor) int32
+	fieldDeclBitWidth     func(CXCursor) int32
+	cursorIsAnonymous     func(CXCursor) int32
+	methodIsPureVirtual   func(CXCursor) int32
+	cxxRecordIsAbstract   func(CXCursor) int32
+	getOffsetOfBase       func(CXCursor, CXCursor) int64
+
+	// Enums.
+	getEnumDeclIntegerType       func(CXCursor) CXType
+	getEnumConstantValue         func(CXCursor) int64
+	getEnumConstantUnsignedValue func(CXCursor) uint64
+	enumDeclIsScoped             func(CXCursor) int32
+	getTemplateCursorKind        func(CXCursor) int32
+
+	// Function properties.
+	cursorIsVariadic    func(CXCursor) int32
+	cursorExceptionSpec func(CXCursor) int32
 
 	// Locations.
 	getFileLocation          func(CXSourceLocation, *uintptr, *uint32, *uint32, *uint32)
@@ -332,6 +392,10 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_CXXConstructor_isCopyConstructor", &f.constructorIsCopyConstructor},
 		{"clang_CXXConstructor_isMoveConstructor", &f.constructorIsMoveConstructor},
 		{"clang_getCanonicalType", &f.getCanonicalType},
+		{"clang_getPointeeType", &f.getPointeeType},
+		{"clang_getNonReferenceType", &f.getNonReferenceType},
+		{"clang_isConstQualifiedType", &f.isConstQualifiedType},
+		{"clang_isPODType", &f.isPODType},
 		{"clang_getTypeSpelling", &f.getTypeSpelling},
 		{"clang_getTypeKindSpelling", &f.getTypeKindSpelling},
 		{"clang_getCursorKindSpelling", &f.getCursorKindSpelling},
@@ -339,7 +403,23 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_getNumArgTypes", &f.getNumArgTypes},
 		{"clang_getArgType", &f.getArgType},
 		{"clang_Type_getSizeOf", &f.typeGetSizeOf},
+		{"clang_Type_getAlignOf", &f.typeGetAlignOf},
 		{"clang_getTypeDeclaration", &f.getTypeDeclaration},
+		{"clang_getCXXAccessSpecifier", &f.getCXXAccessSpecifier},
+		{"clang_Cursor_getOffsetOfField", &f.cursorOffsetOfField},
+		{"clang_Cursor_isBitField", &f.cursorIsBitField},
+		{"clang_getFieldDeclBitWidth", &f.fieldDeclBitWidth},
+		{"clang_Cursor_isAnonymous", &f.cursorIsAnonymous},
+		{"clang_CXXMethod_isPureVirtual", &f.methodIsPureVirtual},
+		{"clang_CXXRecord_isAbstract", &f.cxxRecordIsAbstract},
+		{"clang_getOffsetOfBase", &f.getOffsetOfBase},
+		{"clang_getEnumDeclIntegerType", &f.getEnumDeclIntegerType},
+		{"clang_getEnumConstantDeclValue", &f.getEnumConstantValue},
+		{"clang_getEnumConstantDeclUnsignedValue", &f.getEnumConstantUnsignedValue},
+		{"clang_EnumDecl_isScoped", &f.enumDeclIsScoped},
+		{"clang_getTemplateCursorKind", &f.getTemplateCursorKind},
+		{"clang_Cursor_isVariadic", &f.cursorIsVariadic},
+		{"clang_getCursorExceptionSpecificationType", &f.cursorExceptionSpec},
 		{"clang_getFileLocation", &f.getFileLocation},
 		{"clang_Location_isFromMainFile", &f.locationIsFromMainFile},
 		{"clang_Location_isInSystemHeader", &f.locationIsInSystemHeader},
@@ -684,6 +764,10 @@ type TU struct {
 	symbols       []Symbol
 	byName        map[string][]int
 	byNameMangled map[string]int
+	records       []Record
+	byRecord      map[string]int
+	enums         []Enum
+	byEnum        map[string]int
 	closed        bool
 	mu            sync.Mutex
 }
@@ -792,4 +876,40 @@ func (tu *TU) LookupMangled(mangled string) (Symbol, bool) {
 		return Symbol{}, false
 	}
 	return tu.symbols[i], true
+}
+
+// Records returns every class, struct and union definition in the translation
+// unit, in source order, excluding system headers. Templates are included with
+// IsTemplate set and no layout: a declaration that cannot be laid out is still
+// a declaration the generator has to report.
+func (tu *TU) Records() []Record {
+	tu.once.Do(tu.extract)
+	return append([]Record(nil), tu.records...)
+}
+
+// Record finds a record by its qualified C++ name, e.g. "mathx::Vector".
+func (tu *TU) Record(name string) (Record, bool) {
+	tu.once.Do(tu.extract)
+	i, ok := tu.byRecord[name]
+	if !ok {
+		return Record{}, false
+	}
+	return tu.records[i], true
+}
+
+// Enums returns every enum definition in the translation unit, in source
+// order, excluding system headers.
+func (tu *TU) Enums() []Enum {
+	tu.once.Do(tu.extract)
+	return append([]Enum(nil), tu.enums...)
+}
+
+// Enum finds an enum by its qualified C++ name.
+func (tu *TU) Enum(name string) (Enum, bool) {
+	tu.once.Do(tu.extract)
+	i, ok := tu.byEnum[name]
+	if !ok {
+		return Enum{}, false
+	}
+	return tu.enums[i], true
 }

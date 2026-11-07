@@ -47,6 +47,10 @@ type Project struct {
 	symbols   []Symbol
 	byName    map[string][]int
 	byMangled map[string]int
+	records   []Record
+	byRecord  map[string]int
+	enums     []Enum
+	byEnum    map[string]int
 	closed    bool
 }
 
@@ -124,17 +128,14 @@ func (p *Project) parse(header string, opts Options) error {
 		p.tus = append(p.tus, tu)
 		p.MainFiles = append(p.MainFiles, file)
 		for _, sym := range tu.Symbols() {
-			if sym.Mangled != "" {
-				if i, ok := merged[sym.Mangled]; ok {
+			if key := symbolMergeKey(sym); key != "" {
+				if i, ok := merged[key]; ok {
 					mergeInto(&p.symbols[i], sym)
 					continue
 				}
+				merged[key] = len(p.symbols)
 			}
-			i := len(p.symbols)
 			p.symbols = append(p.symbols, sym)
-			if sym.Mangled != "" {
-				merged[sym.Mangled] = i
-			}
 		}
 	}
 
@@ -148,7 +149,52 @@ func (p *Project) parse(header string, opts Options) error {
 			}
 		}
 	}
+	p.mergeTypes()
 	return nil
+}
+
+// mergeTypes folds the records and enums of every parsed translation unit into
+// one view. The same header is parsed once per unit, so the sightings are
+// identical; the merge exists so a definition that only one unit saw is still
+// part of the project.
+func (p *Project) mergeTypes() {
+	byRecord := make(map[string]int)
+	byEnum := make(map[string]int)
+	for _, tu := range p.tus {
+		for _, rec := range tu.Records() {
+			if i, ok := byRecord[rec.QualifiedName]; ok {
+				mergeRecord(&p.records[i], rec)
+				continue
+			}
+			byRecord[rec.QualifiedName] = len(p.records)
+			p.records = append(p.records, rec)
+		}
+		for _, enum := range tu.Enums() {
+			if _, ok := byEnum[enum.QualifiedName]; ok {
+				continue
+			}
+			byEnum[enum.QualifiedName] = len(p.enums)
+			p.enums = append(p.enums, enum)
+		}
+	}
+	p.byRecord = byRecord
+	p.byEnum = byEnum
+}
+
+// symbolMergeKey is the identity of a symbol across translation units. The
+// mangled name is the normal one. A template pattern has no mangled name — it
+// has no symbol until it is instantiated — so its qualified name and signature
+// are the closest thing to an identity it has, and that is what stops the same
+// pattern from being reported once per translation unit that includes the
+// header.
+func symbolMergeKey(sym Symbol) string {
+	if sym.Mangled != "" {
+		return sym.Mangled
+	}
+	if sym.IsTemplate {
+		return "template:" + sym.QualifiedName + "|" + sym.Signature()
+	}
+	return ""
 }
 
 // sourcesFor decides which translation units carry the definitions.
@@ -252,6 +298,61 @@ func (p *Project) LookupMangled(mangled string) (Symbol, bool) {
 		return Symbol{}, false
 	}
 	return p.symbols[i], true
+}
+
+// Members returns every constructor, destructor, method and static member
+// whose semantic parent is the given qualified name, e.g. "mathx::Vector".
+//
+// The result is in parse order; overloads of one name appear together, in the
+// order the header declared them. Access control is reported on each symbol and
+// not filtered here: the generator decides which members a binding wants.
+func (p *Project) Members(parent string) []Symbol {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []Symbol
+	for _, sym := range p.symbols {
+		if sym.Parent == parent {
+			out = append(out, sym)
+		}
+	}
+	return out
+}
+
+// Records returns every record definition the project knows about, merged
+// across translation units and in first-sighting order.
+func (p *Project) Records() []Record {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]Record(nil), p.records...)
+}
+
+// Record finds a record by its qualified C++ name.
+func (p *Project) Record(name string) (Record, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	i, ok := p.byRecord[name]
+	if !ok {
+		return Record{}, false
+	}
+	return p.records[i], true
+}
+
+// Enums returns every enum definition the project knows about.
+func (p *Project) Enums() []Enum {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]Enum(nil), p.enums...)
+}
+
+// Enum finds an enum by its qualified C++ name.
+func (p *Project) Enum(name string) (Enum, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	i, ok := p.byEnum[name]
+	if !ok {
+		return Enum{}, false
+	}
+	return p.enums[i], true
 }
 
 // MissingBodies returns the symbols that are declared but have no out-of-line

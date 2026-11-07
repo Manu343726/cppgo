@@ -69,7 +69,7 @@ const (
 	TypeOther TypeKind = "other"
 )
 
-// Param is one parameter of a signature, or its result.
+// Param is one parameter of a signature, its result, or a field of a record.
 type Param struct {
 	// Spelling is the type as written in the source, from libclang:
 	// "const double *", "std::size_t", "Vector".
@@ -91,6 +91,20 @@ type Param struct {
 	// Float reports that the value is floating point and therefore travels in
 	// an XMM register. It is false for a pointer to a float.
 	Float bool
+	// Unsigned is the signedness of an integer or enum type. It is false for
+	// every other kind.
+	Unsigned bool
+	// IsConst is top-level const qualification: true for "const int", false
+	// for "const int *" (the pointee is const, the pointer is not).
+	IsConst bool
+	// RecordName is the qualified C++ name of a record or enum type
+	// ("mathx::Point", "mathx::Axis"), empty for every other kind. It is what
+	// lets the type mapper find the generated Go type without re-parsing a
+	// spelling.
+	RecordName string
+	// Pointee describes what a pointer or reference points at. It is nil for
+	// every other kind. The pointee of "const double *" carries IsConst.
+	Pointee *Param
 }
 
 // Symbol is one bindable C++ function.
@@ -121,6 +135,27 @@ type Symbol struct {
 	// definition of this function whose body is not inside the class
 	// definition. Only those emit a dynamic symbol inside a library.
 	HasOutOfLineBody bool
+	// Parent is the qualified name of the semantic parent: the class for a
+	// member, the namespace for a free function. It is how a generator groups
+	// a class's constructors and methods, and it is empty only when the
+	// declaration could not be qualified.
+	Parent string
+	// Access is the C++ access control of the declaration within its parent.
+	// It is AccessNone for a namespace-scope declaration.
+	Access Access
+	// IsPureVirtual is true for a pure virtual member: declared, never
+	// defined, so it has no address to call.
+	IsPureVirtual bool
+	// IsNoExcept is true when the declaration promises that nothing escapes.
+	// An exception crossing the boundary terminates the process, so this is
+	// the promise a binding needs and the report tells who has not made it.
+	IsNoExcept bool
+	// IsVariadic is true for a C variadic function (`...`), which has no
+	// fixed argument list to lay out.
+	IsVariadic bool
+	// IsTemplate is true when the declaration is a template. It has no
+	// mangled name and no layout until it is instantiated.
+	IsTemplate bool
 	// Params are the explicit parameters, `this` excluded.
 	Params []Param
 	// Result is the return type. Zero for constructors and destructors.
@@ -203,6 +238,7 @@ func (tu *TU) extract() {
 	tu.symbols = ex.symbols
 	tu.byName = ex.byName
 	tu.byNameMangled = ex.byMangled
+	tu.extractRecords()
 }
 
 // visit is the clang_visitChildren callback. It records every function-ish
@@ -211,8 +247,13 @@ func (tu *TU) extract() {
 func (e *extractor) visit(cursor, parent CXCursor) int32 {
 	switch kind := e.l.f.getCursorKind(cursor); kind {
 	case cursorFunctionDecl, cursorCXXMethod, cursorConstructor, cursorDestructor:
-		e.collect(cursor)
+		e.collect(cursor, parent)
 		return visitContinue
+	case cursorFunctionTemplate, cursorClassTemplate, cursorClassTemplatePartialSpecialization:
+		// The pattern of a template has no symbol until it is instantiated, but
+		// it is a declaration the generator has to report as a template rather
+		// than as missing. Its children are collected and marked.
+		return visitRecurse
 	case cursorNamespace, cursorClassDecl, cursorStructDecl, cursorUnionDecl,
 		cursorLinkageSpec, cursorNamespaceAlias:
 		return visitRecurse
@@ -222,14 +263,14 @@ func (e *extractor) visit(cursor, parent CXCursor) int32 {
 }
 
 // collect turns one function cursor into a Symbol.
-func (e *extractor) collect(cursor CXCursor) {
+func (e *extractor) collect(cursor, parent CXCursor) {
 	loc := e.l.f.getCursorLocation(cursor)
 	if e.l.f.locationIsInSystemHeader(loc) != 0 {
 		// std:: and friends: not ours to bind, and they would bury the
 		// interesting symbols in noise.
 		return
 	}
-	name, ok := e.qualifiedName(cursor)
+	name, ok := e.l.qualifiedName(cursor)
 	if !ok {
 		return
 	}
@@ -237,9 +278,15 @@ func (e *extractor) collect(cursor CXCursor) {
 		QualifiedName: name,
 		Mangled:       e.l.str(e.l.f.cursorMangling(cursor)),
 		Kind:          e.kind(cursor),
+		Parent:        parentOf(name),
+		Access:        e.l.access(cursor),
+		IsPureVirtual: e.l.f.methodIsPureVirtual(cursor) != 0,
+		IsNoExcept:    e.l.isNoExcept(cursor),
+		IsVariadic:    e.l.f.cursorIsVariadic(cursor) != 0,
+		IsTemplate:    isTemplateParent(e.l.f.getCursorKind(parent)),
 	}
 	sym.IsConst, sym.IsVirtual, sym.IsStatic = e.qualifiers(cursor, sym.Kind)
-	sym.DeclFile, sym.DeclLine = e.locationValues(loc)
+	sym.DeclFile, sym.DeclLine = e.l.locationValues(loc)
 
 	if e.l.f.isCursorDefinition(cursor) != 0 {
 		// A definition inside the class definition is implicitly inline and
@@ -254,7 +301,7 @@ func (e *extractor) collect(cursor CXCursor) {
 
 	funcType := e.l.f.getCursorType(cursor)
 	resultType := e.l.f.getResultType(funcType)
-	sym.Result = e.param(resultType)
+	sym.Result = e.l.param(resultType)
 	if sym.Kind == Constructor || sym.Kind == Destructor {
 		// Constructors and destructors have no result at all; saying "void"
 		// is more useful to a reader than an empty Param.
@@ -265,7 +312,7 @@ func (e *extractor) collect(cursor CXCursor) {
 	if n := e.l.f.getNumArgTypes(funcType); n > 0 {
 		sym.Params = make([]Param, 0, n)
 		for i := uint32(0); i < uint32(n); i++ {
-			sym.Params = append(sym.Params, e.param(e.l.f.getArgType(funcType, i)))
+			sym.Params = append(sym.Params, e.l.param(e.l.f.getArgType(funcType, i)))
 		}
 	}
 	e.add(sym)
@@ -309,6 +356,35 @@ func mergeInto(into *Symbol, from Symbol) {
 	if into.DeclFile == "" {
 		into.DeclFile, into.DeclLine = from.DeclFile, from.DeclLine
 	}
+	if into.Parent == "" {
+		into.Parent = from.Parent
+	}
+	if into.Access == AccessNone {
+		into.Access = from.Access
+	}
+	into.IsPureVirtual = into.IsPureVirtual || from.IsPureVirtual
+	into.IsNoExcept = into.IsNoExcept || from.IsNoExcept
+	into.IsVariadic = into.IsVariadic || from.IsVariadic
+	into.IsTemplate = into.IsTemplate || from.IsTemplate
+}
+
+// parentOf returns the qualified name without its last component:
+// "mathx::Vector::norm" -> "mathx::Vector", "mathx::add" -> "mathx". A name
+// with no scope, or an empty one, has no parent.
+func parentOf(qualified string) string {
+	if i := strings.LastIndex(qualified, "::"); i >= 0 {
+		return qualified[:i]
+	}
+	return ""
+}
+
+// isTemplateParent reports whether a declaration's traversal parent is a
+// template, which makes the declaration part of the pattern: it has no layout
+// and no symbol of its own.
+func isTemplateParent(kind int32) bool {
+	return kind == cursorFunctionTemplate ||
+		kind == cursorClassTemplate ||
+		kind == cursorClassTemplatePartialSpecialization
 }
 
 // kind maps a cursor kind (plus the storage class) to a Symbol Kind.
@@ -354,13 +430,13 @@ func (e *extractor) qualifiers(cursor CXCursor, kind Kind) (isConst, isVirtual, 
 }
 
 // qualifiedName builds "ns::Class::member" from the semantic parent chain.
-func (e *extractor) qualifiedName(cursor CXCursor) (string, bool) {
-	spelling := e.l.str(e.l.f.getCursorSpelling(cursor))
+func (l *Libclang) qualifiedName(cursor CXCursor) (string, bool) {
+	spelling := l.str(l.f.getCursorSpelling(cursor))
 	parents := make([]parentName, 0, 4)
 	for i := 0; i < maxParentDepth; i++ {
-		cursor = e.l.f.getSemanticParent(cursor)
-		kind := e.l.f.getCursorKind(cursor)
-		parents = append(parents, parentName{kind: kind, spelling: e.l.str(e.l.f.getCursorSpelling(cursor))})
+		cursor = l.f.getSemanticParent(cursor)
+		kind := l.f.getCursorKind(cursor)
+		parents = append(parents, parentName{kind: kind, spelling: l.str(l.f.getCursorSpelling(cursor))})
 		if kind == cursorTranslationUnit || kind == cursorInvalidFile || kind == cursorNoDeclFound {
 			break
 		}
@@ -379,8 +455,11 @@ type parentName struct {
 // symbol: an unnamed entity, anything inside an anonymous namespace (internal
 // linkage), and a chain that never reaches the translation unit.
 func qualify(spelling string, parents []parentName) (string, bool) {
-	if spelling == "" {
-		// An unnamed entity: there is no name to look a symbol up by.
+	if spelling == "" || strings.HasPrefix(spelling, "(") {
+		// An unnamed entity. libclang synthesises a spelling for these —
+		// "(unnamed enum at /tmp/…/mathx.hpp:183:1)" — and a source path is
+		// not a name: it differs between machines and would make generated
+		// output non-deterministic. There is nothing to bind under it either.
 		return "", false
 	}
 	parts := []string{spelling}
@@ -405,13 +484,16 @@ func qualify(spelling string, parents []parentName) (string, bool) {
 	return "", false
 }
 
-// param classifies one type.
-func (e *extractor) param(t CXType) Param {
-	canonical := e.l.f.getCanonicalType(t)
+// param classifies one type. It is the single place where a CXType becomes
+// model data, so a parameter, a result and a record field describe the same
+// type in exactly the same way.
+func (l *Libclang) param(t CXType) Param {
+	canonical := l.f.getCanonicalType(t)
 	p := Param{
-		Spelling:  e.l.str(e.l.f.getTypeSpelling(t)),
-		ClangKind: e.l.str(e.l.f.getTypeKindSpelling(canonical.Kind)),
-		SizeBytes: e.l.f.typeGetSizeOf(canonical),
+		Spelling:  l.str(l.f.getTypeSpelling(t)),
+		ClangKind: l.str(l.f.getTypeKindSpelling(canonical.Kind)),
+		SizeBytes: l.f.typeGetSizeOf(canonical),
+		IsConst:   l.f.isConstQualifiedType(t) != 0,
 	}
 	switch canonical.Kind {
 	case typeVoid:
@@ -420,6 +502,7 @@ func (e *extractor) param(t CXType) Param {
 		typeULong, typeULongLong, typeUInt128, typeCharS, typeSChar, typeWChar, typeShort,
 		typeInt, typeLong, typeLongLong, typeInt128:
 		p.Kind = TypeInteger
+		p.Unsigned = isUnsignedKind(canonical.Kind)
 	case typeFloat, typeDouble, typeLongDouble:
 		p.Kind = TypeFloat
 		p.Float = true
@@ -428,12 +511,71 @@ func (e *extractor) param(t CXType) Param {
 		p.Ptr = true
 	case typeRecord:
 		p.Kind = TypeRecord
+		p.RecordName = l.declarationName(canonical)
 	case typeEnum:
 		p.Kind = TypeEnum
+		p.RecordName = l.declarationName(canonical)
+		p.Unsigned = l.enumIsUnsigned(canonical)
 	default:
 		p.Kind = TypeOther
 	}
+	if p.Ptr {
+		p.Pointee = l.pointee(canonical)
+	}
 	return p
+}
+
+// declarationName returns the qualified name of the record or enum a type
+// refers to. It is empty for an unnamed type, whose only libclang spelling
+// embeds a source path: the generator refuses those rather than inventing a
+// name that changes between checkouts.
+func (l *Libclang) declarationName(t CXType) string {
+	name, _ := l.qualifiedName(l.f.getTypeDeclaration(t))
+	return name
+}
+
+// pointee describes what a pointer or reference points at, or nil when the
+// type is not one. It is what lets the type mapper collapse a (pointer, length)
+// pair into a Go slice without re-parsing a spelling.
+func (l *Libclang) pointee(canonical CXType) *Param {
+	var inner CXType
+	switch canonical.Kind {
+	case typePointer, typeBlockPointer:
+		inner = l.f.getPointeeType(canonical)
+	case typeLValueReference, typeRValueReference:
+		inner = l.f.getNonReferenceType(canonical)
+	default:
+		return nil
+	}
+	p := l.param(inner)
+	return &p
+}
+
+// isUnsignedKind reports whether an integer type kind is unsigned.
+func isUnsignedKind(kind int32) bool {
+	switch kind {
+	case typeBool, typeCharU, typeUChar, typeChar16, typeChar32, typeUShort, typeUInt,
+		typeULong, typeULongLong, typeUInt128:
+		return true
+	default:
+		return false
+	}
+}
+
+// enumIsUnsigned reports the signedness of an enum's underlying integer type.
+func (l *Libclang) enumIsUnsigned(t CXType) bool {
+	underlying := l.f.getCanonicalType(l.f.getEnumDeclIntegerType(l.f.getTypeDeclaration(t)))
+	return isUnsignedKind(underlying.Kind)
+}
+
+// isNoExcept reports whether a declaration promises that no exception escapes.
+func (l *Libclang) isNoExcept(cursor CXCursor) bool {
+	switch l.f.cursorExceptionSpec(cursor) {
+	case exceptionSpecBasicNoexcept, exceptionSpecComputedNoexcept, exceptionSpecNoThrow:
+		return true
+	default:
+		return false
+	}
 }
 
 // indirectResult reports whether a return type comes back through a hidden
@@ -460,14 +602,14 @@ func (e *extractor) indirectResult(t CXType) bool {
 	if size := e.l.f.typeGetSizeOf(canonical); size < 0 || size > 16 {
 		return true
 	}
-	return e.nonTrivialRecord(e.l.f.getTypeDeclaration(canonical), 0)
+	return e.l.nonTrivialRecord(e.l.f.getTypeDeclaration(canonical), 0)
 }
 
 // nonTrivialRecord reports whether a record is non-trivial for the purposes of
 // calls: it is polymorphic, or it declares a copy/move constructor or a
 // destructor that is not `= default`, or a base or member is like that.
-func (e *extractor) nonTrivialRecord(decl CXCursor, depth int) bool {
-	kind := e.l.f.getCursorKind(decl)
+func (l *Libclang) nonTrivialRecord(decl CXCursor, depth int) bool {
+	kind := l.f.getCursorKind(decl)
 	if kind != cursorClassDecl && kind != cursorStructDecl && kind != cursorUnionDecl {
 		return false
 	}
@@ -478,28 +620,28 @@ func (e *extractor) nonTrivialRecord(decl CXCursor, depth int) bool {
 	}
 	nonTrivial := false
 	fields := make([]CXCursor, 0, 4)
-	err := e.l.visit(decl, func(child, parent CXCursor) int32 {
-		switch e.l.f.getCursorKind(child) {
+	err := l.visit(decl, func(child, parent CXCursor) int32 {
+		switch l.f.getCursorKind(child) {
 		case cursorDestructor:
-			if e.l.f.methodIsDefaulted(child) == 0 {
+			if l.f.methodIsDefaulted(child) == 0 {
 				nonTrivial = true
 			}
 		case cursorConstructor:
-			copyOrMove := e.l.f.constructorIsCopyConstructor(child) != 0 ||
-				e.l.f.constructorIsMoveConstructor(child) != 0
-			if copyOrMove && e.l.f.methodIsDefaulted(child) == 0 {
+			copyOrMove := l.f.constructorIsCopyConstructor(child) != 0 ||
+				l.f.constructorIsMoveConstructor(child) != 0
+			if copyOrMove && l.f.methodIsDefaulted(child) == 0 {
 				nonTrivial = true
 			}
 		case cursorCXXMethod:
-			if e.l.f.methodIsVirtual(child) != 0 {
+			if l.f.methodIsVirtual(child) != 0 {
 				nonTrivial = true
 			}
 		case cursorBaseSpecifier:
-			if e.l.f.isVirtualBase(child) != 0 {
+			if l.f.isVirtualBase(child) != 0 {
 				nonTrivial = true
 				return visitContinue
 			}
-			if e.nonTrivialRecord(e.l.f.getTypeDeclaration(e.l.f.getCursorType(child)), depth+1) {
+			if l.nonTrivialRecord(l.f.getTypeDeclaration(l.f.getCursorType(child)), depth+1) {
 				nonTrivial = true
 			}
 		case cursorFieldDecl:
@@ -511,7 +653,7 @@ func (e *extractor) nonTrivialRecord(decl CXCursor, depth int) bool {
 		return true
 	}
 	for _, field := range fields {
-		if e.nonTrivialRecord(e.l.f.getTypeDeclaration(e.l.f.getCursorType(field)), depth+1) {
+		if l.nonTrivialRecord(l.f.getTypeDeclaration(l.f.getCursorType(field)), depth+1) {
 			return true
 		}
 	}
@@ -520,11 +662,11 @@ func (e *extractor) nonTrivialRecord(decl CXCursor, depth int) bool {
 
 // locationValues turns a source location into file and line. A location with no
 // file (a built-in, or a cursor from an unsaved buffer) yields "".
-func (e *extractor) locationValues(loc CXSourceLocation) (string, int) {
+func (l *Libclang) locationValues(loc CXSourceLocation) (string, int) {
 	var file uintptr
 	var line, column, offset uint32
-	e.l.f.getFileLocation(loc, &file, &line, &column, &offset)
+	l.f.getFileLocation(loc, &file, &line, &column, &offset)
 	// clang_getFileName(NULL) is documented to return an empty string, so no
 	// null check is needed here.
-	return e.l.str(e.l.f.getFileName(file)), int(line)
+	return l.str(l.f.getFileName(file)), int(line)
 }

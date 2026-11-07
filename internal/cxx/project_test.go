@@ -37,6 +37,46 @@ func TestProjectDiscoversIncludingSource(t *testing.T) {
 	assert.Equal(t, SourceArgs, project.Flags.Source)
 }
 
+func TestProjectRecordsEnumsAndMembers(t *testing.T) {
+	project := openFixture(t)
+
+	vector, ok := project.Record("mathx::Vector")
+	require.True(t, ok)
+	assert.Equal(t, int64(24), vector.SizeBytes, "a vptr and two doubles")
+	assert.Equal(t, int64(8), vector.AlignBytes)
+	require.Len(t, vector.Fields, 2)
+	assert.Equal(t, "x_", vector.Fields[0].Name)
+
+	_, ok = project.Record("mathx::DoesNotExist")
+	assert.False(t, ok)
+	assert.NotEmpty(t, project.Records())
+
+	axis, ok := project.Enum("mathx::Axis")
+	require.True(t, ok)
+	assert.True(t, axis.IsScoped)
+	assert.Len(t, axis.Constants, 2)
+	_, ok = project.Enum("mathx::DoesNotExist")
+	assert.False(t, ok)
+	assert.NotEmpty(t, project.Enums())
+
+	var names []string
+	for _, member := range project.Members("mathx::Vector") {
+		names = append(names, member.QualifiedName)
+	}
+	assert.Contains(t, names, "mathx::Vector::Vector")
+	assert.Contains(t, names, "mathx::Vector::~Vector")
+	assert.Contains(t, names, "mathx::Vector::norm")
+	assert.Contains(t, names, "mathx::Vector::dims")
+	assert.Contains(t, names, "mathx::Vector::x")
+	assert.NotContains(t, names, "mathx::make", "a free function is not a member")
+
+	assert.Empty(t, project.Members("mathx::DoesNotExist"))
+
+	// A template pattern has no mangled name; the same declaration reached
+	// through two translation units is one symbol, not two.
+	assert.Len(t, project.Lookups("mathx::Box::get"), 1)
+}
+
 func TestProjectFindsBodiesAndManglings(t *testing.T) {
 	project := openFixture(t)
 
@@ -103,11 +143,16 @@ func TestProjectMissingBodies(t *testing.T) {
 	}
 	sort.Strings(names)
 	assert.Equal(t, []string{
+		"mathx::Box::get",
 		"mathx::Point::Point",
 		"mathx::Point::value",
 		"mathx::Shape::area",
 		"mathx::Vector::x",
 		"mathx::Vector::y",
+		"mathx::noexcept_add",
+		"mathx::take_nullptr",
+		"mathx::take_ref",
+		"mathx::variadic_sum",
 	}, names)
 }
 

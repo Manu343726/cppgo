@@ -117,6 +117,91 @@ struct SmallMember {
     Tiny inner;
 };
 
+// Records below exist for the layout model: a mirrorable aggregate, a nested
+// one, a bitfield, a packed layout Go cannot reproduce, and an incomplete type
+// behind a pointer.
+
+struct Point2D {
+    double x;
+    double y;
+};
+
+struct Segment {
+    Point2D from;
+    Point2D to;
+    int id;
+};
+
+struct Flags {
+    unsigned low : 3;
+    unsigned high : 5;
+    int ordinary;
+};
+
+#pragma pack(push, 1)
+struct Packed {
+    char tag;
+    double value;
+};
+#pragma pack(pop)
+
+struct Mixed {
+public:
+    int visible;
+
+protected:
+    int inherited;
+
+private:
+    int hidden;
+};
+
+class Forward;
+struct UsesForward {
+    Forward *pointer;
+};
+
+union Value {
+    int i;
+    float f;
+};
+
+template <typename T>
+struct Box {
+    T value;
+    T get() const { return value; }
+};
+
+enum Mode { ModeOff, ModeOn = 5, ModeMax = 10 };
+
+// Unnamed records and enums have no name to bind under. The model drops them
+// instead of inventing one.
+struct {
+    int value;
+} anonymous_record;
+
+enum { AnonymousValue = 1 };
+
+// A type in an anonymous namespace has no qualified name, so a base like this
+// is recorded by its spelling and never generated.
+namespace {
+struct Hidden {
+    int value;
+};
+} // namespace
+
+struct DerivedFromHidden : Hidden {
+    int tag;
+};
+
+// A field whose type is an unnamed struct: the type mapper falls back to the
+// type spelling.
+struct WithAnonymous {
+    struct {
+        int inner;
+    } anon;
+};
+
 Vector make(double x, double y);
 Tiny make_tiny(int value);
 Level1 make_deep();
@@ -129,6 +214,10 @@ Pair make_pair(double a, double b);
 bool is_axis(Axis axis, bool strict);
 int add(int a, int b);
 double add(double a, double b);
+int noexcept_add(int a, int b) noexcept;
+int variadic_sum(int count, ...);
+void take_ref(const Pair &pair);
+void take_nullptr(std::nullptr_t value);
 
 // Internal linkage: a definition out of line, but no exported symbol.
 static int internal_counter();
