@@ -243,6 +243,12 @@ func NewVector(x, y float64) (*Vector, error) { /* Open, NewObject(16, 8, releas
 // C++: mathx::Vector::~Vector(), _ZN5mathx6VectorD1Ev
 func (v *Vector) Close() error { /* concrete destructor at the last reference */ }
 
+// Clone copies the object through its copy constructor. Clone is generated
+// when the record is classified copy-constructible.
+//
+// C++: mathx::Vector::Vector(const Vector &), _ZN5mathx6VectorC1ERKS0_
+func (v *Vector) Clone() (*Vector, error)
+
 // X returns the x component.
 //
 // C++: mathx::Vector::x() const, _ZNK5mathx6Vector1xEv
@@ -313,8 +319,22 @@ Rules that the API shape follows:
 - **Every other record → opaque value type**: a Go struct with unexported storage, `Close()` from
   the destructor, `Clone()` from the copy constructor (when one exists), and generated accessors for
   every public field (`Field()` / `SetField(v)`, mapped by the same type map). Bitfields, packed
-  layouts, private members and non-POD members all take this path; **nothing is left unreachable**
-  and nothing is refused.
+  layouts, private members, non-POD members, and a layout libclang could not complete all take this
+  path; **nothing is left unreachable** and nothing is refused.
+- **Template specialisations are records read through their pattern.** libclang does not expose the
+  instantiated definition's cursor children and may defer its layout, so the model instantiates the
+  pattern's fields and members with the template arguments and reads the specialisation type for
+  whatever layout it can provide. `Record.LayoutKnown` says which case applies: **true** → the Go
+  type is the mirrored struct (fields at their offsets, compile-time assertions); **false** → the
+  same type is opaque with field accessors. Either way every public field and every member is in the
+  model, and `Get()` is generated. A specialisation reached only through a field's type is built
+  from that type, so `BoxHolder` makes `Box<double>` part of the API.
+- **`New<Type>()` and `Clone()` are promised only when the model can classify the record.**
+  `Record.IsDefaultConstructible` is true for a non-deleted zero-argument constructor, or no
+  user-declared constructor with trivially constructible fields; `IsCopyConstructible` is true for a
+  non-deleted copy constructor, or no user-declared copy/move constructor with trivially copyable
+  fields. When they are false no `New`/`Clone` is generated, and the generated shim's compile is the
+  final check that a promise made is a promise kept.
 - **Class → Go struct with methods.** Methods call the thunk that performs real C++ dispatch, so a
   virtual method on a `*Shape` runs the most-derived override.
 - **Ownership and views.** An owning value carries the destructor of the type it was **constructed
@@ -391,12 +411,16 @@ func MakeVector(x, y float64) (*Vector, error)
 // share: the shared_ptr reference is copied into another Go-owned handle.
 func Share(v *Vector) (*Vector, error)
 
-// BoxInt is mathx::Box<int>, instantiated by the manifest. Its public field is
-// mirrorable; get() is inline and not noexcept, so it goes through a thunk.
+// BoxInt is mathx::Box<int>, instantiated by the manifest. When libclang can
+// complete the instantiation it is this mirrored struct and the field offsets
+// are asserted; when it cannot, the same value is opaque (obj *cppgo.Object)
+// with Value()/SetValue() accessors. Get() is generated either way.
 type BoxInt struct {
 	Value int32
 }
 func (b *BoxInt) Get() (int32, error)
+func NewBoxInt() (*BoxInt, error)         // when the record is default-constructible
+func (b *BoxInt) Clone() (*BoxInt, error) // when it is copy-constructible
 
 // Flags is mathx::Flags. Bitfields cannot be Go fields, so the record is opaque
 // and every field is an accessor. A default-constructible record gets NewFlags.
@@ -405,6 +429,8 @@ func NewFlags() (*Flags, error)
 func (f *Flags) Close() error
 func (f *Flags) Low() uint32
 func (f *Flags) SetLow(value uint32)
+func (f *Flags) High() uint32
+func (f *Flags) SetHigh(value uint32)
 func (f *Flags) Ordinary() int32
 func (f *Flags) SetOrdinary(value int32)
 ```

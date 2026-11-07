@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
 # coverage-gate.sh — enforce the coverage contract in DESIGN.md
-#   "Coverage gate in CI: >= 99% on ./..., measured with -covermode=atomic.
-#    The only exclusions are machine-written artifacts: zz_cppgo*.go and
-#    internal/gen/testdata/."  cmd/ is measured too.
+#   "Coverage gate: >= 99% on ./..., measured by scripts/coverage-gate.sh.
+#    The exclusions are zz_cppgo*.go (generator output), internal/gen/testdata/
+#    (generated fixtures) and internal/testlib/ (test scaffolding with no
+#    tests of its own)."  cmd/ is measured too.
 #
 # Usage:
 #   scripts/coverage-gate.sh [profile] [threshold]
@@ -62,6 +63,9 @@ fi
 #                            writes and then diffs). Machine-written: coverage
 #                            of them measures the generator's own test corpus,
 #                            not hand-written behaviour.
+#   2. test scaffolding      internal/testlib/ compiles the C++ fixture library
+#                            that other tests load, and has no tests of its
+#                            own; it is not shipped code.
 #
 # cmd/ is NOT excluded. The CLI is tested through run(args, stdout, stderr)
 # with injected streams (see DESIGN.md), so it earns its coverage like any

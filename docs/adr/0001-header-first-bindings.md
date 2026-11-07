@@ -88,6 +88,11 @@ The costs, stated rather than hidden:
 - **Some inputs must be named by the user**, because the C++ does not say them: which template
   specialisation to build (`-instantiate`) and which Go name to use when two C++ names collide
   (`-rename`). That is input, not refusal: the construct itself is supported.
+- **A template specialisation is read through its pattern.** libclang exposes no cursor for the
+  instantiated definition and may defer its layout, so the model instantiates the pattern's fields
+  and members itself and reports a layout only when libclang completes the type
+  (`Record.LayoutKnown`). The specialisation is a member-bearing record either way; when the layout
+  is unknown its Go value is opaque with field accessors instead of a mirrored struct.
 - **The binary-inference tier no longer produces bindings.** It is kept as the ELF cross-check for
   direct symbols; an unvalidated binding is not emitted.
 - The generator requires libclang at generation time (it already did), and its golden tests must
