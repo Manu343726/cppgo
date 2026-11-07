@@ -156,10 +156,12 @@ func (v *Vector) Dot(ys []float64) float64
 // C++: mathx::Vector::scale(double), _ZN5mathx6Vector5scaleEd
 func (v *Vector) Scale(k float64)
 
-// Dims is the static member mathx::Vector::dims.
+// VectorDims is the static member mathx::Vector::dims. A static member is a
+// package function prefixed with its type, so two classes' `size` cannot
+// collide.
 //
 // C++: mathx::Vector::dims(), _ZN5mathx6Vector4dimsEv
-func Dims() int32
+func VectorDims() int32
 
 // Saxpy computes y[i] = a*x[i] + y[i] in place, for i in
 // [0, min(len(x), len(y))).
@@ -187,7 +189,8 @@ conversion. The exported shape is the contract:
   call: a double close is reported rather than freeing twice.
 - **C++ struct → Go struct with matching exported fields**, at the same offsets (see *POD layout*).
 - **Free function → package function.**
-- **Static member function → package function.**
+- **Static member function → package function prefixed with its type**: `mathx::Vector::dims` →
+  `VectorDims`. The prefix is what keeps `A::size` and `B::size` apart without a suffix rule.
 - **Enum → named Go integer type plus typed constants** (`type Color uint8`,
   `const ColorRed Color = 0`): never a string and never a bare integer.
 - **`cppgo.Handle` appears in no exported signature.** The generated struct's field is a pointer to
@@ -215,8 +218,15 @@ not 64-bit is a generation error, not a silent reinterpretation.
 | `(const T *p, size_t n)` | `[]T` | one Go parameter; T scalar, enum or POD |
 | `(const char *p, size_t n)` | `string` | one Go parameter; not NUL-terminated |
 | enum | named integer type | underlying type from libclang |
-| bound class or POD | `*T` / `T` | POD by value only when it qualifies (see *POD layout*) |
+| bound class or non-POD record | `*T` | opaque: constructor, methods, `Close` |
+| bound POD | `*T` as a parameter, `T` as a result | the mirror has the same fields at the same offsets |
 | `void` | no result | |
+
+A `(pointer, length)` pair is one pointer and the length that immediately follows it. A length never
+serves two pointers: `saxpy(double, const double *, double *, size_t)` is rejected, because the
+wrapper would have to guess the length of one of the two slices. The fix is a length per pointer —
+`(double, const double *, size_t, double *, size_t)` → `Saxpy(a float64, x, y []float64)` — which is
+why the sample header above spells both.
 
 Rejected by type, with the fix named: `std::string`, `std::string_view`, `std::vector<T>`,
 `std::span<T>`, any other `std::` type; `long double` and `__int128` (not one eightbyte);
@@ -234,7 +244,8 @@ caller-provided slice, or returns a POD or a pointer. That is a deliberate limit
 - A class or struct is its own name; a namespace contributes nothing. Two declarations from different
   namespaces that map to one Go identifier are a build error naming both: generate a package per
   namespace instead of renaming.
-- `New<Type>` for a constructor, `Close` for the destructor.
+- `New<Type>` for a constructor, `Close` for the destructor, and `<Type><Name>` for a static member:
+  `mathx::Vector::dims` → `VectorDims`.
 - A name with **one** declaration keeps its bare CamelCase form. A name with **several** overloads
   takes a suffix built from its Go parameter types, in order: `dot()` → `Dot`,
   `dot(const double *, size_t)` → `DotFloat64Slice`, `dot(Vector const &)` → `DotVector`. The
@@ -258,10 +269,14 @@ trivially copyable, and its Go mirror is the same fields in declaration order.
   the field, its two offsets and the fix.
 - The generated file also carries a **compile-time assertion** of the size, alignment and every
   field offset. A header edited without regenerating fails `go build`, never a call.
-- By value, a POD crosses only when it is at most 16 bytes and each of its eightbytes classifies as
-  INTEGER or SSE. A larger or MEMORY-class aggregate is a build error with the fix "pass it as `*T`"
-  (parameter) or "return it through an output argument" (result). By value is symmetric: a POD
-  parameter and a POD result are both supported under that rule.
+- A POD parameter crosses **by pointer**: a `T *` or `T &` parameter becomes `*T`, whose pointee is
+  the Go mirror. A by-value `T` parameter is a build error with the fix "take `T *` or `T const &`",
+  because a by-value aggregate would have to be split across registers or spilled to the stack, and
+  the trampoline does neither.
+- A POD **result** comes back by value and is written into Go storage: from the return registers when
+  it is at most 16 bytes and every eightbyte is INTEGER or SSE, or through the hidden sret pointer,
+  aimed at the Go value, when the ABI classifies it MEMORY. The offset checks above are what make the
+  destination safe in both cases.
 - A record with a non-public field is not mirrored: it is opaque, constructible through a
   constructor, and passes only as `*T`.
 
@@ -304,8 +319,9 @@ Four sources, four shapes, all `errors.Is`/`errors.As`-friendly and wrapped with
    function with `-status <qualified name>`: `0` means success, non-zero means the library stored a
    message in `cppgo_last_error()`. The Go binding returns `error` instead of the integer and wraps
    the message in `*cppgo.CallError{Symbol, Err}`, which formats as
-   `cppgo: mathx::histogram: <message>`. Marking a function whose return type is not a 32-bit
-   integer is a generation error.
+   `cppgo: mathx::histogram: <message>`. A status function returns *only* `error`: a function that
+   must also produce a value writes it through a pointer argument, which arrives as its own Go
+   parameter. Marking a function whose return type is not a 32-bit integer is a generation error.
 4. **Use after close.** `cppgo.ErrClosed`, returned by `Close` on a dead object and by a runtime
    `Library` that has been closed.
 
