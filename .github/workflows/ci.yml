@@ -1,7 +1,17 @@
 name: CI
 
-# Build, vet, lint, race-test and enforce the 99% coverage contract from
-# DESIGN.md on every push and pull request. Releases are handled by release.yml.
+# Runs the suite inside the project's pinned image, ghcr.io/manu343726/cppgo-ci,
+# instead of on ubuntu-latest.
+#
+# Why: the runner used to supply the toolchain, and when its image stopped
+# shipping libclang, internal/cxx silently skipped itself and the 99% coverage
+# gate failed for a reason that had nothing to do with the code. The image pins
+# Go, g++ 14, clang/libclang 19, golangci-lint and hugo (see Dockerfile), so the
+# environment is a reviewed artefact rather than whatever the runner has today.
+#
+# A single Go version is tested on purpose: bumping Go is a Dockerfile ARG
+# change, reviewed like any other dependency. The second job keeps an eye on
+# newer Go releases by checking that the library still compiles with them.
 
 on:
   push:
@@ -14,6 +24,9 @@ on:
 
 permissions:
   contents: read
+  # The image is a private GHCR package; the job authenticates with the
+  # workflow token to pull it.
+  packages: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -28,42 +41,24 @@ env:
 
 jobs:
   test:
-    name: test (go ${{ matrix.go }})
+    name: test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        go:
-          - stable
-          - '1.25.x'
+    container:
+      image: ghcr.io/manu343726/cppgo-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go ${{ matrix.go }}
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go }}
-          check-latest: true
-          cache: true
-
-      - name: Install C++ toolchain
+      - name: Show the pinned toolchain
         run: |
-          # ubuntu-latest ships g++ already; this is a guard, not a payload.
-          if ! command -v g++ >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends build-essential
-          fi
+          go version
           g++ --version | head -n 1
-
-      - name: Install libclang (the generator parses C++ headers with it)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
-          # internal/cxx skips itself when libclang is absent, which silently
-          # drops its coverage and fails the gate. Fail loudly instead.
-          ls /usr/lib/llvm-*/lib/libclang.so* 2>/dev/null || {
-            echo "::error::libclang not found after installing libclang-dev"; exit 1; }
+          clang --version | head -n 1
+          golangci-lint --version
+          hugo version
 
       - name: Build without cgo (the no-cgo contract)
         run: CGO_ENABLED=0 go build ./...
@@ -72,10 +67,7 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.15.0
-          args: --timeout=5m
+        run: golangci-lint run --timeout=8m
 
       - name: Test without cgo (proves the library needs no cgo)
         run: CGO_ENABLED=0 go test -count=1 ./...
@@ -88,14 +80,36 @@ jobs:
       - name: Coverage gate (>= 99%)
         run: ./scripts/coverage-gate.sh coverage.out "${COVERAGE_THRESHOLD}"
 
-      - name: Build C++ example fixtures
+      - name: Build the examples
         run: ./scripts/build-examples.sh
 
       - name: Upload coverage profile
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-go${{ matrix.go }}
+          name: coverage
           path: coverage.out
           if-no-files-found: warn
           retention-days: 14
+
+  build-latest-go:
+    name: build with the latest Go
+    # Forward-compatibility smoke test only: no coverage, no libclang. It answers
+    # one question — does the library still compile with a Go newer than the one
+    # the image pins? — so a toolchain bump is never a surprise.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go (latest)
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Build without cgo
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./...
