@@ -95,6 +95,8 @@ Point centroid(const Point *ps, std::size_t n);
 
 package mathx
 
+import "github.com/Manu343726/cppgo"
+
 // Point is mathx::Point: a POD, 16 bytes, fields at offsets 0 and 8.
 type Point struct {
 	X float64
@@ -209,7 +211,7 @@ not 64-bit is a generation error, not a silent reinterpretation.
 | `size_t`, `uintptr_t` | `uint64` | the length half of a slice pair is not visible in Go |
 | `float`, `double` | `float32`, `float64` | |
 | `wchar_t`, `char16_t`, `char32_t` | `int32`, `uint16`, `uint32` | validated by size |
-| `T *`, `T &` (parameter) | `*T` or `[]T` | see the slice and string rules below |
+| `T *`, `T &` | `*T` | borrowed; `[]T` for the pair form below |
 | `(const T *p, size_t n)` | `[]T` | one Go parameter; T scalar, enum or POD |
 | `(const char *p, size_t n)` | `string` | one Go parameter; not NUL-terminated |
 | enum | named integer type | underlying type from libclang |
@@ -243,10 +245,9 @@ caller-provided slice, or returns a POD or a pointer. That is a deliberate limit
 
 ## POD layout
 
-A record is a **POD** for cppgo when it has no virtual functions, no virtual or non-public base
-class, no user-declared or deleted copy/move operation or destructor, and every field is public. It
-is then standard-layout and trivially copyable, and its Go mirror is the same fields in declaration
-order.
+A record is a **POD** for cppgo when it has no virtual functions, no base class, no user-declared or
+deleted copy/move operation or destructor, and every field is public. It is then standard-layout and
+trivially copyable, and its Go mirror is the same fields in declaration order.
 
 - Scalars, enums, fixed-size arrays of them, and nested PODs are what a POD field may be. Bitfields,
   anonymous members, references, pointers, `union` members and non-POD members are a build error
@@ -284,8 +285,9 @@ cppgo: <file>:<line>: <qualified C++ name>: <what is wrong>; <the fix>
 | register exhaustion | `cppgo: include/mathx/big.hpp:14: mathx::big_call: needs 7 integer argument registers and the ABI has 6; group the arguments into a POD or pass a slice` |
 | name collision | `cppgo: include/mathx/a.hpp:6: mathx::scale: maps to Go name Scale, already used by mathx::Vector::scale; rename one of them` |
 
-`-force`, `-no-verify` and any other flag that emits an unvalidated binding do not exist. There is no
-path from an uninspectable declaration to a trampoline.
+There is no flag that emits an unvalidated binding: `-force` belonged to the v2 directive path and
+is retired with it, and so is the annotation tier. There is no path from an uninspectable
+declaration to a trampoline.
 
 ## The error model
 
@@ -318,7 +320,8 @@ usable headers would then be unbindable.
 
 ## The ABI it calls
 
-Itanium C++ ABI on SysV AMD64, which is what the host and the generator both measure:
+Itanium C++ ABI on SysV AMD64, which is what the generator validates against and the trampoline
+implements:
 
 - Integer and pointer arguments: `RDI, RSI, RDX, RCX, R8, R9` in order.
 - Float arguments: `XMM0…XMM7` in order; the two files are independent.
@@ -412,9 +415,9 @@ cppgo check ...        # same run, writes nothing, exits 1 when a file is stale
   the ELF symbol table every binding is checked against.
 - **Selection.** With no `-bind`, every public declaration in the headers is a root. Every type that
   appears in a bound signature is generated too (the type closure), even when it is not a root.
-  `-bind` adds a root (a class, a struct, a function, or a namespace, which selects what it contains)
-  and `-exclude` removes one. They name declarations; they never describe a signature. An unmatched
-  `-bind` or `-exclude` is a generation error, so a typo cannot silently shrink the API.
+  `-bind` adds a root (a namespace, which selects what it contains; a class or struct; a member; or
+  a function) and `-exclude` removes one. They name declarations; they never describe a signature. An
+  unmatched `-bind` or `-exclude` is a generation error, so a typo cannot silently shrink the API.
 - **Compilation flags** come from `compile_commands.json` and `.clangd`, in clangd's order, never
   invented: `-compile-commands` explicitly, else the nearest database walking up from the header
   (honouring `CompileFlags.CompilationDatabase`), else `.clangd`'s `CompileFlags.Add/Remove/Compiler`.
