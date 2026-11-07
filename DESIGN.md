@@ -321,20 +321,33 @@ Rules that the API shape follows:
   every public field (`Field()` / `SetField(v)`, mapped by the same type map). Bitfields, packed
   layouts, private members, non-POD members, and a layout libclang could not complete all take this
   path; **nothing is left unreachable** and nothing is refused.
+- **Members are modelled by kind.** A record carries its public data fields (`Field`: type, access,
+  byte offset); its constructors, destructor, methods and static member functions (`Record.Members`
+  for a specialisation, the project's symbols otherwise); **operators** (`Symbol.IsOperator`,
+  `Symbol.Operator`) and **conversion operators** (`Symbol.IsConversion`, target type in
+  `Symbol.Result`); **static data members** (`Record.StaticFields`: type, access, `IsConst`, the
+  definition's mangled name); **nested types** as records of their own (`Outer::Inner`); and **member
+  function templates** as patterns (`Record.MemberTemplates`) plus the concrete instantiations the
+  manifest names (`Project.InstantiateMember`). A member function template without an instantiation
+  is not bindable, and the error names the `-instantiate` entry to add.
 - **Template specialisations are records read through their pattern.** libclang does not expose the
   instantiated definition's cursor children and may defer its layout, so the model instantiates the
   pattern's fields and members with the template arguments and reads the specialisation type for
   whatever layout it can provide. `Record.LayoutKnown` says which case applies: **true** → the Go
   type is the mirrored struct (fields at their offsets, compile-time assertions); **false** → the
-  same type is opaque with field accessors. Either way every public field and every member is in the
-  model, and `Get()` is generated. A specialisation reached only through a field's type is built
-  from that type, so `BoxHolder` makes `Box<double>` part of the API.
+  same type is opaque with field accessors. Either way the record's fields, members, operators,
+  static data and nested types are in the model; a member template is present as its pattern until
+  an instantiation is named. A specialisation reached only through a field's type is built from that
+  type, so `BoxHolder` makes `Box<double>` part of the API.
 - **`New<Type>()` and `Clone()` are promised only when the model can classify the record.**
   `Record.IsDefaultConstructible` is true for a non-deleted zero-argument constructor, or no
-  user-declared constructor with trivially constructible fields; `IsCopyConstructible` is true for a
-  non-deleted copy constructor, or no user-declared copy/move constructor with trivially copyable
-  fields. When they are false no `New`/`Clone` is generated, and the generated shim's compile is the
-  final check that a promise made is a promise kept.
+  user-declared constructor and every field trivially constructible: a scalar, pointer, enum, a
+  fixed-size array of those, or a record the model classified as trivially copyable and POD or
+  default-constructible. `IsCopyConstructible` is true for a non-deleted copy constructor, or no
+  user-declared copy/move constructor and every field trivially copyable by the same rule.
+  `Fixed<double,4>` (an array of doubles) qualifies; an array of a non-trivial record does not.
+  When they are false no `New`/`Clone` is generated, and the generated shim's compile is the final
+  check that a promise made is a promise kept.
 - **Class → Go struct with methods.** Methods call the thunk that performs real C++ dispatch, so a
   virtual method on a `*Shape` runs the most-derived override.
 - **Ownership and views.** An owning value carries the destructor of the type it was **constructed
@@ -414,11 +427,19 @@ func Share(v *Vector) (*Vector, error)
 // BoxInt is mathx::Box<int>, instantiated by the manifest. When libclang can
 // complete the instantiation it is this mirrored struct and the field offsets
 // are asserted; when it cannot, the same value is opaque (obj *cppgo.Object)
-// with Value()/SetValue() accessors. Get() is generated either way.
+// with Value()/SetValue() accessors. The members are generated either way.
 type BoxInt struct {
 	Value int32
 }
 func (b *BoxInt) Get() (int32, error)
+func (b *BoxInt) Int() (int32, error)     // operator int, named after its target
+func (b *BoxInt) ConvertFloat64(input float64) (float64, error)
+                                          // convert<double>, from -instantiate
+func BoxIntShared() (int32, error)        // static data: shared
+func BoxIntSetShared(value int32)         // ...and its setter, shared is not const
+type BoxIntInner struct {                 // nested type; same LayoutKnown rule
+	Inner int32
+}
 func NewBoxInt() (*BoxInt, error)         // when the record is default-constructible
 func (b *BoxInt) Clone() (*BoxInt, error) // when it is copy-constructible
 
@@ -493,7 +514,14 @@ not 64-bit is a generation error, not a silent reinterpretation.
 | mirrorable record, by value | `T` | the Go struct *is* the C layout |
 | non-POD record, by value | `*T` | the thunk copies into the call; `T` owns Go-pinned storage |
 | mirrorable record, `T &` | `*T` | writes are visible in the Go value |
+| `T[N]` (record field) | `[N]T` | fixed-size array; a dependent bound is resolved from the template argument |
 | `std::` types | as in the table above | always through a thunk |
+
+A C array parameter decays to a pointer at the C++ boundary and maps by the pointer rule; only
+record fields are arrays. A field of array type in a mirrored record is `[N]T`; in an opaque record
+the accessor returns `[N]T` and the setter takes one, copied element by element. A dependent `T[N]`
+in a specialisation is resolved when the arguments are substituted, so `Fixed<double,4>::values` is
+a `[4]float64` field (or its accessor).
 
 A pointer parameter followed by a length parameter of integer type becomes a slice: the pointer is
 the data, the length is `len(slice)`, and the slice is borrowed for the call. **One length may serve
@@ -537,6 +565,41 @@ reached through a one-line C++ wrapper with a representable signature.
   class. A non-destructor C++ member that maps to `Close` collides with the destructor and needs
   `-rename`; a free function mapping to `Open` collides with the package entry point and needs one
   too. A destructor is never a collision: it *is* `Close`.
+- A **nested type** is the outer Go name followed by its own: `mathx::Operators::Entry` →
+  `OperatorsEntry`, `mathx::Box<int>::Inner` → `BoxIntInner`; deeper nesting concatenates in order.
+  A collision needs `-rename`.
+- A **conversion operator** is named after its target Go type: `operator int` → `Int()`,
+  `operator double` → `Float64()`, `operator std::string` → `String()`, `operator bool` → `Bool()`;
+  a record or pointer target is `As<RecordName>` (`operator mathx::Vector` → `AsVector`). A collision
+  with another member needs `-rename`.
+- **Operators take a fixed name.** The table below is the whole rule; anything not in it, or a
+  collision, is a generation error asking for `-rename '<qualified signature>=<GoName>'`:
+
+  | C++ | Go | C++ | Go |
+  |---|---|---|---|
+  | `operator+` | `Add` | `operator==` | `Equal` |
+  | `operator-` (binary) | `Sub` | `operator!=` | `NotEqual` |
+  | `operator-` (unary) | `Neg` | `operator<` | `Less` |
+  | `operator*` | `Mul` | `operator<=` | `LessOrEqual` |
+  | `operator/` | `Div` | `operator>` | `Greater` |
+  | `operator%` | `Mod` | `operator>=` | `GreaterOrEqual` |
+  | `operator[]` | `At` | `operator=` (copy assignment) | `Assign` |
+  | `operator()` | `Call` | `operator++` / `operator--` | `Inc` / `Dec` |
+  | `operator&` / `|` / `^` / `~` | `BitAnd` / `BitOr` / `BitXor` / `BitNot` | `operator&&` / `||` / `!` | `And` / `Or` / `Not` |
+  | `operator+=`, `-=`, `*=`, … | `AddAssign`, `SubAssign`, `MulAssign`, … | `operator<<` / `>>` on a stream | `WriteTo` / `ReadFrom` |
+
+  `operator<<` and `operator>>` are `ShiftLeft`/`ShiftRight` when neither operand is a stream type.
+  `operator new`/`operator delete` are allocation hooks; the Go side allocates, so they are not bound
+  as ordinary members and need `-rename` if a caller really needs the C++ hook.
+- A **static data member** is a package function `<Type><Field>()` returning the value (the getter
+  copies for `std::string`/containers, per the type map), and `<Type>Set<Field>(v)` only when it is
+  not `const`. `mathx::Operators::counter` → `OperatorsCounter()` / `OperatorsSetCounter(v)`;
+  `limit` (const) has only the getter. A static data member of a specialisation takes the
+  specialisation's Go name: `BoxIntShared()`.
+- A **member function template** is bound for each instantiation the manifest names
+  (`-instantiate 'mathx::Box<int>::convert<double>'`) or that a bound signature reaches; the Go name
+  follows the function rule on the instantiated signature (`convert<double>` → `ConvertFloat64`).
+  Selecting the pattern without an instantiation is an error naming the instantiation to add.
 - When the derived name collides with another binding, the manifest supplies the name:
   `-rename 'mathx::Vector::dot(const double *)'=DotSlice`. A `-rename` that matches nothing is an
   error, so a typo cannot silently do nothing.
@@ -738,6 +801,7 @@ representable. None of these is "this construct cannot be bound":
 | input | the error names | what the user supplies |
 |---|---|---|
 | a template selected as a root (or reached) with no concrete instantiation | the template and the parameter that is unknown | `-instantiate 'mathx::Box<int>'` |
+| a member function template selected (or reached) with no instantiation | the member template and its parameters | `-instantiate 'mathx::Box<int>::convert<double>'` |
 | two bindings that map to one Go name and no suffix separates them | both declarations | `-rename '<qualified signature>=<GoName>'` |
 | `long double` / `__int128` in a signature | the parameter or result | a C++ wrapper with a representable type |
 | an incomplete type used where a value is needed | the type and the use | include the definition |

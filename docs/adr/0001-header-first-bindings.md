@@ -92,7 +92,10 @@ The costs, stated rather than hidden:
   instantiated definition and may defer its layout, so the model instantiates the pattern's fields
   and members itself and reports a layout only when libclang completes the type
   (`Record.LayoutKnown`). The specialisation is a member-bearing record either way; when the layout
-  is unknown its Go value is opaque with field accessors instead of a mirrored struct.
+  is unknown its Go value is opaque with field accessors instead of a mirrored struct. The same
+  synthesis covers conversion operators, operators, static data members and nested types; a member
+  function template is bound only for a named instantiation, and its pattern alone is an input the
+  manifest completes.
 - **The binary-inference tier no longer produces bindings.** It is kept as the ELF cross-check for
   direct symbols; an unvalidated binding is not emitted.
 - The generator requires libclang at generation time (it already did), and its golden tests must
