@@ -4,9 +4,9 @@ description = "Bind one free C++ function and call it from Go: the header, the d
 weight = 10
 +++
 
-We will bind one free function — the smallest end-to-end path. No objects, no
-slices, no library layout to think about. The point is to see the complete loop:
-a declaration, a generator run, a symbol, a call.
+This tutorial binds one free function — the smallest end-to-end path. No objects,
+no slices, no library layout to think about. The point is to see the complete
+loop: a declaration, a generator run, a symbol, a call.
 
 ## The C++ side
 
@@ -146,7 +146,7 @@ it needed no C toolchain to build, and it contains no `import "C"`.
 
 ## What just happened
 
-The generated wrapper did five things, in this order:
+The generated wrapper did four things, in this order:
 
 ```go
 func cppgoCallAdd(a int32, b int32) int32 {
@@ -162,12 +162,16 @@ func cppgoCallAdd(a int32, b int32) int32 {
   has no `error` result to return.
 - `ProbeStack` made sure the C++ frame cannot grow past the goroutine's stack
   guard.
-- The trampoline loaded `fn` into `R12`, `a` into `RDI`, `b` into `RSI`, aligned
-  `RSP`, called, and read the result from `RAX`.
+- `cppgo__ZN5mathx3addEii` is the generated trampoline: it moves the arguments
+  into registers, switches to an aligned stack, calls the symbol and returns the
+  result.
 - The wrapper narrowed the `int64` mirror back to the declared `int32`.
 
-That is the entire cost of the boundary: no `entersyscall`, no `P` handoff, no
-`g0` stack switch.
+That is the whole boundary. Why the trampoline is assembly, which register
+carries what, and what the collector does with a foreign frame are in [How it
+works]({{< ref "project/architecture.md" >}}) and [register
+assignment]({{< ref "manual/calling-convention.md" >}}); this page is the
+end-to-end path.
 
 ## Break it on purpose
 

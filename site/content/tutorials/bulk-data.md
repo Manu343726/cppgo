@@ -30,13 +30,12 @@ for i := 0; i < 10_000_000; i++ {
 }
 ```
 
-On the machine measured for [benchmarks]({{< ref "project/benchmarks.md"
->}}) — a Ryzen 7 6800HS pinned to **964 MHz** — the trampoline measured
-**13.9 ns** per call (~13 cycles; the nanoseconds are inflated by the clock, so
-treat them as a frozen-CPU figure). Ten million calls at 13.9 ns is about
-**139 ms** of boundary alone, before the C++ function does any work, and it also
-forces the loop to stay scalar: each `at` is an opaque call the compiler cannot
-vectorise across.
+On the CPU described in [benchmarks]({{< ref "project/benchmarks.md" >}}) —
+8-core x86-64, pinned to **964 MHz** — the trampoline measured **13.9 ns** per
+call (~13 cycles; the nanoseconds are inflated by the clock, so treat them as a
+frozen-CPU figure). Ten million calls at 13.9 ns is about **139 ms** of boundary
+alone, before the C++ function does any work, and it also forces the loop to stay
+scalar: each `at` is an opaque call the compiler cannot vectorise across.
 
 The 13.9 ns is not the objection by itself — the objection is the shape. A
 per-element API hands the C++ compiler one element at a time and forbids every
@@ -105,16 +104,10 @@ func Dot(xs, ys []float64) float64
 
 Each Go slice spends **two** C++ parameters, at its own position: pointer, then
 length. That is why `saxpy` takes `x, x_len, y, y_len` and not a single shared
-`n`. The register assignment follows the declaration order exactly:
-
-| slot | register | value |
-|---|---|---|
-| `alpha` | `XMM0` | the scale |
-| `x` | `RDI` | `&x[0]` |
-| `x_len` | `RSI` | `len(x)` |
-| `y` | `RDX` | `&y[0]` |
-| `y_len` | `RCX` | `len(y)` |
-| result (dot) | `XMM0` | the `double` |
+`n` — the arguments are assigned to `RDI`, `RSI`, `RDX`, `RCX` in declaration
+order, and a `double` takes an XMM slot instead of an integer one
+([register assignment]({{< ref "manual/calling-convention.md" >}}) has the whole
+table).
 
 A C++ signature `saxpy(double, const double *, double *, std::size_t)` with one
 shared `n` does **not** match: it has four parameters, the Go declaration
