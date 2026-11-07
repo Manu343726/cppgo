@@ -68,10 +68,17 @@ func TestSpecializationWithoutCompletedLayout(t *testing.T) {
 	assert.Equal(t, TypeInteger, box.Fields[0].Type.Kind)
 	assert.Equal(t, int64(-1), box.Fields[0].OffsetBytes, "the model has no offset to report")
 
-	require.Len(t, box.Members, 1)
-	assert.Equal(t, "mathx::Box<int>::get", box.Members[0].QualifiedName)
-	assert.Equal(t, "int", box.Members[0].Result.Spelling)
-	assert.Empty(t, box.Members[0].Mangled, "a template instantiation is carried by a thunk")
+	var memberNames []string
+	for _, member := range box.Members {
+		memberNames = append(memberNames, member.QualifiedName)
+	}
+	assert.ElementsMatch(t, []string{
+		"mathx::Box<int>::get",
+		"mathx::Box<int>::operator int",
+	}, memberNames)
+	get := box.Members[0]
+	assert.Equal(t, "int", get.Result.Spelling)
+	assert.Empty(t, get.Mangled, "a template instantiation is carried by a thunk")
 }
 
 func TestSpecializationConstructorsAndMethods(t *testing.T) {
@@ -148,7 +155,10 @@ func TestSpecializationsReachedThroughAFieldType(t *testing.T) {
 	assert.Equal(t, int64(4), fixed.TemplateArguments[1].Value)
 	require.Len(t, fixed.Fields, 1)
 	assert.Equal(t, "double[4]", fixed.Fields[0].Type.Spelling, "the bound is substituted")
-	assert.False(t, fixed.IsDefaultConstructible, "an array field is not trivially constructible to the model")
+	assert.True(t, fixed.IsDefaultConstructible, "an array of doubles is trivially constructible")
+	assert.True(t, fixed.IsCopyConstructible)
+	assert.Equal(t, int64(4), fixed.Fields[0].Type.ArraySize)
+	assert.Equal(t, TypeFloat, fixed.Fields[0].Type.Element.Kind, "the dependent element is resolved")
 
 	// A parameter pack is one argument whose spelling is the whole list.
 	pack, ok := tu.Record("mathx::Pack<int,double>")

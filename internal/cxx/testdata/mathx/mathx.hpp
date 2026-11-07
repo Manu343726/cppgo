@@ -161,6 +161,13 @@ struct UsesForward {
     Forward *pointer;
 };
 
+// Composition of trivially constructible fields, for the constructibility
+// predicate: a nested trivial record and an array of them.
+struct HasPair {
+    Pair pair;
+    Pair pairs[2];
+};
+
 union Value {
     int i;
     float f;
@@ -170,6 +177,11 @@ template <typename T>
 struct Box {
     T value;
     T get() const { return value; }
+    template <typename U>
+    U convert(U input) const { return input; }
+    operator T() const { return value; }
+    static T shared;
+    struct Inner { T inner; };
 };
 template struct Box<int>;
 
@@ -208,6 +220,19 @@ struct Pack {
     int n;
 };
 template struct Pack<int, double>;
+
+// The member kinds the contract names: operators, a conversion operator,
+// static data (mutable and const), and a nested type.
+struct Operators {
+    int value;
+    int operator+(const Operators &other) const;
+    bool operator==(const Operators &other) const;
+    int &operator[](int index);
+    operator int() const;
+    static int counter;
+    static const int limit = 3;
+    struct Entry { int index; };
+};
 
 // A derived specialization: the base name is substituted, and the thunk has to
 // adjust this for the base subobject.

@@ -326,6 +326,23 @@ func (p *Project) Members(parent string) []Symbol {
 	return out
 }
 
+// InstantiateMember returns the concrete instantiation of a member function
+// template of a record: the pattern's signature with the class and member
+// arguments substituted. It is the model half of the manifest's
+// `-instantiate` entry; a member template with no instantiation is not
+// bindable, and the emitter reports the entry to add.
+func (p *Project) InstantiateMember(record, member string, args []TemplateArgument) (Symbol, bool) {
+	p.mu.Lock()
+	tus := append([]*TU(nil), p.tus...)
+	p.mu.Unlock()
+	for _, tu := range tus {
+		if sym, ok := tu.InstantiateMember(record, member, args); ok {
+			return sym, true
+		}
+	}
+	return Symbol{}, false
+}
+
 // Records returns every record definition the project knows about, merged
 // across translation units and in first-sighting order.
 func (p *Project) Records() []Record {

@@ -144,10 +144,16 @@ func TestProjectMissingBodies(t *testing.T) {
 	sort.Strings(names)
 	assert.Equal(t, []string{
 		"mathx::Both::both",
+		"mathx::Box::convert",
 		"mathx::Box::get",
+		"mathx::Box::operator type-parameter-0-0",
 		"mathx::Left::left",
 		"mathx::NoCopy::NoCopy<T>",
 		"mathx::NoCopy::NoCopy<T>",
+		"mathx::Operators::operator int",
+		"mathx::Operators::operator+",
+		"mathx::Operators::operator==",
+		"mathx::Operators::operator[]",
 		"mathx::Pair2::Pair2<T>",
 		"mathx::Pair2::sum",
 		"mathx::Pair2::~Pair2<T>",

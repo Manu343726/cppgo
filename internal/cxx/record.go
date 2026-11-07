@@ -2,6 +2,7 @@ package cxx
 
 import (
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -166,6 +167,12 @@ type Record struct {
 	Fields []Field
 	// Bases are the base classes in declaration order.
 	Bases []Base
+	// StaticFields are the static data members, in declaration order.
+	StaticFields []StaticField
+	// MemberTemplates are the member function templates of a specialisation,
+	// as patterns. A concrete instantiation is obtained with
+	// TU.InstantiateMember; the pattern alone is not bindable.
+	MemberTemplates []Symbol
 	// Members are the constructors, destructor and methods of a template
 	// specialisation, synthesised from its pattern. libclang does not expose
 	// the instantiated definition's cursor children, so the pattern is the only
@@ -185,6 +192,34 @@ type Record struct {
 	// DeclFile and DeclLine locate the definition.
 	DeclFile string
 	DeclLine int
+}
+
+// StaticField is one static data member: a value that belongs to the class, not
+// to an instance. The generated Go API reads it through a package function
+// `<Type><Field>()` and writes it through `<Type>Set<Field>` only when it is
+// non-const.
+type StaticField struct {
+	// Name is the member name as written.
+	Name string
+	// Type is the classified type, the same shape a parameter has.
+	Type Param
+	// Access is the C++ visibility inside the record.
+	Access Access
+	// IsConst is true for a `static const` member: no setter is generated.
+	IsConst bool
+	// Mangled is the symbol of the definition, or empty when libclang has none
+	// (a template pattern's static member is spelled per instantiation).
+	Mangled string
+}
+
+// memberTemplate is a member function template kept for on-demand
+// instantiation: the pattern cursor plus the class-level substitution that
+// turns its owner's parameters into the specialisation's arguments.
+type memberTemplate struct {
+	cursor  CXCursor
+	class   substitution
+	record  string
+	member  string
 }
 
 // Enumerator is one value of an enum.
@@ -223,6 +258,7 @@ type Enum struct {
 // questions asked of them, and keeping the walks apart keeps each one readable.
 type recordExtractor struct {
 	l       *Libclang
+	tu      *TU
 	records []Record
 	byName  map[string]int
 	enums   []Enum
@@ -234,9 +270,11 @@ type recordExtractor struct {
 func (tu *TU) extractRecords() {
 	ex := &recordExtractor{
 		l:      tu.l,
+		tu:     tu,
 		byName: make(map[string]int),
 		byEnum: make(map[string]int),
 	}
+	tu.memberTemplates = make(map[string]memberTemplate)
 	// The symbol walk has already proven the handle open; a second walk of the
 	// same translation unit cannot fail for a different reason, so its error is
 	// the same "the handle is closed" answer the symbol walk already returned.
@@ -331,7 +369,7 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 
 	facts := ctorFacts{}
 	if isSpecialization {
-		e.synthesizeSpecialization(&rec, pattern, typ, &facts)
+		e.synthesizeSpecialization(&rec, pattern, typ, &facts, e.l.substitution(pattern, rec.TemplateArguments))
 	} else {
 		e.collectChildren(&rec, decl, typ, &facts)
 	}
@@ -349,7 +387,7 @@ func (e *recordExtractor) finishRecord(rec *Record, facts ctorFacts) {
 			rec.IsPolymorphic = true
 		}
 	}
-	rec.IsDefaultConstructible, rec.IsCopyConstructible = facts.constructible(rec.Fields)
+	rec.IsDefaultConstructible, rec.IsCopyConstructible = e.constructible(facts, rec.Fields)
 	rec.LayoutKnown = rec.SizeBytes > 0 && rec.AlignBytes > 0
 	for _, field := range rec.Fields {
 		if field.Type.SizeBytes < 0 || field.OffsetBytes < 0 && !field.IsBitField {
@@ -415,7 +453,7 @@ func (e *recordExtractor) recordFromSpecialization(decl, pattern CXCursor) (Reco
 	rec.IsTrivial = !e.l.nonTrivialRecord(decl, 0)
 	rec.IsPolymorphic = e.l.polymorphic(decl, 0)
 	facts := ctorFacts{}
-	e.synthesizeSpecialization(&rec, pattern, typ, &facts)
+	e.synthesizeSpecialization(&rec, pattern, typ, &facts, e.l.substitution(pattern, args))
 	e.finishRecord(&rec, facts)
 	return rec, true
 }
@@ -430,7 +468,12 @@ func (e *recordExtractor) collectChildren(rec *Record, decl CXCursor, typ CXType
 			e.addTypeSpecialization(child)
 		case cursorBaseSpecifier:
 			rec.Bases = append(rec.Bases, e.collectBase(decl, child))
-		case cursorCXXMethod, cursorConstructor, cursorDestructor:
+		case cursorVarDecl:
+			field := e.collectStaticField(child)
+			if field.Name != "" {
+				rec.StaticFields = append(rec.StaticFields, field)
+			}
+		case cursorCXXMethod, cursorConversionFunction, cursorConstructor, cursorDestructor:
 			if e.l.f.methodIsVirtual(child) != 0 {
 				rec.HasVirtualFunction = true
 				rec.IsPolymorphic = true
@@ -438,6 +481,9 @@ func (e *recordExtractor) collectChildren(rec *Record, decl CXCursor, typ CXType
 			if e.l.f.getCursorKind(child) == cursorConstructor {
 				facts.add(e.l, child)
 			}
+		case cursorFunctionTemplate:
+			e.registerMemberTemplate(rec.QualifiedName, child, substitution{})
+			rec.MemberTemplates = append(rec.MemberTemplates, e.synthesizeMember(child, rec, substitution{}))
 		}
 		return visitContinue
 	})
@@ -447,8 +493,7 @@ func (e *recordExtractor) collectChildren(rec *Record, decl CXCursor, typ CXType
 // libclang does not expose the instantiated definition's children. The pattern's
 // fields and members are copied with the template arguments substituted, and the
 // specialisation type is asked for whatever layout it can provide.
-func (e *recordExtractor) synthesizeSpecialization(rec *Record, pattern CXCursor, specType CXType, facts *ctorFacts) {
-	sub := e.l.substitution(pattern, rec.TemplateArguments)
+func (e *recordExtractor) synthesizeSpecialization(rec *Record, pattern CXCursor, specType CXType, facts *ctorFacts, sub substitution) {
 	_ = e.l.visit(pattern, func(child, parent CXCursor) int32 {
 		switch e.l.f.getCursorKind(child) {
 		case cursorFieldDecl:
@@ -456,12 +501,21 @@ func (e *recordExtractor) synthesizeSpecialization(rec *Record, pattern CXCursor
 			field.Type = sub.param(field.Type)
 			field.OffsetBytes = e.l.typeFieldOffset(specType, field.Name)
 			rec.Fields = append(rec.Fields, field)
+		case cursorVarDecl:
+			field := e.collectStaticField(child)
+			field.Type = sub.param(field.Type)
+			field.Mangled = ""
+			if field.Name != "" {
+				rec.StaticFields = append(rec.StaticFields, field)
+			}
+		case cursorClassDecl, cursorStructDecl, cursorUnionDecl:
+			e.synthesizeNestedRecord(rec, child, sub)
 		case cursorBaseSpecifier:
 			base := e.collectBase(pattern, child)
 			base.QualifiedName = e.specializedBaseName(base.QualifiedName, child, sub)
 			base.OffsetBytes = -1
 			rec.Bases = append(rec.Bases, base)
-		case cursorCXXMethod, cursorConstructor, cursorDestructor:
+		case cursorCXXMethod, cursorConversionFunction, cursorConstructor, cursorDestructor:
 			kind := e.l.kind(child)
 			if kind == Method || kind == Destructor {
 				if e.l.f.methodIsVirtual(child) != 0 {
@@ -473,6 +527,11 @@ func (e *recordExtractor) synthesizeSpecialization(rec *Record, pattern CXCursor
 				facts.add(e.l, child)
 			}
 			rec.Members = append(rec.Members, e.synthesizeMember(child, rec, sub))
+		case cursorFunctionTemplate:
+			e.registerMemberTemplate(rec.QualifiedName, child, sub)
+			member := e.synthesizeMember(child, rec, sub)
+			member.IsTemplate = true
+			rec.MemberTemplates = append(rec.MemberTemplates, member)
 		}
 		return visitContinue
 	})
@@ -539,7 +598,110 @@ func (e *recordExtractor) synthesizeMember(cursor CXCursor, rec *Record, sub sub
 			member.Params = append(member.Params, sub.param(e.l.param(e.l.f.getArgType(funcType, i))))
 		}
 	}
+	member.IsOperator, member.Operator, member.IsConversion = operatorInfo(e.l.str(e.l.f.getCursorSpelling(cursor)), member.Result)
+	if member.IsConversion && member.Operator != "" {
+		// libclang spells a dependent conversion "operator type-parameter-0-0";
+		// the instantiation's name is the substituted target type.
+		member.QualifiedName = rec.QualifiedName + "::operator " + member.Operator
+	}
 	return member
+}
+
+// collectStaticField reads one static data member.
+func (e *recordExtractor) collectStaticField(cursor CXCursor) StaticField {
+	typ := e.l.f.getCursorType(cursor)
+	return StaticField{
+		Name:    e.l.str(e.l.f.getCursorSpelling(cursor)),
+		Type:    e.l.param(typ),
+		Access:  e.l.access(cursor),
+		IsConst: e.l.f.isConstQualifiedType(typ) != 0,
+		Mangled: e.l.str(e.l.f.cursorMangling(cursor)),
+	}
+}
+
+// registerMemberTemplate keeps a member function template for on-demand
+// instantiation. Only a concrete instantiation has a signature the generator
+// can bind; the pattern alone is an input the manifest completes.
+func (e *recordExtractor) registerMemberTemplate(record string, cursor CXCursor, class substitution) {
+	if e.tu == nil {
+		return
+	}
+	member := e.l.str(e.l.f.getCursorSpelling(cursor))
+	if member == "" {
+		return
+	}
+	key := record + "::" + member
+	if _, exists := e.tu.memberTemplates[key]; exists {
+		return
+	}
+	e.tu.memberTemplates[key] = memberTemplate{cursor: cursor, class: class, record: record, member: member}
+}
+
+// synthesizeNestedRecord builds the record for a nested type of a template
+// specialisation, with the outer class arguments substituted.
+func (e *recordExtractor) synthesizeNestedRecord(outer *Record, cursor CXCursor, sub substitution) {
+	if e.l.f.isCursorDefinition(cursor) == 0 {
+		return
+	}
+	full, ok := e.l.qualifiedName(cursor)
+	if !ok {
+		return
+	}
+	simple := full
+	if i := strings.LastIndex(simple, "::"); i >= 0 {
+		simple = simple[i+2:]
+	}
+	nested := Record{
+		QualifiedName: outer.QualifiedName + "::" + simple,
+		Kind:          e.recordKind(cursor),
+		SizeBytes:     -1,
+		AlignBytes:    -1,
+	}
+	nested.DeclFile, nested.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
+	if _, exists := e.byName[nested.QualifiedName]; exists {
+		return
+	}
+	facts := ctorFacts{}
+	e.synthesizeSpecialization(&nested, cursor, e.l.f.getCursorType(cursor), &facts, sub)
+	e.finishRecord(&nested, facts)
+	e.addRecord(nested)
+}
+
+// InstantiateMember returns the concrete instantiation of a member function
+// template: the pattern's signature with both the class and the member
+// arguments substituted. libclang exposes no mangled name for the
+// instantiation (it is not a cursor in the TU), so Mangled stays empty and the
+// emitter carries the call through a thunk.
+func (tu *TU) InstantiateMember(record, member string, args []TemplateArgument) (Symbol, bool) {
+	tu.once.Do(tu.extract)
+	pattern, ok := tu.memberTemplates[record+"::"+member]
+	if !ok {
+		return Symbol{}, false
+	}
+	if countTemplateParameters(tu.l, pattern.cursor) != len(args) {
+		return Symbol{}, false
+	}
+	own := tu.l.substitution(pattern.cursor, args)
+	combined := pattern.class.then(own)
+	extractor := &recordExtractor{l: tu.l, tu: tu}
+	sym := extractor.synthesizeMember(pattern.cursor, &Record{QualifiedName: record}, combined)
+	sym.IsTemplate = false
+	sym.QualifiedName = record + "::" + member
+	return sym, true
+}
+
+// countTemplateParameters counts the template parameters declared by a
+// function-template cursor.
+func countTemplateParameters(l *Libclang, cursor CXCursor) int {
+	count := 0
+	_ = l.visit(cursor, func(child, parent CXCursor) int32 {
+		switch l.f.getCursorKind(child) {
+		case cursorTemplateTypeParameter, cursorNonTypeTemplateParameter, cursorTemplateTemplateParameter:
+			count++
+		}
+		return visitContinue
+	})
+	return count
 }
 
 // typeFieldOffset asks a record type for one field's byte offset. It is the
@@ -591,11 +753,11 @@ func (f *ctorFacts) add(l *Libclang, cursor CXCursor) {
 // generated API makes. It is conservative: a field whose type the model cannot
 // classify is not assumed constructible, and the generated shim's compile is
 // the final check for the cases it cannot see.
-func (f ctorFacts) constructible(fields []Field) (defaultConstructible, copyConstructible bool) {
+func (e *recordExtractor) constructible(f ctorFacts, fields []Field) (defaultConstructible, copyConstructible bool) {
 	if f.userDeclared {
 		defaultConstructible = f.zeroArg && !f.zeroDeleted
 	} else {
-		defaultConstructible = trivialFields(fields)
+		defaultConstructible = e.trivialFields(fields)
 	}
 	switch {
 	case f.copyCtor:
@@ -604,34 +766,63 @@ func (f ctorFacts) constructible(fields []Field) (defaultConstructible, copyCons
 		// A user-declared move constructor deletes the implicit copy one.
 		copyConstructible = false
 	default:
-		copyConstructible = trivialFields(fields)
+		copyConstructible = e.trivialFields(fields)
 	}
 	return defaultConstructible, copyConstructible
 }
 
-// trivialFields reports whether every field is a scalar, pointer or enum: the
-// types the model can vouch for without asking a constructor.
-func trivialFields(fields []Field) bool {
+// trivialFields reports whether every field is a type the model can vouch for
+// without asking a constructor: a scalar, pointer or enum, an array of those,
+// or a record it has already classified as trivially copyable and (for default
+// construction) either POD or default-constructible.
+func (e *recordExtractor) trivialFields(fields []Field) bool {
 	for _, field := range fields {
-		switch field.Type.Kind {
-		case TypeInteger, TypeFloat, TypePointer, TypeEnum:
-		default:
+		if !e.trivialType(field.Type, 0) {
 			return false
 		}
 	}
 	return true
 }
 
+// trivialType is the recursive answer for one field type.
+func (e *recordExtractor) trivialType(p Param, depth int) bool {
+	if depth > maxTrivialityDepth {
+		return false
+	}
+	switch p.Kind {
+	case TypeInteger, TypeFloat, TypePointer, TypeEnum:
+		return true
+	case TypeArray:
+		return p.Element != nil && e.trivialType(*p.Element, depth+1)
+	case TypeRecord:
+		if p.RecordName == "" {
+			return false
+		}
+		i, ok := e.byName[p.RecordName]
+		if !ok {
+			return false
+		}
+		record := e.records[i]
+		return record.LayoutKnown && record.IsTrivial && (record.IsPOD || record.IsDefaultConstructible)
+	default:
+		return false
+	}
+}
+
 // substitution maps template parameter names to the concrete arguments of a
 // specialisation, so a pattern's member can be read as the instantiation's.
 type substitution struct {
 	names map[string]TemplateArgument
+	// indexed is the class arguments in declaration order. libclang spells a
+	// dependent type used inside another type as "type-parameter-0-N" rather
+	// than by the parameter's name, so the index is the only handle.
+	indexed []TemplateArgument
 }
 
 // substitution builds the map from the pattern's template parameters, in
 // declaration order, to the specialisation's arguments.
 func (l *Libclang) substitution(pattern CXCursor, args []TemplateArgument) substitution {
-	sub := substitution{names: make(map[string]TemplateArgument, len(args))}
+	sub := substitution{names: make(map[string]TemplateArgument, len(args)), indexed: make([]TemplateArgument, 0, len(args))}
 	index := 0
 	_ = l.visit(pattern, func(child, parent CXCursor) int32 {
 		switch l.f.getCursorKind(child) {
@@ -640,6 +831,7 @@ func (l *Libclang) substitution(pattern CXCursor, args []TemplateArgument) subst
 				if name := l.str(l.f.getCursorSpelling(child)); name != "" {
 					sub.names[name] = args[index]
 				}
+				sub.indexed = append(sub.indexed, args[index])
 			}
 			index++
 		}
@@ -648,9 +840,26 @@ func (l *Libclang) substitution(pattern CXCursor, args []TemplateArgument) subst
 	return sub
 }
 
+// then composes two substitutions: the class arguments first, then the
+// member's own (which win on a name collision).
+func (s substitution) then(next substitution) substitution {
+	combined := substitution{
+		names:   make(map[string]TemplateArgument, len(s.names)+len(next.names)),
+		indexed: append([]TemplateArgument(nil), s.indexed...),
+	}
+	for name, arg := range s.names {
+		combined.names[name] = arg
+	}
+	for name, arg := range next.names {
+		combined.names[name] = arg
+	}
+	return combined
+}
+
 // param substitutes the parameters of the pattern in one type.
 func (s substitution) param(p Param) Param {
-	if arg, ok := s.names[baseTypeName(p.Spelling)]; ok && arg.Kind == TemplateArgumentType {
+	original := p.Spelling
+	if arg, ok := s.argumentFor(p.Spelling); ok && arg.Kind == TemplateArgumentType {
 		replaced := arg.Type
 		replaced.IsConst = replaced.IsConst || p.IsConst
 		replaced.Spelling = s.text(p.Spelling)
@@ -664,7 +873,64 @@ func (s substitution) param(p Param) Param {
 		pointee := s.param(*p.Pointee)
 		p.Pointee = &pointee
 	}
+	if p.Kind == TypeArray && p.Element != nil {
+		element := s.param(*p.Element)
+		p.Element = &element
+		if p.ArraySize < 0 {
+			p.ArraySize = s.arraySize(original)
+		}
+	}
 	return p
+}
+
+// argumentFor finds the argument a dependent type refers to: by name ("T") or
+// by libclang's canonical spelling of a template parameter ("type-parameter-0-1").
+func (s substitution) argumentFor(spelling string) (TemplateArgument, bool) {
+	if arg, ok := s.names[baseTypeName(spelling)]; ok {
+		return arg, true
+	}
+	if depth, index, ok := templateParameterIndex(spelling); ok && depth == 0 && index < len(s.indexed) {
+		return s.indexed[index], true
+	}
+	return TemplateArgument{}, false
+}
+
+// templateParameterIndex parses libclang's "type-parameter-<depth>-<index>"
+// spelling.
+func templateParameterIndex(spelling string) (depth, index int, ok bool) {
+	const prefix = "type-parameter-"
+	if !strings.HasPrefix(spelling, prefix) {
+		return 0, 0, false
+	}
+	parts := strings.Split(spelling[len(prefix):], "-")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	depth, errDepth := strconv.Atoi(parts[0])
+	index, errIndex := strconv.Atoi(parts[1])
+	if errDepth != nil || errIndex != nil {
+		return 0, 0, false
+	}
+	return depth, index, true
+}
+
+// arraySize resolves a dependent array bound from the spelling: the first
+// template parameter name in it that has an integral argument.
+func (s substitution) arraySize(spelling string) int64 {
+	for i := 0; i < len(spelling); i++ {
+		if !isIdentStart(spelling[i]) {
+			continue
+		}
+		j := i + 1
+		for j < len(spelling) && isIdentPart(spelling[j]) {
+			j++
+		}
+		if arg, ok := s.names[spelling[i:j]]; ok && arg.Kind == TemplateArgumentIntegral {
+			return arg.Value
+		}
+		i = j
+	}
+	return -1
 }
 
 // text substitutes parameter names in a spelling, token by token, so "T" in

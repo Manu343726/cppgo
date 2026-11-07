@@ -64,6 +64,8 @@ const (
 	TypeRecord TypeKind = "record"
 	// TypeEnum is an enum that did not decay to an integer (rare, but legal).
 	TypeEnum TypeKind = "enum"
+	// TypeArray is a C array: fixed size, incomplete, variable or dependent.
+	TypeArray TypeKind = "array"
 	// TypeOther is everything this package does not classify: arrays, function
 	// pointers, member pointers, templates, unknown types.
 	TypeOther TypeKind = "other"
@@ -105,6 +107,12 @@ type Param struct {
 	// Pointee describes what a pointer or reference points at. It is nil for
 	// every other kind. The pointee of "const double *" carries IsConst.
 	Pointee *Param
+	// Element describes an array's element type, nil otherwise.
+	Element *Param
+	// ArraySize is the element count of a fixed array, or -1 for an
+	// incomplete, variable or dependent array. A dependent size is resolved
+	// when a template argument supplies it.
+	ArraySize int64
 }
 
 // Symbol is one bindable C++ function.
@@ -163,6 +171,14 @@ type Symbol struct {
 	IsDeleted bool
 	// IsDefaulted is true for a special member declared `= default`.
 	IsDefaulted bool
+	// IsOperator is true for a C++ operator member (including a conversion
+	// operator). Operator is the operator as written, without the "operator"
+	// keyword: "+", "==", "[]", "()", "=", or a conversion's target type.
+	IsOperator bool
+	// Operator is the operator token or conversion target, empty otherwise.
+	Operator string
+	// IsConversion is true for a conversion operator (operator T).
+	IsConversion bool
 	// IsTemplate is true when the declaration is a template. It has no
 	// mangled name and no layout until it is instantiated.
 	IsTemplate bool
@@ -328,7 +344,7 @@ func (tu *TU) extract() {
 // method body is never mistaken for the API.
 func (e *extractor) visit(cursor, parent CXCursor) int32 {
 	switch kind := e.l.f.getCursorKind(cursor); kind {
-	case cursorFunctionDecl, cursorCXXMethod, cursorConstructor, cursorDestructor:
+	case cursorFunctionDecl, cursorCXXMethod, cursorConversionFunction, cursorConstructor, cursorDestructor:
 		e.collect(cursor, parent)
 		return visitContinue
 	case cursorFunctionTemplate:
@@ -413,6 +429,7 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 			sym.Params = append(sym.Params, e.l.param(e.l.f.getArgType(funcType, i)))
 		}
 	}
+	sym.IsOperator, sym.Operator, sym.IsConversion = operatorInfo(e.l.str(e.l.f.getCursorSpelling(cursor)), sym.Result)
 	e.add(sym)
 }
 
@@ -463,12 +480,68 @@ func mergeInto(into *Symbol, from Symbol) {
 	into.IsPureVirtual = into.IsPureVirtual || from.IsPureVirtual
 	into.IsDeleted = into.IsDeleted || from.IsDeleted
 	into.IsDefaulted = into.IsDefaulted || from.IsDefaulted
+	into.IsOperator = into.IsOperator || from.IsOperator
+	into.IsConversion = into.IsConversion || from.IsConversion
+	if into.Operator == "" {
+		into.Operator = from.Operator
+	}
 	into.IsVariadic = into.IsVariadic || from.IsVariadic
 	into.IsTemplate = into.IsTemplate || from.IsTemplate
 	if into.ExceptionSpec == ExceptionUnspecified && from.ExceptionSpec != ExceptionUnspecified {
 		into.ExceptionSpec = from.ExceptionSpec
 	}
 	into.IsNoExcept = !into.ExceptionSpec.CanThrow()
+}
+
+// operatorInfo names a C++ operator member. A conversion operator's name is
+// its target type, which is the result type libclang reports.
+func operatorInfo(spelling string, result Param) (isOperator bool, operator string, isConversion bool) {
+	const prefix = "operator"
+	if !strings.HasPrefix(spelling, prefix) {
+		return false, "", false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(spelling, prefix))
+	switch rest {
+	case "()":
+		return true, "()", false
+	case "[]":
+		return true, "[]", false
+	case "":
+		// "operator" alone is malformed; treat it as an unnamed operator.
+		return true, "", false
+	}
+	if result.Kind != "" && result.Kind != TypeVoid && !startsWithOperatorToken(rest) && !isNamedOperator(rest) {
+		// A conversion operator: "operator int", "operator std::string".
+		target := result.Spelling
+		if target == "" {
+			target = rest
+		}
+		return true, target, true
+	}
+	return true, rest, false
+}
+
+// isNamedOperator reports the alphabetic operators, which are not conversions
+// and not punctuation.
+func isNamedOperator(rest string) bool {
+	for _, name := range []string{"new", "delete", "co_await"} {
+		if strings.HasPrefix(rest, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// startsWithOperatorToken reports whether text begins with one of the
+// punctuation operators, which is how a non-conversion operator is told apart
+// from a conversion target.
+func startsWithOperatorToken(text string) bool {
+	switch text[0] {
+	case '+', '-', '*', '/', '%', '^', '&', '|', '~', '!', '=', '<', '>', ',', '(', '[':
+		return true
+	default:
+		return false
+	}
 }
 
 // parentOf returns the qualified name without its last component:
@@ -501,6 +574,9 @@ func (l *Libclang) kind(cursor CXCursor) Kind {
 		if l.f.methodIsStatic(cursor) != 0 {
 			return StaticMethod
 		}
+		return Method
+	case cursorConversionFunction:
+		// A conversion operator is a method with a target type and `this`.
 		return Method
 	case cursorFunctionTemplate:
 		switch l.f.getCursorKind(l.f.getSemanticParent(cursor)) {
@@ -625,6 +701,11 @@ func (l *Libclang) param(t CXType) Param {
 	case typePointer, typeBlockPointer, typeLValueReference, typeRValueReference, typeNullPtr:
 		p.Kind = TypePointer
 		p.Ptr = true
+	case typeConstantArray, typeIncompleteArray, typeVariableArray, typeDependentSizedArray:
+		p.Kind = TypeArray
+		element := l.param(l.f.getArrayElementType(canonical))
+		p.Element = &element
+		p.ArraySize = l.f.getArraySize(canonical)
 	case typeRecord:
 		p.Kind = TypeRecord
 		p.RecordName = l.declarationName(canonical)

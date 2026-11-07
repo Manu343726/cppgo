@@ -108,6 +108,8 @@ const (
 
 	cursorCXXMethod      int32 = 21
 	cursorNamespace      int32 = 22
+	cursorVarDecl        int32 = 9
+	cursorConversionFunction int32 = 26
 	cursorLinkageSpec    int32 = 23
 	cursorConstructor    int32 = 24
 	cursorDestructor     int32 = 25
@@ -163,6 +165,11 @@ const (
 	typeRecord          int32 = 105
 	typeEnum            int32 = 106
 	typeTypedef         int32 = 107
+
+	typeConstantArray       int32 = 112
+	typeIncompleteArray     int32 = 114
+	typeVariableArray       int32 = 115
+	typeDependentSizedArray int32 = 116
 
 	typeNullPtr int32 = 24
 )
@@ -342,6 +349,8 @@ type libclangFuncs struct {
 	getCanonicalType      func(CXType) CXType
 	getPointeeType        func(CXType) CXType
 	getNonReferenceType   func(CXType) CXType
+	getArrayElementType   func(CXType) CXType
+	getArraySize          func(CXType) int64
 	isConstQualifiedType  func(CXType) int32
 	isPODType             func(CXType) int32
 	getTypeSpelling       func(CXType) CXString
@@ -429,6 +438,8 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_getCanonicalType", &f.getCanonicalType},
 		{"clang_getPointeeType", &f.getPointeeType},
 		{"clang_getNonReferenceType", &f.getNonReferenceType},
+		{"clang_getArrayElementType", &f.getArrayElementType},
+		{"clang_getArraySize", &f.getArraySize},
 		{"clang_isConstQualifiedType", &f.isConstQualifiedType},
 		{"clang_isPODType", &f.isPODType},
 		{"clang_getTypeSpelling", &f.getTypeSpelling},
@@ -806,6 +817,7 @@ type TU struct {
 	symbols       []Symbol
 	byName        map[string][]int
 	byNameMangled map[string]int
+	memberTemplates map[string]memberTemplate
 	records       []Record
 	byRecord      map[string]int
 	enums         []Enum
