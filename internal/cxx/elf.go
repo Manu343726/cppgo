@@ -19,7 +19,7 @@ func DefinedDynamicSymbols(path string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cxx: reading dynamic symbols: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	symbols, err := file.DynamicSymbols()
 	if err != nil {

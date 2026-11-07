@@ -147,7 +147,7 @@ type Symbol struct {
 // what libclang's mangling names. g++ emits both. Nothing a binding tool can do
 // about it beyond failing at load time, which it does loudly.
 func (s Symbol) HasExportedSymbol() bool {
-	return s.HasOutOfLineBody && !(s.Kind == FreeFunc && s.IsStatic)
+	return s.HasOutOfLineBody && (s.Kind != FreeFunc || !s.IsStatic)
 }
 
 // Signature is a copy of the parameters and result, for printing.

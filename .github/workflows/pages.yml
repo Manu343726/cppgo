@@ -1,8 +1,15 @@
 name: Pages
 
 # Builds the Hugo site in site/ and deploys it to GitHub Pages.
-# The extended Hugo build is installed from a pinned release — never the
-# runner's preinstalled binary, which may be neither extended nor current.
+#
+# GitHub Pages cannot be enabled by this workflow: creating the Pages site needs
+# a token with administration rights, and GITHUB_TOKEN only carries the
+# `pages: write` permission, so the API answers "Resource not accessible by
+# integration". Until Pages is enabled once, the job builds and skips the
+# deploy with a notice instead of failing.
+#
+# One-time setup, if the notice appears:
+#   Repository -> Settings -> Pages -> Build and deployment -> Source: GitHub Actions
 
 on:
   push:
@@ -27,18 +34,32 @@ jobs:
   build:
     name: build site
     runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.pages_state.outputs.enabled }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Is Pages enabled?
+        id: pages_state
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pages")
+          if [ "$code" = "200" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=GitHub Pages is not enabled::Enable it once at Settings -> Pages -> Source: GitHub Actions. The site builds fine; only the deploy is skipped."
+          fi
+
       - name: Verify the site sources exist
         run: |
           if [ ! -f site/hugo.toml ]; then
-            echo "::error file=site/hugo.toml::site/hugo.toml is missing — cannot build the site."
-            echo "The Pages workflow requires a Hugo config at site/hugo.toml."
-            ls -la site 2>/dev/null || echo "site/ does not exist at all."
+            echo "::error file=site/hugo.toml::site/hugo.toml is missing - cannot build the site."
             exit 1
           fi
 
@@ -54,25 +75,18 @@ jobs:
             exit 1
           fi
 
+      # The build runs whether or not Pages is enabled: it is the check that the
+      # documentation still compiles.
+      - name: Build with Hugo
+        run: hugo --source site --gc --minify --destination "${GITHUB_WORKSPACE}/site/public"
+
       - name: Configure Pages
+        if: steps.pages_state.outputs.enabled == 'true'
         id: pages
         uses: actions/configure-pages@v5
-        with:
-          # Enable Pages on the first run. Without this the deploy fails on a
-          # fresh repository whose Pages source has never been set, and the
-          # error is a confusing 404 from the artifact upload.
-          enablement: true
-
-      - name: Build with Hugo
-        run: |
-          hugo \
-            --source site \
-            --gc \
-            --minify \
-            --baseURL "${{ steps.pages.outputs.base_url }}/" \
-            --destination "${GITHUB_WORKSPACE}/site/public"
 
       - name: Upload Pages artifact
+        if: steps.pages_state.outputs.enabled == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./site/public
@@ -80,6 +94,7 @@ jobs:
   deploy:
     name: deploy
     needs: build
+    if: needs.build.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

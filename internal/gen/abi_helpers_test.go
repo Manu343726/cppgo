@@ -1,7 +1,6 @@
 package gen
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -114,11 +113,4 @@ type Node cppgo.Handle
 func New() (Node, error)
 `)
 	return dir
-}
-
-// exists reports whether path can be stat'ed, for the tests that assert a file
-// was not written.
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

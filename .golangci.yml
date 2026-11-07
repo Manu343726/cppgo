@@ -34,7 +34,9 @@ linters:
 
   settings:
     misspell:
-      locale: US
+      # The code and prose use British spellings ("initialised", "honouring",
+      # "materialises"); US locale would flag them all without finding a defect.
+      locale: UK
     revive:
       # Only the rules that matter for a small library with a documented API.
       rules:
@@ -55,6 +57,14 @@ linters:
     errcheck:
       check-type-assertions: true
       check-blank: false
+      # Writing to an io.Writer whose caller owns the error is not actionable
+      # here: the CLI reports failures by exit code, and a broken stdout is
+      # already handled by the process dying. Every other unchecked error is
+      # still reported.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
     govet:
       enable-all: true
       disable:

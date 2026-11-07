@@ -466,10 +466,7 @@ func scanBindings(pkg *packageInfo) error {
 		}
 		return fmt.Errorf("%s: no //cppgo:external functions found", pkg.Dir)
 	}
-	if err := checkUnique(pkg); err != nil {
-		return err
-	}
-	return nil
+	return checkUnique(pkg)
 }
 
 // checkUnique rejects duplicate Go names and duplicate C symbols.

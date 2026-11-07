@@ -160,8 +160,12 @@ func pruneImports(f *ast.File) {
 		}
 		var specs []ast.Spec
 		for _, spec := range gd.Specs {
-			// An import declaration only holds *ast.ImportSpec nodes.
-			is := spec.(*ast.ImportSpec)
+			// An import declaration only holds *ast.ImportSpec nodes, but the
+			// linter is right that a panic here would be worse than a skip.
+			is, ok := spec.(*ast.ImportSpec)
+			if !ok {
+				continue
+			}
 			name := ""
 			if is.Name != nil {
 				name = is.Name.Name

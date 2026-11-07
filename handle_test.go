@@ -4,8 +4,9 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/Manu343726/cppgo"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/Manu343726/cppgo"
 )
 
 func TestHandleIsNil(t *testing.T) {
@@ -17,20 +18,25 @@ func TestHandleIsNil(t *testing.T) {
 	assert.Equal(t, uintptr(0xdead_beef), uintptr(h))
 }
 
-// The conversions below are the contract generated code relies on: a Handle
-// must round-trip through unsafe.Pointer without a helper.
-func TestHandleRoundTripsThroughUnsafePointer(t *testing.T) {
+// A Handle must be interchangeable with uintptr, because that is exactly what
+// generated code does when it hands a receiver to a trampoline:
+// `uintptr(v)` goes into RDI as the implicit this argument.
+//
+// The reverse conversion (uintptr -> unsafe.Pointer) is deliberately NOT
+// asserted here: it is the one pattern `go vet`'s unsafeptr checker exists to
+// flag, and asserting it in a test would teach the wrong idiom.
+func TestHandleConvertsToUintptr(t *testing.T) {
 	buf := make([]byte, 8)
 	ptr := unsafe.Pointer(&buf[0])
 
 	h := cppgo.Handle(uintptr(ptr))
 	assert.False(t, h.IsNil())
-	assert.Equal(t, ptr, unsafe.Pointer(uintptr(h)))
+	assert.Equal(t, uintptr(ptr), uintptr(h), "the handle must be the object address")
 }
 
-func TestHandleZeroIsNotASpecialCaseOfUintptr(t *testing.T) {
-	// Guard against someone "improving" Handle into a struct later: the
-	// generated code converts it directly to uintptr.
+func TestHandleHasTheWidthOfUintptr(t *testing.T) {
+	// Guard against someone "improving" Handle into a struct later: generated
+	// code converts it to uintptr directly.
 	var h cppgo.Handle
 	assert.Equal(t, unsafe.Sizeof(uintptr(0)), unsafe.Sizeof(h))
 }

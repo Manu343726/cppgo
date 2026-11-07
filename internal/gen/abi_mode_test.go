@@ -43,10 +43,10 @@ func doubleParam() cxx.Param {
 
 func TestMatchParam(t *testing.T) {
 	cases := []struct {
-		name string
-		go_  string
-		c    cxx.Param
-		want string
+		name   string
+		goType string
+		c      cxx.Param
+		want   string
 	}{
 		{"int matches int", "int32", intParam(), ""},
 		{"int8 matches char", "int8", cxx.Param{Spelling: "char", Kind: cxx.TypeInteger, SizeBytes: 1}, ""},
@@ -71,7 +71,7 @@ func TestMatchParam(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			info, err := resolveIn(map[string]*classInfo{"Vec": {GoName: "Vec", CxxName: "ns::Vec"}}, mustExpr(t, tc.go_))
+			info, err := resolveIn(map[string]*classInfo{"Vec": {GoName: "Vec", CxxName: "ns::Vec"}}, mustExpr(t, tc.goType))
 			require.NoError(t, err)
 			got := matchParam(info, tc.c)
 			if tc.want == "" {
@@ -85,10 +85,10 @@ func TestMatchParam(t *testing.T) {
 
 func TestMatchResult(t *testing.T) {
 	cases := []struct {
-		name string
-		go_  string
-		c    cxx.Param
-		want string
+		name   string
+		goType string
+		c      cxx.Param
+		want   string
 	}{
 		{"void", "int32", cxx.Param{Spelling: "void", Kind: cxx.TypeVoid}, "returns void, but the binding declares"},
 		{"std", "int32", cxx.Param{Spelling: "std::vector<int>", Kind: cxx.TypeRecord}, "a standard-library type"},
@@ -108,7 +108,7 @@ func TestMatchResult(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			info, err := resolveIn(map[string]*classInfo{"Vec": {GoName: "Vec", CxxName: "ns::Vec"}}, mustExpr(t, tc.go_))
+			info, err := resolveIn(map[string]*classInfo{"Vec": {GoName: "Vec", CxxName: "ns::Vec"}}, mustExpr(t, tc.goType))
 			require.NoError(t, err)
 			got := matchResult(info, tc.c)
 			if tc.want == "" {

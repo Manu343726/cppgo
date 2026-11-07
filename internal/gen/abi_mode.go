@@ -107,10 +107,7 @@ func resolveABI(pkg *packageInfo, cfg Config) error {
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "\n"))
 	}
-	if err := checkUniqueSymbols(pkg); err != nil {
-		return err
-	}
-	return nil
+	return checkUniqueSymbols(pkg)
 }
 
 // checkUniqueSymbols rejects two bindings that resolve to the same mangled
