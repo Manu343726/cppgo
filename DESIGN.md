@@ -334,8 +334,9 @@ Itanium C++ ABI on SysV AMD64, which is what the host and the generator both mea
 
 ## The trampoline
 
-Measured 2026-11-03, Go 1.27, Ryzen 7 6800HS at 964 MHz ("power-saver" profile — the absolute
-nanoseconds are inflated by roughly 4.5×, so **cycles and ratios are the honest numbers**):
+Measured 2026-11-03, Go 1.27, an 8-core x86-64 CPU pinned to 964 MHz with boost disabled — the
+absolute nanoseconds are inflated by roughly 4.5×, so **cycles and ratios are the honest
+numbers**:
 
 | path | ns/op | ~cycles |
 |---|---|---|
