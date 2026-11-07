@@ -159,13 +159,7 @@ virtual function, a template without an explicit instantiation, a `std::` type
 by value, a struct parameter passed by value, and more than 6 integer or 8 float
 argument registers.
 
-## Two things that look like style but are not
-
-**The definitions are out of line.** `Vector::norm` is declared in the header and
-defined in `src/vector.cpp`. A member defined in the class body has no symbol,
-and the generator finds out-of-line bodies by parsing the translation units that
-carry them — the source next to the header, and the sources a compilation
-database lists — so the `.cpp` is not optional bookkeeping.
+## How the generator finds the definitions
 
 **`src/vector.cpp` includes `"vector.hpp"`, not `<mathx/vector.hpp>`.** cppgo
 discovers the translation units that hold the bodies by looking for a source
@@ -173,6 +167,9 @@ that includes the header *by file name*. That is why `include/mathx` is on the
 include path in the Makefile (`-Iinclude -Iinclude/mathx`) and why the include is
 spelled the short way. A `.cpp` that only says `#include <mathx/vector.hpp>`
 makes every member look inline, and the failure is the message above.
+
+Which sources are parsed, and in what order, is in [validation and the
+report](https://manu343726.github.io/cppgo/manual/validation/).
 
 ## Requirements
 
