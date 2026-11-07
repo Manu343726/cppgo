@@ -1,6 +1,6 @@
 +++
 title = "Register assignment"
-description = "How cppgo lays arguments out in RDI/RSI/RDX/RCX/R8/R9 and XMM0-XMM7, where this and the hidden sret pointer sit, how results come back, and why the trampoline switches the stack pointer."
+description = "How cppgo lays arguments out in RDI/RSI/RDX/RCX/R8/R9 and XMM0-XMM7, where this and the hidden sret pointer sit, how results come back, and what the caller pays before each call."
 weight = 50
 +++
 
