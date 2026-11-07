@@ -9,7 +9,7 @@ where the object lives and when it dies. In the direct ABI mode, Go provides the
 storage and C++ constructs into it; the destructor is the only thing that gives
 it back.
 
-We will extend the `mathx` package from [the first
+This tutorial extends the `mathx` package from [the first
 tutorial]({{< ref "tutorials/first-binding.md" >}}) with a `Vector`.
 
 ## The C++ class

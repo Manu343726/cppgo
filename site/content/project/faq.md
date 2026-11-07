@@ -29,8 +29,8 @@ rejects what it cannot lay out, and the `P` is not released during a call.
 ## Why not SWIG?
 
 SWIG is not evaluated in this project's design contract, so read this as a
-statement of scope rather than a benchmark: **we have not measured SWIG, and no
-number on this site compares against it.**
+statement of scope rather than a benchmark: **SWIG has not been measured here,
+and no number on this site compares against it.**
 
 The architectural difference is what cppgo is built around. A general binding
 generator is built to target many languages through a common interface, so its

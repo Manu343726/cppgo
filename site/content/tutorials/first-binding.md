@@ -4,9 +4,9 @@ description = "Bind one free C++ function and call it from Go: the header, the d
 weight = 10
 +++
 
-We will bind one free function — the smallest end-to-end path. No objects, no
-slices, no library layout to think about. The point is to see the complete loop:
-a declaration, a generator run, a symbol, a call.
+This tutorial binds one free function — the smallest end-to-end path. No objects,
+no slices, no library layout to think about. The point is to see the complete
+loop: a declaration, a generator run, a symbol, a call.
 
 ## The C++ side
 
