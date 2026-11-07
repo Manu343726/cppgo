@@ -30,13 +30,12 @@ for i := 0; i < 10_000_000; i++ {
 }
 ```
 
-On the machine measured for [benchmarks]({{< ref "project/benchmarks.md"
->}}) — a Ryzen 7 6800HS pinned to **964 MHz** — the trampoline measured
-**13.9 ns** per call (~13 cycles; the nanoseconds are inflated by the clock, so
-treat them as a frozen-CPU figure). Ten million calls at 13.9 ns is about
-**139 ms** of boundary alone, before the C++ function does any work, and it also
-forces the loop to stay scalar: each `at` is an opaque call the compiler cannot
-vectorise across.
+On the CPU described in [benchmarks]({{< ref "project/benchmarks.md" >}}) —
+8-core x86-64, pinned to **964 MHz** — the trampoline measured **13.9 ns** per
+call (~13 cycles; the nanoseconds are inflated by the clock, so treat them as a
+frozen-CPU figure). Ten million calls at 13.9 ns is about **139 ms** of boundary
+alone, before the C++ function does any work, and it also forces the loop to stay
+scalar: each `at` is an opaque call the compiler cannot vectorise across.
 
 The 13.9 ns is not the objection by itself — the objection is the shape. A
 per-element API hands the C++ compiler one element at a time and forbids every

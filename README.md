@@ -40,8 +40,8 @@ in production.
 
 ## Why
 
-Measured on a Ryzen 7 6800HS with the CPU pinned to **964 MHz** (`power-saver`),
-so treat the nanoseconds as a lower bound and trust the cycle counts:
+Measured with the CPU pinned to **964 MHz** and boost disabled, so the
+nanoseconds are inflated by the clock: trust the cycle counts and the ratio.
 
 | path | ns/op | ~cycles | |
 |---|---|---|---|

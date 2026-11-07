@@ -1,13 +1,13 @@
 +++
 title = "Benchmarks"
-description = "The measured cost of a cppgo call against cgo and a plain Go call, with the clock caveat: a Ryzen 7 6800HS pinned to 964 MHz, where cycles and ratios are the honest numbers."
+description = "The measured cost of a cppgo call against cgo and a plain Go call, with the clock caveat: a CPU pinned to 964 MHz, where cycles and ratios are the honest numbers."
 weight = 20
 +++
 
 ## The table
 
-Measured on **2026-11-03**, Go 1.27, on a **Ryzen 7 6800HS with the CPU pinned to
-964 MHz** (the `power-saver` profile):
+Measured on **2026-11-03** with Go 1.27, on an 8-core x86-64 CPU **pinned to
+964 MHz** with boost disabled:
 
 | path | ns/op | ~cycles | |
 |---|---|---|---|

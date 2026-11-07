@@ -51,10 +51,10 @@ back in `XMM0`.
 
 ## Measured numbers
 
-`cd examples/stats && make bench` — one run on this laptop (Ryzen 7 6800HS, **on
-battery in `power-saver`, boost off, 964.8 MHz**), median of three. The clock is
-pinned, so the absolute nanoseconds are roughly 3.3x what a boosting core would
-give; the ratios and the cycle counts are the numbers that travel.
+`cd examples/stats && make bench` — the median of three runs, with boost disabled
+and the CPU pinned to **964.8 MHz**. The clock is pinned, so the absolute
+nanoseconds are roughly 3.3x what a boosting core would give; the ratios and the
+cycle counts are the numbers that travel.
 
 | benchmark | cppgo | pure Go | ratio |
 |---|---|---|---|
@@ -65,7 +65,7 @@ give; the ratios and the cycle counts are the numbers that travel.
 | `CountAbove`, 1 048 576 | 1.63 ms (1.5 cy/elem) | 2.34 ms | 0.69x |
 | the call itself (`DataPointer`) | 35.0 ns | 2.2 ns | 15.7x |
 
-A repeat run while other builds were running on the same laptop read 51–69 ns for
+A repeat run while other builds were running in the background read 51–69 ns for
 the 8-element row and 37–56 ns for the call: absolute values move with the load,
 the ratios and the fixed ~35 ns crossing do not.
 
