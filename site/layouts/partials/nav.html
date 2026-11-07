@@ -5,10 +5,13 @@
       <span class="brand-sub">no cgo</span>
     </a>
     <nav class="topnav" aria-label="Main">
-      <a href="{{ "docs/" | relURL }}"{{ if eq .Section "docs" }} class="active"{{ end }}>Docs</a>
-      <a href="{{ "tutorials/" | relURL }}"{{ if eq .Section "tutorials" }} class="active"{{ end }}>Tutorials</a>
+      {{- range site.Sections.ByWeight }}
+      <a href="{{ .RelPermalink }}"{{ if eq $.Section .Section }} class="active"{{ end }}>{{ .Title }}</a>
+      {{- end }}
+      <span class="topnav-sep" aria-hidden="true"></span>
       <a href="{{ site.Params.github }}" rel="noopener">GitHub</a>
-      <a href="{{ site.Params.pkg }}" rel="noopener">API</a>
+      <a href="{{ site.Params.releases }}" rel="noopener">Releases</a>
+      <a href="{{ site.Params.pkg }}" rel="noopener">pkg.go.dev</a>
     </nav>
   </div>
 </header>

@@ -1,24 +1,16 @@
-{{- $docs := (where site.RegularPages "Section" "docs").ByWeight -}}
-{{- $tutorials := (where site.RegularPages "Section" "tutorials").ByWeight -}}
+{{- $current := . -}}
 <aside class="sidebar">
   <nav aria-label="Contents">
-    {{- with $docs }}
-    <p class="sidebar-heading"><a href="{{ "docs/" | relURL }}">Documentation</a></p>
+    {{- range site.Sections.ByWeight }}
+    {{- $section := . }}
+    <p class="sidebar-heading"><a href="{{ $section.RelPermalink }}"{{ if eq $current.Permalink $section.Permalink }} class="active"{{ end }}>{{ $section.Title }}</a></p>
     <ul class="sidebar-list">
-      {{- range . }}
-      <li><a href="{{ .RelPermalink }}"{{ if eq .Permalink $.Permalink }} class="active" aria-current="page"{{ end }}>{{ .Title }}</a></li>
+      {{- range $section.RegularPages.ByWeight }}
+      <li><a href="{{ .RelPermalink }}"{{ if eq .Permalink $current.Permalink }} class="active" aria-current="page"{{ end }}>{{ .Title }}</a></li>
       {{- end }}
     </ul>
     {{- end }}
-    {{- with $tutorials }}
-    <p class="sidebar-heading"><a href="{{ "tutorials/" | relURL }}">Tutorials</a></p>
-    <ul class="sidebar-list">
-      {{- range . }}
-      <li><a href="{{ .RelPermalink }}"{{ if eq .Permalink $.Permalink }} class="active" aria-current="page"{{ end }}>{{ .Title }}</a></li>
-      {{- end }}
-    </ul>
-    {{- end }}
-    <p class="sidebar-heading">Project</p>
+    <p class="sidebar-heading">Links</p>
     <ul class="sidebar-list">
       <li><a href="{{ site.Params.github }}" rel="noopener">Source on GitHub</a></li>
       <li><a href="{{ site.Params.releases }}" rel="noopener">Releases</a></li>

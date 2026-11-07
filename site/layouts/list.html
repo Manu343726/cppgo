@@ -1,7 +1,7 @@
 {{ define "main" }}
 <article class="page list-page">
   <header class="page-header">
-    <p class="eyebrow">{{ .Title }}</p>
+    <p class="eyebrow">{{ with .Parent }}{{ if ne .Title site.Title }}{{ .Title }}{{ else }}cppgo{{ end }}{{ else }}cppgo{{ end }}</p>
     <h1>{{ .Title }}</h1>
     {{- with .Description }}
     <p class="lede">{{ . }}</p>

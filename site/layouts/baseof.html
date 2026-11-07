@@ -6,8 +6,8 @@
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 {{ partial "nav.html" . }}
-<div class="shell{{ if .IsPage }} with-sidebar{{ end }}">
-  {{- if .IsPage }}{{ partial "sidebar.html" . }}{{ end }}
+<div class="shell{{ if not .IsHome }} with-sidebar{{ end }}">
+  {{- if not .IsHome }}{{ partial "sidebar.html" . }}{{ end }}
   <main id="main" class="content">
     {{- block "main" . }}{{ end }}
   </main>

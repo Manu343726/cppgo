@@ -1,21 +1,30 @@
 {{ define "main" }}
 <article class="home">
   <section class="hero">
-    <p class="eyebrow">Go &rarr; C++</p>
+    <p class="eyebrow">Go &rarr; C++ &middot; direct ABI</p>
     <h1>Call C++ from Go<br>without cgo.</h1>
     <p class="hero-lede">
-      No cgo. No <code>import "C"</code>. No C toolchain needed to build your Go side.
-      <strong>cppgo</strong> generates one <code>NOSPLIT</code> assembly trampoline per bound
-      function, so a goroutine enters the System&nbsp;V C ABI directly instead of going
-      through the runtime's <code>cgocall</code> path.
+      No cgo. No <code>import "C"</code>. No hand-written <code>extern "C"</code> layer.
+      <strong>cppgo</strong> resolves your C++ declarations through libclang, mangles them
+      with the Itanium ABI, and generates one <code>NOSPLIT</code> assembly trampoline per
+      bound function — so a goroutine enters the System&nbsp;V C ABI directly, with
+      <code>this</code> in <code>RDI</code>.
     </p>
     <pre class="hero-code"><code>//cppgo:library libmathx
-//cppgo:external dot
-func Dot(a, b []float64) (float64, error)</code></pre>
+//cppgo:header include/mathx/vector.hpp
+
+//cppgo:class mathx::Vector
+type Vector cppgo.Handle
+
+//cppgo:ctor
+func New(x, y float64) (Vector, error)
+
+//cppgo:method norm
+func (v Vector) Norm() float64</code></pre>
     <div class="hero-actions">
-      <a class="button" href="{{ "docs/installation/" | relURL }}">Install</a>
-      <a class="button button-ghost" href="{{ "docs/quickstart/" | relURL }}">Quickstart</a>
-      <a class="button button-ghost" href="{{ site.Params.github }}" rel="noopener">GitHub</a>
+      <a class="button" href="{{ "manual/installation/" | relURL }}">Install</a>
+      <a class="button button-ghost" href="{{ "manual/quickstart/" | relURL }}">Quickstart</a>
+      <a class="button button-ghost" href="{{ "tutorials/first-binding/" | relURL }}">First binding</a>
     </div>
   </section>
 
@@ -30,8 +39,8 @@ func Dot(a, b []float64) (float64, error)</code></pre>
     <h2>The numbers</h2>
     <p class="note">
       Measured on a Ryzen 7 6800HS with the CPU pinned to <strong>964&nbsp;MHz</strong>
-      (<code>power-saver</code> profile), so the absolute nanoseconds are inflated roughly
-      4.5x by the clock — <strong>cycles and ratios are the honest numbers</strong>.
+      (<code>power-saver</code> profile), so the absolute nanoseconds are inflated by the
+      clock — <strong>cycles and ratios are the honest numbers</strong>.
     </p>
     <table class="bench-table">
       <thead>
@@ -45,7 +54,7 @@ func Dot(a, b []float64) (float64, error)</code></pre>
           <td>baseline</td>
         </tr>
         <tr class="highlight">
-          <td><strong>cppgo trampoline</strong></td>
+          <td><strong>cppgo trampoline, direct</strong></td>
           <td><strong>13.9</strong></td>
           <td><strong>13</strong></td>
           <td><strong>7.5x cheaper than cgo</strong></td>
@@ -60,61 +69,61 @@ func Dot(a, b []float64) (float64, error)</code></pre>
     </table>
     <p>
       A call is not free — 13 cycles is not 2 — but it is close enough to a normal Go call
-      that the boundary stops dictating your architecture. You no longer have to batch ten
-      thousand rows into one call just to amortise the crossing.
+      that the boundary stops dictating your architecture. A stack switch, which is what
+      the generated wrapper pays for the headroom guarantee, measured 14.9&nbsp;ns
+      (~14&nbsp;cycles) on the same machine.
+    </p>
+    <p>
+      The trade-off is that the <code>P</code> is not released during the call, so a
+      foreign call in flight delays a GC cycle by up to its duration: a 2&nbsp;ms call
+      delayed the worst GC cycle by 1.1&nbsp;ms, against 2.4&nbsp;ms for a spinning Go
+      goroutine. Right for short, compute-bound calls; wrong for calls that block.
     </p>
   </section>
 
   <section>
-    <h2>Install in three steps</h2>
+    <h2>Five places to go</h2>
+    <div class="link-columns">
+      {{- range site.Sections.ByWeight }}
+      <div>
+        <h3><a href="{{ .RelPermalink }}">{{ .Title }}</a></h3>
+        <ul>
+          {{- range first 4 .RegularPages.ByWeight }}
+          <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>
+          {{- end }}
+        </ul>
+      </div>
+      {{- end }}
+    </div>
+  </section>
+
+  <section>
+    <h2>The one-minute version</h2>
     <ol class="steps">
       <li>
         <h3>Get the generator</h3>
         <pre><code>go install github.com/Manu343726/cppgo/cmd/cppgo@latest</code></pre>
       </li>
       <li>
-        <h3>Annotate and generate</h3>
-        <pre><code>//cppgo:library libmathx
-//cppgo:external dot
-func Dot(a, b []float64) (float64, error)</code></pre>
-        <pre><code>cppgo gen -dir ./mathx</code></pre>
+        <h3>Annotate your Go declarations</h3>
+        <p class="step-note">
+          A <code>//cppgo:library</code>, a <code>//cppgo:header</code>, one
+          <code>//cppgo:class</code> per mirrored C++ type, then one directive per binding.
+        </p>
       </li>
       <li>
-        <h3>Implement the shim, build your .so, open it</h3>
-        <pre><code>#include "cppgo_shim.h"
-extern "C" int32_t mathx_dot(const double *a, size_t an, const double *b, size_t bn, double *out) { ... }</code></pre>
+        <h3>Generate and call</h3>
+        <pre><code>cppgo gen -dir ./bindings/mathx
+go test ./...</code></pre>
       </li>
     </ol>
-  </section>
-
-  <section>
-    <h2>Navigate</h2>
-    <div class="link-columns">
-      <div>
-        <h3>Documentation</h3>
-        <ul>
-          {{- range (where site.RegularPages "Section" "docs").ByWeight }}
-          <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>
-          {{- end }}
-        </ul>
-      </div>
-      <div>
-        <h3>Tutorials</h3>
-        <ul>
-          {{- range (where site.RegularPages "Section" "tutorials").ByWeight }}
-          <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>
-          {{- end }}
-        </ul>
-      </div>
-      <div>
-        <h3>Project</h3>
-        <ul>
-          <li><a href="{{ site.Params.github }}" rel="noopener">Source on GitHub</a></li>
-          <li><a href="{{ site.Params.releases }}" rel="noopener">Releases</a></li>
-          <li><a href="{{ site.Params.pkg }}" rel="noopener">Go API reference</a></li>
-        </ul>
-      </div>
-    </div>
+    <p>
+      If a binding cannot work — the member is inline and has no symbol, it is virtual, it
+      takes a <code>std::string</code> by value, or it returns a struct by value — the
+      generator fails the build and says which of those it is. That is the point of the
+      direct ABI mode: the failure happens at generation time, not as a segfault in
+      production.
+    </p>
   </section>
 </article>
 {{ end }}

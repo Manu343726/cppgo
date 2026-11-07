@@ -1,14 +1,20 @@
 # cppgo documentation site.
 #
 # No external theme, no Hugo modules, no git submodules: every layout and every
-# stylesheet in this directory is hand-written, so `hugo --minify` needs no
+# stylesheet in this directory is hand-written, so `hugo --minify --gc` needs no
 # network access at all.
+#
+# The site is published as GitHub project pages, so every internal link goes
+# through Hugo's relURL/ref helpers and keeps the /cppgo/ subpath.
 
 baseURL = "https://manu343726.github.io/cppgo/"
 title = "cppgo"
 locale = "en-US"
 defaultContentLanguage = "en"
 enableRobotsTXT = true
+# A removed or renamed page must not leave its old HTML behind: publishing a
+# stale copy is worse than a 404.
+cleanDestinationDir = true
 disableKinds = ["taxonomy", "term"]
 
 [params]
@@ -19,6 +25,9 @@ disableKinds = ["taxonomy", "term"]
   pkg = "https://pkg.go.dev/github.com/Manu343726/cppgo"
   license = "MIT"
   author = "Manu Sánchez"
+  goVersion = "1.25"
+  abi = "System V AMD64 ABI"
+  platform = "Linux/amd64"
 
 [markup]
   [markup.highlight]
@@ -30,7 +39,9 @@ disableKinds = ["taxonomy", "term"]
 
   [markup.goldmark.renderer]
     hardWraps = false
-    unsafe = false
+    # The callout boxes are plain <div>s in the page source. The content is
+    # hand-written and local; there is no user-generated HTML on this site.
+    unsafe = true
 
   [markup.tableOfContents]
     startLevel = 2

@@ -1,276 +1,275 @@
----
-title: "Stateful objects with handles"
-description: "Keep a C++ object alive across calls with an opaque handle: creation, destruction, double-close and use-after-free, and error handling that survives both."
-weight: 20
----
++++
+title = "Stateful objects"
+description = "Constructors, destructors and handles: where a C++ object lives when Go creates it, why every constructor needs a destructor, and what copying or forgetting a handle actually does."
+weight = 20
++++
 
-Stateless functions are the easy half. Real C++ libraries have objects:
-an index, a parser, a connection pool, a model. Their state lives in the C++
-address space, and Go must be able to say "that one" without knowing what a
-`void*` points at.
+A free function has no state. A class does, and state means someone must decide
+where the object lives and when it dies. In the direct ABI mode, Go provides the
+storage and C++ constructs into it; the destructor is the only thing that gives
+it back.
 
-That is what a `Handle` is. On the wire it is a `void *` — an opaque C++
-pointer that Go carries as a number. It is the only way an object survives
-between two calls, and it comes with the oldest rule in manual memory
-management: nobody is going to free it for you.
+We will extend the `mathx` package from [the first
+tutorial]({{< ref "tutorials/first-binding.md" >}}) with a `Vector`.
 
-## The C++ object
+## The C++ class
 
-A running mean is a good example because it has invariants worth protecting:
+Every member is defined **out of line**, in the `.cpp`. That is not a style
+preference: a member defined inside the class definition is implicitly inline,
+emits no dynamic symbol, and cannot be bound.
+
+<span class="filename">include/mathx/vector.hpp</span>
 
 ```cpp
-// accumulator.hpp
 #pragma once
+
 #include <cstddef>
-#include <stdexcept>
 
-class Accumulator {
- public:
-  void add(double v) {
-    sum_ += v;
-    ++n_;
-  }
+namespace mathx {
 
-  double sum() const { return sum_; }
+class Vector {
+public:
+    Vector(double x, double y);
+    ~Vector();
 
-  double mean() const {
-    if (n_ == 0) {
-      throw std::runtime_error("mean of an empty accumulator");
-    }
-    return sum_ / static_cast<double>(n_);
-  }
+    void scale(double k);            // mutating, non-const
+    double norm() const;             // const
 
-  void reset() {
-    sum_ = 0.0;
-    n_ = 0;
-  }
-
- private:
-  double sum_ = 0.0;
-  std::size_t n_ = 0;
+private:
+    double x_;
+    double y_;
 };
+
+} // namespace mathx
 ```
 
-No smart pointers, no globals: the object's lifetime is exactly the pair of
-calls that create and destroy it.
+<span class="filename">src/vector.cpp</span>
 
-## The binding
+```cpp
+#include "mathx/vector.hpp"
+
+#include <cmath>
+
+namespace mathx {
+
+Vector::Vector(double x, double y) : x_(x), y_(y) {}
+Vector::~Vector() {}
+
+void Vector::scale(double k) {
+    x_ *= k;
+    y_ *= k;
+}
+
+double Vector::norm() const { return std::sqrt(x_ * x_ + y_ * y_); }
+
+} // namespace mathx
+```
+
+```console
+$ g++ -std=c++17 -O2 -fPIC -shared -Iinclude -o build/libmathx.so src/*.cpp
+```
+
+## The Go bindings
+
+<span class="filename">bindings/mathx/mathx.go</span>
 
 ```go
-package acc
+package mathx
 
 import "github.com/Manu343726/cppgo"
 
-//cppgo:library libacc
+//cppgo:library libmathx
+//cppgo:header ../../../include/mathx/vector.hpp
 
-//cppgo:external acc_new
-func New() (cppgo.Handle, error)
+// Vector mirrors mathx::Vector. The receiver value is the object pointer.
+//
+//cppgo:class mathx::Vector
+type Vector cppgo.Handle
 
-//cppgo:external acc_add
-func Add(h cppgo.Handle, v float64) error
+// New constructs a Vector.
+//
+//cppgo:ctor
+func New(x, y float64) (Vector, error)
 
-//cppgo:external acc_sum
-func Sum(h cppgo.Handle) (float64, error)
+// Scale multiplies both components by k.
+//
+//cppgo:method scale
+func (v Vector) Scale(k float64)
 
-//cppgo:external acc_mean
-func Mean(h cppgo.Handle) (float64, error)
+// Norm returns the Euclidean norm.
+//
+//cppgo:method norm
+func (v Vector) Norm() float64
 
-//cppgo:external acc_reset
-func Reset(h cppgo.Handle) error
-
-//cppgo:external acc_free
-func Free(h cppgo.Handle) error
+// Destroy destroys the object.
+//
+//cppgo:dtor
+func (v Vector) Destroy()
 ```
 
-Five functions, one handle in every signature after the first. On the wire each
-of those is a single pointer register — `RDI` — with `v` in `XMM0` when there is
-a value.
+Three things to notice:
 
-`acc_new` is the interesting one: it returns a `Handle` **and** an `error`, so
-it reports a null handle the same way everything else reports failure, through
-the status. Creation can fail, and pretending otherwise is how you end up with
-a nil handle in a Go struct that looks initialised.
+- `New` is a **function**, not a method: a constructor has no receiver. Its first
+  result names the class, and that is how the generator knows which C++ class to
+  construct.
+- `Scale` and `Norm` take the receiver by value, because a `Handle` is a number.
+  Mutating through it changes the C++ object, not the Go value.
+- `Destroy` takes no arguments and returns nothing. A destructor that declares a
+  result is a parse error in the generator, not a silent no-op.
 
-## The shim
+## Generate
 
-```cpp
-// acc.cpp
-#include "cppgo_shim.h"
-#include "accumulator.hpp"
-
-// A helper so the entry points read as one line each. Doing the cast in one
-// place is also how you make sure every entry point checks for null.
-static Accumulator *as_acc(void *h) {
-  if (h == nullptr) {
-    throw std::runtime_error("acc: null handle");
-  }
-  return static_cast<Accumulator *>(h);
-}
+```console
+$ cppgo gen -dir ./bindings/mathx
 ```
 
-Each entry point then follows the same three steps: check the handle, do the
-work, let an exception carry the failure. The exact parameter lists — including
-the status form for functions that can fail — are in `cppgo_shim.h`; what goes
-inside them is one line. `acc_free` is the only one that deletes:
+The report now has a note on the constructor:
 
-```cpp
-// signature as declared in cppgo_shim.h
-void acc_free(void *h) {
-  delete as_acc(h);   // throws on a null handle rather than deleting null
-}
+```
+mathx::Vector::Vector   mangled _ZN5mathx6VectorC1Edd      abi from fallback flags (assumed); note: the object is allocated in Go storage owned by this package (16 bytes, alignment 8) and released by //cppgo:dtor
+mathx::Vector::norm     mangled _ZNK5mathx6Vector4normEv    abi from fallback flags (assumed)
+mathx::Vector::scale    mangled _ZN5mathx6Vector5scaleEd    abi from fallback flags (assumed)
+mathx::Vector::~Vector  mangled _ZN5mathx6VectorD1Ev       abi from fallback flags (assumed)
 ```
 
-Whether a null handle is an error or a no-op is your contract to choose. cppgo
-does not care — it only requires that the choice is the same in every entry
-point, because a handle that is sometimes null and sometimes not is a bug that
-shows up three layers away. Throwing is the safer default: it turns
-use-after-free from a segfault into an error.
+`16 bytes, alignment 8` is `sizeof(Vector)`: two `double`s, no vtable, no
+padding. The generator measured it by parsing a probe translation unit that
+includes the header — it did not guess it from the Go type, which is only a
+`uintptr`.
 
-## Wrapping it in Go
+`_ZN5mathx6VectorC1Edd` is the complete-object constructor (`C1`), and
+`_ZN5mathx6VectorD1Ev` is the complete-object destructor (`D1`). The `K` in
+`_ZNK...normEv` is the `const` qualifier: it changes the mangling, not the call.
 
-`cppgo.Handle` is an opaque value on the Go side — on the wire it is a
-`void *` — with no methods and no ownership. The idiomatic move is to wrap it
-in a Go type so that ownership has exactly one representation:
+## Call it
+
+<span class="filename">main.go</span>
 
 ```go
-package accumulator
+package main
 
 import (
 	"fmt"
-	"sync"
+	"log"
 
-	"github.com/Manu343726/cppgo"
-	"example.com/demo/acc"
+	"example.com/vecdemo/bindings/mathx"
 )
 
-type Accumulator struct {
-	mu     sync.Mutex
-	h      cppgo.Handle
-	closed bool
-}
+func main() {
+	mathx.CppgoLibraryPath = "./build/libmathx.so"
 
-func New() (*Accumulator, error) {
-	h, err := acc.New()
+	v, err := mathx.New(3, 4)
 	if err != nil {
-		return nil, fmt.Errorf("accumulator: %w", err)
+		log.Fatal(err)
 	}
-	return &Accumulator{h: h}, nil
-}
+	defer v.Destroy()
 
-func (a *Accumulator) Add(v float64) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	fmt.Println(v.Norm()) // 5
 
-	if a.closed {
-		return fmt.Errorf("accumulator: add after close")
-	}
-	return acc.Add(a.h, v)
-}
-
-func (a *Accumulator) Mean() (float64, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.closed {
-		return 0, fmt.Errorf("accumulator: mean after close")
-	}
-	return acc.Mean(a.h)
-}
-
-func (a *Accumulator) Close() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.closed {
-		return fmt.Errorf("accumulator: close of closed accumulator")
-	}
-	a.closed = true
-	return acc.Free(a.h)
+	v.Scale(2)
+	fmt.Println(v.Norm()) // 10
 }
 ```
 
-Three things that wrapper buys you, none of which the handle gives you by
-itself:
+```console
+$ go run .
+5
+10
+```
 
-**Idempotent-looking shutdown.** `Close` sets `closed` before freeing, so a
-second `Close` is an error in Go rather than a double `delete` in C++. The C++
-side never sees the second call, which is the only way to make double-close
-survivable.
+## What happens on each call
 
-**A serialised object.** The C++ `Accumulator` has no lock, and it does not need
-one: the Go wrapper takes a mutex, and the object is only ever touched by
-whichever goroutine holds it. If several goroutines must call concurrently,
-either add the mutex in Go (as here) or synchronise in C++ — but decide, and put
-it in the type's documentation.
+`New(3, 4)`:
 
-**A place to hang the lifetime.** `defer a.Close()` after a successful `New` is
-the whole memory management story:
+1. `cppgoAlloc(16, 8)` allocates a zeroed `[]byte`, aligns its start to 8, and
+   records it in a package-level `map[cppgo.Handle][]byte`.
+2. The trampoline is called with `this` in `RDI`, `x` in `XMM0`, `y` in `XMM1`.
+   The C++ constructor runs in that Go storage — the equivalent of a placement
+   `new`.
+3. The handle (the aligned address) is returned as `Vector`.
+
+`v.Norm()` passes `this` in `RDI` and reads `XMM0`; `v.Scale(2)` passes `this` in
+`RDI` and `k` in `XMM0`. Neither allocates.
+
+`v.Destroy()` calls `D1` with `this` in `RDI`, then `cppgoRelease` deletes the
+map entry, which is what lets the collector reclaim the buffer.
+
+## The handle rules, concretely
+
+**A handle is not an owner.** `Vector` is a `uintptr`. Copying it copies a
+number; two Go values can refer to the same object and neither knows.
 
 ```go
-a, err := accumulator.New()
-if err != nil {
-	return err
-}
-defer a.Close()
-
-for _, v := range samples {
-	if err := a.Add(v); err != nil {
-		return err
-	}
-}
-
-mean, err := a.Mean()
+a, _ := mathx.New(3, 4)
+b := a            // same object, two handles
+b.Scale(2)
+fmt.Println(a.Norm()) // 10: they are the same Vector
 ```
 
-## Lifetimes: the four ways to get it wrong
+**Nothing frees the object for you.** There is no finalizer. This leaks:
 
-| mistake | what happens | how to notice |
-|---|---|---|
-| **forgetting `Close`** | the C++ object leaks; Go's GC will not help, it does not know about it | memory grows with the number of objects created |
-| **`Close` then use** | in v1 terms: a use-after-free; the null check in `as_acc` does not help because the pointer is a dangling non-null value | crash, or corrupted results, usually not at the call site |
-| **double `Close`** | second `delete` on freed memory | the `closed` flag in the wrapper is what prevents it |
-| **copying the wrapper** | two Go values share one handle, and the first `Close` invalidates the second | keep the wrapper a pointer type, and never copy it by value |
+```go
+for i := 0; i < 1_000_000; i++ {
+	v, _ := mathx.New(1, 1)
+	_ = v // the registry entry and the C++ object stay forever
+}
+```
 
-The third row is the one people are surprised by: the C++ object is not garbage
-collected, so *nothing* in the runtime notices a leak. A Go finalizer is not a
-substitute — finalizers are not guaranteed to run, and they run at an
-arbitrary later time, which is exactly wrong for an object that holds a file
-descriptor or a lock.
+**Destroy exactly once.** A second call runs `D1` on freed storage, which is a
+use-after-free; a call on a zero handle runs it on address 0. Neither is caught
+for you, and neither is recoverable.
 
-## Errors across a handle's lifetime
+**The registry is why the memory survives.** The map holds the `[]byte`; a
+`uintptr` in a `Vector` cannot. If you return a `Vector` from a function, the
+map entry keeps the C++ object alive; the Go value is only the address.
 
-The error convention does not change because there is state involved, and that
-is worth spelling out because the three sources of failure are easy to conflate:
+## When construction can fail
 
-- **The handle is bad.** `acc: null handle` — the shim's check, or a dangling
-  pointer that nobody can detect.
-- **The object rejects the operation.** `mean of an empty accumulator` — the
-  C++ invariant, thrown and converted.
-- **The Go wrapper rejects the call.** `accumulator: add after close` — never
-  reaches C++ at all.
+There is no status channel in `New`, so a `(Vector, error)` signature returns a
+nil error on success and only reports a failure to *load the library*. A
+constructor returns `void` at the ABI level, and the handle is the storage Go
+allocated, so "constructed object or error" cannot come back from one direct
+call.
 
-Each layer produces a distinct message, which is what makes a production
-incident diagnosable. Collapsing them into one generic error loses the only
-information you had.
+When construction is fallible, bind it through the **shim mode**, where the
+generated C signature is `int32_t f(..., void **out)`: the shim returns a
+non-zero status, stores the handle through the out-pointer, and the wrapper
+turns the status into a `(cppgo.Handle, error)` result — the same status
+convention described in [error handling]({{< ref "manual/errors.md" >}}). The
+alternative is a static factory declared as returning only `error`, which works
+when the factory hands the object back some way other than a second return
+value.
 
-Because the message buffer is **thread-local and valid only until the next
-call**, always copy it immediately — which is what the generated wrapper and
-`cppgo.LastError` do for you. Never hold a `*C.char` equivalent across calls,
-and never hold a `NativeError` you built by hand from a pointer.
+A constructor that throws is worse than fallible: in the direct ABI mode there
+is no shim to catch the exception, so the throw is undefined behaviour. Catch
+inside C++, or bind the constructor through the shim mode, where your entry
+point can catch and return a status.
 
-## Patterns that scale
+## Wrapping the handle in a type
 
-- **One handle per domain object**, created in a constructor and destroyed in
-  exactly one place. If you have two `Free` call sites, you have a bug waiting.
-- **Return the wrapper, not the handle**, from your public API. A `cppgo.Handle`
-  escaping into application code means anyone can free it.
-- **Prefer `defer Close()` over manual teardown**, and keep the window between
-  `New` and `defer` to two lines.
-- **Reuse when the object is expensive**, create per call when it is not. A
-  handle round trip costs two calls; a `dlopen`'d object that allocates a 2 MB
-  buffer is not something to construct per row.
-- **Do not pass handles between goroutines without the wrapper's lock.** The
-  handle is safe to copy, the object behind it is not.
+The generated mode makes `Vector` itself the handle. If you prefer an API with a
+`Close` method and a nil pointer to signal "no object", wrap it:
 
-Next: [data processing](/tutorials/data-processing/), where the question is
-how much data crosses per call rather than how long an object lives.
+```go
+type Vec struct{ h mathx.Vector }
+
+func (v *Vec) Close() error {
+	if v == nil || v.h.IsNil() {
+		return errors.New("vec: already closed")
+	}
+	v.h.Destroy()
+	v.h = 0
+	return nil
+}
+```
+
+That is Go's own pattern, not something cppgo generates; the runtime package's
+`Handle` documentation shows the same shape. It buys you an idempotent close at
+the cost of one indirection — worth it for a long-lived object, unnecessary for a
+`defer`-scoped one.
+
+## Where to go next
+
+`Norm()` returns one `double`. Real code passes buffers. [Bulk
+data]({{< ref "tutorials/bulk-data.md" >}}) explains how a `[]float64` crosses,
+and why the answer is not "call the method once per element".
