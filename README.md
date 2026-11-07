@@ -53,10 +53,10 @@ A call is not free — 13 cycles is not 2 — but it is close enough to a normal
 call that the boundary stops dictating your architecture. You no longer have to
 batch 10 000 rows into one call just to amortise the crossing.
 
-And unlike cgo:
+And unlike cgo, there is no `import "C"` in the tree:
 
-- `CGO_ENABLED=0` builds and runs. No `import "C"` anywhere.
-- No C toolchain needed to build the Go side, so cross-compilation works.
+- `CGO_ENABLED=0` builds and runs, and no C toolchain is needed for the Go side,
+  so cross-compilation works.
 - (A binary that loads a shared library at run time is dynamically linked by
   definition. The promise is "no cgo, no C toolchain", not "a static file".)
 - The C++ library is loaded at runtime with `dlopen`, so it can be swapped,
@@ -67,8 +67,8 @@ And unlike cgo:
 One Go declaration becomes a generated Go wrapper and one generated `NOSPLIT`
 assembly trampoline. The wrapper converts between Go types (`[]float64`,
 `string`, `error`) and the registers the C ABI expects; the trampoline switches
-`SP` and calls the mangled C++ symbol directly. No `entersyscall`, no `P`
-handoff, no `g0` switch.
+`SP` and calls the mangled C++ symbol directly. The boundary is about 13 cycles,
+which is the table above.
 
 The trampoline itself, what the collector sees while a foreign frame sits on the
 goroutine's stack, and how the library is loaded are in the [architecture
