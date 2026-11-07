@@ -174,9 +174,10 @@ const (
 )
 
 // CXCursor_ExceptionSpecificationKind values, as returned by
-// clang_getCursorExceptionSpecificationType. Only the three noexcept spellings
-// are treated as a promise that nothing escapes; throw() is a dynamic
-// specification and throw(...) is the opposite of a promise.
+// clang_getCursorExceptionSpecificationType. Only the three spellings that are
+// known to promise nothing escapes are treated as such: a computed noexcept
+// is evaluated by the compiler and libclang does not expose the result, so it
+// is conservatively allowed to throw.
 const (
 	exceptionSpecNone             int32 = 0
 	exceptionSpecDynamicNone      int32 = 1
@@ -188,6 +189,21 @@ const (
 	exceptionSpecUninstantiated   int32 = 7
 	exceptionSpecUnparsed         int32 = 8
 	exceptionSpecNoThrow          int32 = 9
+)
+
+// CXTemplateArgumentKind values, as returned by
+// clang_Cursor_getTemplateArgumentKind.
+const (
+	templateArgumentNull        int32 = 0
+	templateArgumentType        int32 = 1
+	templateArgumentDeclaration int32 = 2
+	templateArgumentNullPtr     int32 = 3
+	templateArgumentIntegral    int32 = 4
+	templateArgumentTemplate    int32 = 5
+	templateArgumentExpansion   int32 = 6
+	templateArgumentExpression  int32 = 7
+	templateArgumentPack        int32 = 8
+	templateArgumentInvalid     int32 = 9
 )
 
 // CXChildVisitResult, the return value of the visitor callback.
@@ -302,6 +318,7 @@ type libclangFuncs struct {
 	isCursorDefinition   func(CXCursor) int32
 	isFunctionInlined    func(CXCursor) int32
 	getSemanticParent    func(CXCursor) CXCursor
+	getCursorDefinition  func(CXCursor) CXCursor
 	cursorMangling       func(CXCursor) CXString
 	isVirtualBase        func(CXCursor) int32
 
@@ -351,6 +368,14 @@ type libclangFuncs struct {
 	cursorIsVariadic    func(CXCursor) int32
 	cursorExceptionSpec func(CXCursor) int32
 
+	// Templates.
+	getNumTemplateArguments          func(CXCursor) int32
+	getTemplateArgumentKind          func(CXCursor, uint32) int32
+	getTemplateArgumentType          func(CXCursor, uint32) CXType
+	getTemplateArgumentValue         func(CXCursor, uint32) int64
+	getTemplateArgumentUnsignedValue func(CXCursor, uint32) uint64
+	getSpecializedCursorTemplate     func(CXCursor) CXCursor
+
 	// Locations.
 	getFileLocation          func(CXSourceLocation, *uintptr, *uint32, *uint32, *uint32)
 	locationIsFromMainFile   func(CXSourceLocation) int32
@@ -382,6 +407,7 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_isCursorDefinition", &f.isCursorDefinition},
 		{"clang_Cursor_isFunctionInlined", &f.isFunctionInlined},
 		{"clang_getCursorSemanticParent", &f.getSemanticParent},
+		{"clang_getCursorDefinition", &f.getCursorDefinition},
 		{"clang_Cursor_getMangling", &f.cursorMangling},
 		{"clang_isVirtualBase", &f.isVirtualBase},
 		{"clang_Cursor_getStorageClass", &f.getCursorStorageClass},
@@ -420,6 +446,12 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_getTemplateCursorKind", &f.getTemplateCursorKind},
 		{"clang_Cursor_isVariadic", &f.cursorIsVariadic},
 		{"clang_getCursorExceptionSpecificationType", &f.cursorExceptionSpec},
+		{"clang_Cursor_getNumTemplateArguments", &f.getNumTemplateArguments},
+		{"clang_Cursor_getTemplateArgumentKind", &f.getTemplateArgumentKind},
+		{"clang_Cursor_getTemplateArgumentType", &f.getTemplateArgumentType},
+		{"clang_Cursor_getTemplateArgumentValue", &f.getTemplateArgumentValue},
+		{"clang_Cursor_getTemplateArgumentUnsignedValue", &f.getTemplateArgumentUnsignedValue},
+		{"clang_getSpecializedCursorTemplate", &f.getSpecializedCursorTemplate},
 		{"clang_getFileLocation", &f.getFileLocation},
 		{"clang_Location_isFromMainFile", &f.locationIsFromMainFile},
 		{"clang_Location_isInSystemHeader", &f.locationIsInSystemHeader},

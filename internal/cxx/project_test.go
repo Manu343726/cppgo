@@ -143,15 +143,23 @@ func TestProjectMissingBodies(t *testing.T) {
 	}
 	sort.Strings(names)
 	assert.Equal(t, []string{
+		"mathx::Both::both",
 		"mathx::Box::get",
+		"mathx::Left::left",
 		"mathx::Point::Point",
 		"mathx::Point::value",
+		"mathx::Right::right",
 		"mathx::Shape::area",
+		"mathx::VDerived::derived",
 		"mathx::Vector::x",
 		"mathx::Vector::y",
+		"mathx::WithMemberTemplate::identity",
+		"mathx::computed_add",
+		"mathx::max_of",
 		"mathx::noexcept_add",
 		"mathx::take_nullptr",
 		"mathx::take_ref",
+		"mathx::throw_none_add",
 		"mathx::variadic_sum",
 	}, names)
 }

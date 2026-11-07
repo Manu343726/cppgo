@@ -171,6 +171,50 @@ struct Box {
     T value;
     T get() const { return value; }
 };
+template struct Box<int>;
+
+struct BoxHolder {
+    Box<double> box;
+};
+
+template <typename T, int N>
+struct Fixed {
+    T values[N];
+};
+struct FixedHolder {
+    Fixed<double, 4> data;
+};
+
+template <typename T>
+T max_of(T a, T b) { return a < b ? b : a; }
+template double max_of<double>(double, double);
+struct WithMemberTemplate {
+    template <typename T>
+    T identity(T value) const { return value; }
+    int member;
+};
+
+// Exception specifications, for carrier routing.
+int throw_none_add(int a, int b) throw();
+int computed_add(int a, int b) noexcept(sizeof(int) == 4);
+
+// Multiple inheritance and a virtual base: the thunk performs the casts.
+struct Left {
+    virtual int left() const;
+};
+struct Right {
+    int tag;
+    int right() const;
+};
+struct Both : Left, Right {
+    int both() const;
+};
+struct VBase {
+    int value;
+};
+struct VDerived : virtual VBase {
+    int derived() const;
+};
 
 enum Mode { ModeOff, ModeOn = 5, ModeMax = 10 };
 

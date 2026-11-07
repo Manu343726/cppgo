@@ -147,9 +147,13 @@ type Symbol struct {
 	// defined, so it has no address to call.
 	IsPureVirtual bool
 	// IsNoExcept is true when the declaration promises that nothing escapes.
-	// An exception crossing the boundary terminates the process, so this is
-	// the promise a binding needs and the report tells who has not made it.
+	// It is derived from ExceptionSpec: only the specifications known not to
+	// throw permit the direct call path.
 	IsNoExcept bool
+	// ExceptionSpec is the declared exception specification. It decides the
+	// carrier: a direct trampoline has no handler, so only a specification
+	// that cannot throw may use it.
+	ExceptionSpec ExceptionSpec
 	// IsVariadic is true for a C variadic function (`...`), which has no
 	// fixed argument list to lay out.
 	IsVariadic bool
@@ -172,16 +176,30 @@ type Symbol struct {
 	DefLine int
 }
 
+// isPureVirtual reads the pure-virtual flag, but only for the cursor kinds
+// where clang_CXXMethod_isPureVirtual's cast to a CXXMethodDecl is valid.
+func (l *Libclang) isPureVirtual(cursor CXCursor) bool {
+	switch l.f.getCursorKind(cursor) {
+	case cursorCXXMethod, cursorDestructor:
+		return l.f.methodIsPureVirtual(cursor) != 0
+	default:
+		return false
+	}
+}
+
 // HasExportedSymbol reports whether a library built from these sources must
 // export Mangled: the function needs a definition outside its class definition
 // and external linkage. A namespace-scope `static` function has the first and
-// not the second.
+// not the second, and a template pattern has neither until it is instantiated.
 //
 // One corner is not covered: for an abstract class, clang++ emits only the
 // base-object constructor (C2) and not the complete-object one (C1), which is
 // what libclang's mangling names. g++ emits both. Nothing a binding tool can do
 // about it beyond failing at load time, which it does loudly.
 func (s Symbol) HasExportedSymbol() bool {
+	if s.IsTemplate {
+		return false
+	}
 	return s.HasOutOfLineBody && (s.Kind != FreeFunc || !s.IsStatic)
 }
 
@@ -218,6 +236,43 @@ const maxParentDepth = 32
 // deciding whether a record can be returned in registers.
 const maxTrivialityDepth = 4
 
+// maxHierarchyDepth bounds the recursion through base classes when answering
+// whether a record has a vtable.
+const maxHierarchyDepth = 16
+
+// polymorphic reports whether a record has a vtable: it declares a virtual
+// function, has a virtual base, or inherits either from a base. libclang has no
+// direct query, so it is evaluated structurally.
+func (l *Libclang) polymorphic(decl CXCursor, depth int) bool {
+	switch l.f.getCursorKind(decl) {
+	case cursorClassDecl, cursorStructDecl, cursorUnionDecl:
+	default:
+		return false
+	}
+	if depth > maxHierarchyDepth {
+		// Out of budget: assume the worst, because guessing "not polymorphic"
+		// would generate a destructor that does not dispatch.
+		return true
+	}
+	found := false
+	_ = l.visit(decl, func(child, parent CXCursor) int32 {
+		switch l.f.getCursorKind(child) {
+		case cursorCXXMethod, cursorConstructor, cursorDestructor:
+			if l.f.methodIsVirtual(child) != 0 {
+				found = true
+			}
+		case cursorBaseSpecifier:
+			if l.f.isVirtualBase(child) != 0 {
+				found = true
+			} else if l.polymorphic(l.f.getTypeDeclaration(l.f.getCursorType(child)), depth+1) {
+				found = true
+			}
+		}
+		return visitContinue
+	})
+	return found
+}
+
 // extract fills tu.symbols and the lookup indexes.
 func (tu *TU) extract() {
 	if tu.isClosed() {
@@ -249,10 +304,15 @@ func (e *extractor) visit(cursor, parent CXCursor) int32 {
 	case cursorFunctionDecl, cursorCXXMethod, cursorConstructor, cursorDestructor:
 		e.collect(cursor, parent)
 		return visitContinue
-	case cursorFunctionTemplate, cursorClassTemplate, cursorClassTemplatePartialSpecialization:
-		// The pattern of a template has no symbol until it is instantiated, but
-		// it is a declaration the generator has to report as a template rather
-		// than as missing. Its children are collected and marked.
+	case cursorFunctionTemplate:
+		// libclang exposes a function template only as the template cursor; its
+		// function type is complete, so the pattern is collected from here. It
+		// has no symbol until it is instantiated.
+		e.collect(cursor, parent)
+		return visitRecurse
+	case cursorClassTemplate, cursorClassTemplatePartialSpecialization:
+		// The pattern of a class template has no symbol until it is
+		// instantiated. Its members are collected and marked.
 		return visitRecurse
 	case cursorNamespace, cursorClassDecl, cursorStructDecl, cursorUnionDecl,
 		cursorLinkageSpec, cursorNamespaceAlias:
@@ -274,16 +334,18 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 	if !ok {
 		return
 	}
+	spec := e.l.exceptionSpec(cursor)
 	sym := Symbol{
 		QualifiedName: name,
 		Mangled:       e.l.str(e.l.f.cursorMangling(cursor)),
 		Kind:          e.kind(cursor),
 		Parent:        parentOf(name),
 		Access:        e.l.access(cursor),
-		IsPureVirtual: e.l.f.methodIsPureVirtual(cursor) != 0,
-		IsNoExcept:    e.l.isNoExcept(cursor),
+		IsPureVirtual: e.l.isPureVirtual(cursor),
+		IsNoExcept:    !spec.CanThrow(),
+		ExceptionSpec: spec,
 		IsVariadic:    e.l.f.cursorIsVariadic(cursor) != 0,
-		IsTemplate:    isTemplateParent(e.l.f.getCursorKind(parent)),
+		IsTemplate:    isTemplateParent(e.l.f.getCursorKind(cursor)) || isTemplateParent(e.l.f.getCursorKind(parent)),
 	}
 	sym.IsConst, sym.IsVirtual, sym.IsStatic = e.qualifiers(cursor, sym.Kind)
 	sym.DeclFile, sym.DeclLine = e.l.locationValues(loc)
@@ -297,6 +359,12 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 			sym.HasOutOfLineBody = true
 			sym.DefFile, sym.DefLine = sym.DeclFile, sym.DeclLine
 		}
+	}
+	if sym.IsTemplate {
+		// A template pattern emits no symbol of its own, even when its body is
+		// written outside a class: only an instantiation does. Saying it has an
+		// exported body would send the generator looking for a dlsym target.
+		sym.HasOutOfLineBody = false
 	}
 
 	funcType := e.l.f.getCursorType(cursor)
@@ -363,9 +431,12 @@ func mergeInto(into *Symbol, from Symbol) {
 		into.Access = from.Access
 	}
 	into.IsPureVirtual = into.IsPureVirtual || from.IsPureVirtual
-	into.IsNoExcept = into.IsNoExcept || from.IsNoExcept
 	into.IsVariadic = into.IsVariadic || from.IsVariadic
 	into.IsTemplate = into.IsTemplate || from.IsTemplate
+	if into.ExceptionSpec == ExceptionUnspecified && from.ExceptionSpec != ExceptionUnspecified {
+		into.ExceptionSpec = from.ExceptionSpec
+	}
+	into.IsNoExcept = !into.ExceptionSpec.CanThrow()
 }
 
 // parentOf returns the qualified name without its last component:
@@ -399,6 +470,14 @@ func (e *extractor) kind(cursor CXCursor) Kind {
 			return StaticMethod
 		}
 		return Method
+	case cursorFunctionTemplate:
+		switch e.l.f.getCursorKind(e.l.f.getSemanticParent(cursor)) {
+		case cursorClassDecl, cursorStructDecl, cursorClassTemplate, cursorClassTemplatePartialSpecialization:
+			// A member function template needs `this` like any method.
+			return Method
+		default:
+			return FreeFunc
+		}
 	default:
 		return FreeFunc
 	}
@@ -408,6 +487,11 @@ func (e *extractor) kind(cursor CXCursor) Kind {
 // accessors cast the cursor to a CXXMethodDecl, so they are only called for
 // kinds where that cast is valid.
 func (e *extractor) qualifiers(cursor CXCursor, kind Kind) (isConst, isVirtual, isStatic bool) {
+	if e.l.f.getCursorKind(cursor) == cursorFunctionTemplate {
+		// The clang_CXXMethod_* accessors cast the cursor to a CXXMethodDecl;
+		// a template cursor is not one, so none of them is asked.
+		return false, false, false
+	}
 	switch kind {
 	case Method, StaticMethod:
 		isConst = e.l.f.methodIsConst(cursor) != 0
@@ -530,7 +614,14 @@ func (l *Libclang) param(t CXType) Param {
 // embeds a source path: the generator refuses those rather than inventing a
 // name that changes between checkouts.
 func (l *Libclang) declarationName(t CXType) string {
-	name, _ := l.qualifiedName(l.f.getTypeDeclaration(t))
+	decl := l.f.getTypeDeclaration(t)
+	if template, ok := l.specialization(decl); ok {
+		if args := l.templateArguments(decl); len(args) > 0 {
+			name, _ := l.qualifiedName(template)
+			return specializationName(name, args)
+		}
+	}
+	name, _ := l.qualifiedName(decl)
 	return name
 }
 
@@ -566,16 +657,6 @@ func isUnsignedKind(kind int32) bool {
 func (l *Libclang) enumIsUnsigned(t CXType) bool {
 	underlying := l.f.getCanonicalType(l.f.getEnumDeclIntegerType(l.f.getTypeDeclaration(t)))
 	return isUnsignedKind(underlying.Kind)
-}
-
-// isNoExcept reports whether a declaration promises that no exception escapes.
-func (l *Libclang) isNoExcept(cursor CXCursor) bool {
-	switch l.f.cursorExceptionSpec(cursor) {
-	case exceptionSpecBasicNoexcept, exceptionSpecComputedNoexcept, exceptionSpecNoThrow:
-		return true
-	default:
-		return false
-	}
 }
 
 // indirectResult reports whether a return type comes back through a hidden

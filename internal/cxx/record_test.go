@@ -386,3 +386,70 @@ func TestSymbolMergeKey(t *testing.T) {
 	// An ordinary declaration with no mangled name has no identity to merge on.
 	assert.Empty(t, symbolMergeKey(Symbol{QualifiedName: "mathx::nothing"}))
 }
+
+func TestMultipleInheritanceAndVirtualBases(t *testing.T) {
+	records := recordByName(t)
+
+	both := records["mathx::Both"]
+	assert.True(t, both.IsPolymorphic, "Left's virtual function puts a vtable in Both")
+	assert.False(t, both.HasVirtualFunction, "Both declares no virtual function itself")
+	assert.False(t, both.HasVirtualBase)
+	require.Len(t, both.Bases, 2)
+	assert.Equal(t, "mathx::Left", both.Bases[0].QualifiedName)
+	assert.Equal(t, int64(0), both.Bases[0].OffsetBytes)
+	assert.Equal(t, "mathx::Right", both.Bases[1].QualifiedName)
+	assert.Equal(t, int64(8), both.Bases[1].OffsetBytes, "the second base is adjusted by 8 bytes")
+
+	left := records["mathx::Left"]
+	assert.True(t, left.HasVirtualFunction)
+	assert.True(t, left.IsPolymorphic)
+
+	derived := records["mathx::VDerived"]
+	assert.True(t, derived.HasVirtualBase)
+	assert.True(t, derived.IsPolymorphic)
+	require.Len(t, derived.Bases, 1)
+	assert.True(t, derived.Bases[0].IsVirtual)
+	assert.Equal(t, "mathx::VBase", derived.Bases[0].QualifiedName)
+	assert.Equal(t, int64(8), derived.Bases[0].OffsetBytes, "the virtual base offset in this class's layout")
+}
+
+func TestRecordLayoutKnown(t *testing.T) {
+	records := recordByName(t)
+
+	assert.True(t, records["mathx::Pair"].LayoutKnown)
+	assert.True(t, records["mathx::Flags"].LayoutKnown, "bitfields are laid out; they are merely not mirrorable")
+	assert.False(t, records["mathx::Box"].LayoutKnown, "a template pattern has no layout")
+	assert.False(t, records["mathx::Box<int>"].LayoutKnown, "libclang defers the instantiated layout")
+	assert.False(t, records["mathx::BoxHolder"].LayoutKnown, "a member whose layout is deferred makes the record untrustworthy")
+	assert.Equal(t, int64(-1), records["mathx::BoxHolder"].SizeBytes, "an untrusted size is reported as unknown, not as 1")
+	assert.Equal(t, int64(-1), records["mathx::BoxHolder"].AlignBytes)
+}
+
+func TestMergeRecordCarriesHierarchyAndTemplateData(t *testing.T) {
+	into := Record{QualifiedName: "mathx::Box<int>", SizeBytes: -1, AlignBytes: -1}
+	from := Record{
+		QualifiedName:            "mathx::Box<int>",
+		IsTemplateSpecialization: true,
+		TemplateName:             "mathx::Box",
+		TemplateArguments:        []TemplateArgument{{Kind: TemplateArgumentType, Spelling: "int"}},
+		HasVirtualFunction:       true,
+		HasVirtualBase:           true,
+		IsPolymorphic:            true,
+		SizeBytes:                4,
+		AlignBytes:               4,
+		LayoutKnown:              true,
+	}
+	mergeRecord(&into, from)
+	assert.True(t, into.IsTemplateSpecialization)
+	assert.Equal(t, "mathx::Box", into.TemplateName)
+	assert.Len(t, into.TemplateArguments, 1)
+	assert.True(t, into.HasVirtualFunction)
+	assert.True(t, into.HasVirtualBase)
+	assert.True(t, into.IsPolymorphic)
+	assert.Equal(t, int64(4), into.SizeBytes)
+	assert.True(t, into.LayoutKnown)
+
+	mergeRecord(&into, Record{HasVirtualBase: false, HasVirtualFunction: false, IsPolymorphic: false})
+	assert.True(t, into.HasVirtualFunction, "a sighting must not clear a flag")
+	assert.True(t, into.HasVirtualBase)
+}

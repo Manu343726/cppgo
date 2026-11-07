@@ -355,10 +355,11 @@ func (p *Project) Enum(name string) (Enum, bool) {
 	return p.enums[i], true
 }
 
-// MissingBodies returns the symbols that are declared but have no out-of-line
-// body, i.e. the ones the generator must refuse: binding them produces a
-// trampoline that fails at load time because the library exports no such
-// symbol.
+// MissingBodies returns the symbols that are declared but export no symbol of
+// their own: inline members, pure virtuals, static functions with internal
+// linkage, and template patterns. They are not refused — the generator carries
+// them through a thunk — but a direct call to one would fail at load time, so
+// the list is what a report uses to explain a carrier choice.
 func (p *Project) MissingBodies() []Symbol {
 	var out []Symbol
 	for _, sym := range p.Symbols() {

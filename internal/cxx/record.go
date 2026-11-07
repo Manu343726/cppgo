@@ -122,10 +122,26 @@ type Record struct {
 	// IsTemplate is true for a template pattern. Its layout and its members'
 	// symbols do not exist until an instantiation names them.
 	IsTemplate bool
-	// SizeBytes is sizeof, or -1 for an incomplete or template type.
+	// IsTemplateSpecialization is true for a concrete instantiation, e.g.
+	// Box<int>. It has a layout and a name built from its arguments.
+	IsTemplateSpecialization bool
+	// TemplateName is the qualified name of the template a specialization
+	// instantiates.
+	TemplateName string
+	// TemplateArguments are the concrete arguments of a specialization.
+	TemplateArguments []TemplateArgument
+	// SizeBytes is sizeof, or -1 when the layout is not known (a template, an
+	// incomplete type, or a record with a member whose layout libclang could
+	// not complete).
 	SizeBytes int64
-	// AlignBytes is alignof, or -1 for an incomplete or template type.
+	// AlignBytes is alignof, or -1 when the layout is not known.
 	AlignBytes int64
+	// LayoutKnown reports whether SizeBytes, AlignBytes and every field offset
+	// are the real C++ layout. It is false for a template and for a record
+	// with an incomplete member, where libclang can return a plausible but
+	// wrong size; the generator then takes the opaque, C++-owned path instead
+	// of mirroring the fields.
+	LayoutKnown bool
 	// IsPOD is libclang's POD classification: standard layout and trivial.
 	IsPOD bool
 	// IsTrivial is the Itanium "trivial for the purposes of calls" rule: no
@@ -136,6 +152,12 @@ type Record struct {
 	// IsPolymorphic is true when the record has a virtual function or a
 	// virtual base, and therefore a vtable pointer in its layout.
 	IsPolymorphic bool
+	// HasVirtualFunction is true when the record declares or inherits a
+	// virtual function: calls through it dispatch through the vtable.
+	HasVirtualFunction bool
+	// HasVirtualBase is true when one of the bases is virtual: its offset is
+	// resolved through the vtable rather than being a constant.
+	HasVirtualBase bool
 	// IsAbstract is true when the record has a pure virtual function and
 	// cannot be instantiated.
 	IsAbstract bool
@@ -217,7 +239,10 @@ func (e *recordExtractor) visit(cursor, parent CXCursor) int32 {
 	}
 	switch kind := e.l.f.getCursorKind(cursor); kind {
 	case cursorClassDecl, cursorStructDecl, cursorUnionDecl:
-		if e.l.f.isCursorDefinition(cursor) != 0 {
+		// A specialization is a declaration, not a definition, but its layout
+		// is complete and it is part of the API: "template struct Box<int>;"
+		// must be generated like any other type.
+		if _, specialization := e.l.specialization(cursor); e.l.f.isCursorDefinition(cursor) != 0 || specialization {
 			e.addRecord(e.collectRecord(cursor, false))
 		}
 		// Recurse so nested records are found; the field walk itself does not
@@ -252,6 +277,18 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 		AlignBytes:    -1,
 	}
 	rec.DeclFile, rec.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
+	if template, ok := e.l.specialization(cursor); ok {
+		rec.IsTemplateSpecialization = true
+		if templateName, qualified := e.l.qualifiedName(template); qualified {
+			rec.TemplateName = templateName
+		}
+		rec.TemplateArguments = e.l.templateArguments(cursor)
+		if len(rec.TemplateArguments) > 0 {
+			// The cursor is spelled "Box" for both the pattern and the
+			// instantiation; the arguments are the identity.
+			rec.QualifiedName = specializationName(rec.TemplateName, rec.TemplateArguments)
+		}
+	}
 
 	if isTemplate {
 		// The pattern's layout and field types depend on the parameter: there
@@ -260,35 +297,55 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 		return rec
 	}
 
-	typ := e.l.f.getCursorType(cursor)
+	// An explicit instantiation is a declaration cursor: its definition (the
+	// instantiated class body, with its fields) is a different cursor, and its
+	// type must be canonicalised before sizeof/alignof answer.
+	decl := cursor
+	if definition := e.l.f.getCursorDefinition(cursor); e.l.cursorIsValid(definition) {
+		decl = definition
+	}
+	typ := e.l.f.getCanonicalType(e.l.f.getCursorType(decl))
 	rec.SizeBytes = e.l.f.typeGetSizeOf(typ)
 	rec.AlignBytes = e.l.f.typeGetAlignOf(typ)
 	rec.IsPOD = e.l.f.isPODType(typ) != 0
-	rec.IsAbstract = e.l.f.cxxRecordIsAbstract(cursor) != 0
-	rec.IsTrivial = !e.l.nonTrivialRecord(cursor, 0)
+	rec.IsAbstract = e.l.f.cxxRecordIsAbstract(decl) != 0
+	rec.IsTrivial = !e.l.nonTrivialRecord(decl, 0)
+	rec.IsPolymorphic = e.l.polymorphic(decl, 0)
 
 	// A record's immediate children are its fields, its base classes and its
 	// member functions. The walk does not recurse: nested records are visited
 	// by the translation-unit walk, which reaches every one exactly once.
-	_ = e.l.visit(cursor, func(child, parent CXCursor) int32 {
+	_ = e.l.visit(decl, func(child, parent CXCursor) int32 {
 		switch e.l.f.getCursorKind(child) {
 		case cursorFieldDecl:
 			rec.Fields = append(rec.Fields, e.collectField(child))
 		case cursorBaseSpecifier:
-			rec.Bases = append(rec.Bases, e.collectBase(cursor, child))
+			rec.Bases = append(rec.Bases, e.collectBase(decl, child))
 		case cursorCXXMethod, cursorConstructor, cursorDestructor:
 			if e.l.f.methodIsVirtual(child) != 0 {
+				rec.HasVirtualFunction = true
 				rec.IsPolymorphic = true
 			}
 		}
 		return visitContinue
 	})
-	if len(rec.Bases) > 0 {
-		for _, base := range rec.Bases {
-			if base.IsVirtual {
-				rec.IsPolymorphic = true
-			}
+	for _, base := range rec.Bases {
+		if base.IsVirtual {
+			rec.HasVirtualBase = true
+			rec.IsPolymorphic = true
 		}
+	}
+	rec.LayoutKnown = rec.SizeBytes > 0 && rec.AlignBytes > 0
+	for _, field := range rec.Fields {
+		if field.Type.SizeBytes < 0 {
+			// A member libclang could not complete makes the whole layout
+			// untrustworthy: it reports a small size rather than an error.
+			rec.LayoutKnown = false
+		}
+	}
+	if !rec.LayoutKnown {
+		rec.SizeBytes = -1
+		rec.AlignBytes = -1
 	}
 	return rec
 }
@@ -404,6 +461,7 @@ func mergeRecord(into *Record, from Record) {
 	if into.SizeBytes < 0 && from.SizeBytes >= 0 {
 		into.SizeBytes = from.SizeBytes
 		into.AlignBytes = from.AlignBytes
+		into.LayoutKnown = from.LayoutKnown
 		into.IsPOD = from.IsPOD
 		into.IsTrivial = from.IsTrivial
 		into.IsPolymorphic = from.IsPolymorphic
@@ -418,5 +476,15 @@ func mergeRecord(into *Record, from Record) {
 	}
 	if into.DeclFile == "" {
 		into.DeclFile, into.DeclLine = from.DeclFile, from.DeclLine
+	}
+	into.IsTemplateSpecialization = into.IsTemplateSpecialization || from.IsTemplateSpecialization
+	into.HasVirtualFunction = into.HasVirtualFunction || from.HasVirtualFunction
+	into.HasVirtualBase = into.HasVirtualBase || from.HasVirtualBase
+	into.IsPolymorphic = into.IsPolymorphic || from.IsPolymorphic
+	if into.TemplateName == "" {
+		into.TemplateName = from.TemplateName
+	}
+	if len(into.TemplateArguments) == 0 {
+		into.TemplateArguments = from.TemplateArguments
 	}
 }
