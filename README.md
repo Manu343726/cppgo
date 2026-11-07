@@ -88,9 +88,11 @@ Being honest about the trade-offs is the point of this project, so:
   `StackReserve` (32 KiB) of headroom before each call.
 - **Linux/amd64 only for now.** The package builds everywhere else and panics
   with a clear message. arm64 is next.
-- **No exceptions across the boundary.** In shim mode the generated entry point
-  catches `std::exception` and `...` and turns them into Go errors; in the
-  direct ABI mode there is nothing to catch, so a throw is undefined behaviour.
+- **No exceptions across the boundary.** In shim mode the `extern "C"` entry
+  point is yours to write, and the catching happens there: convert the exception
+  into a non-zero status and a message. The direct ABI mode has no entry point in
+  between, so a throw that escapes the function is undefined behaviour. See
+  [error handling](https://manu343726.github.io/cppgo/manual/errors/).
 
 ## Requirements
 
