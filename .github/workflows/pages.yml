@@ -57,6 +57,11 @@ jobs:
       - name: Configure Pages
         id: pages
         uses: actions/configure-pages@v5
+        with:
+          # Enable Pages on the first run. Without this the deploy fails on a
+          # fresh repository whose Pages source has never been set, and the
+          # error is a confusing 404 from the artifact upload.
+          enablement: true
 
       - name: Build with Hugo
         run: |
