@@ -64,6 +64,24 @@ type Handle uintptr                          // low-level only; never in a gener
 `Object` pins its storage with `runtime.Pinner`, so there is no package-level object registry: the
 storage is reachable from the generated Go value that owns it, and it does not move while pinned.
 
+### Runtime additions introduced by this contract
+
+Some of the surface above does not exist in the tree yet. It is **planned API**, not stale text: the
+emitter phase adds it, and the contract is what defines it.
+
+| name | layer | status | what it guarantees |
+|---|---|---|---|
+| `Object`, `NewObject(size, align, release)`, `Addr`, `Retain`, `Release` | runtime | **planned** | a pinned, aligned Go block; a Go-side reference count; the concrete destructor (`release`) runs exactly once, when the last reference goes |
+| `*cppgo.CallError{Symbol, Err}` | runtime | **planned** | a failed binding, with the C++ symbol and the native message; wraps `*NativeError` so `errors.As` works |
+| `Open(path string) error`, generated in each bound package | generator output | **planned** | loads the library, resolves every direct symbol **and every thunk**, and reports the generated shim file when one is missing |
+| `Open`, `Library`, `Symbol`, `Close`, `Path`, `MustSymbol`, `ProbeStack`, `StackReserve`, `Ptr`, `StrPtr`, `KeepAlive`, `LastError`, `OpenError`, `SymbolError`, `NativeError`, `ErrClosed` | runtime | **in the tree** | the loader, the wire helpers and the typed errors as they exist today |
+| `Handle` | runtime | **in the tree, not used by generated code** | a low-level uintptr for hand-written callers only |
+
+`Object` serves two shapes of ownership and `release` is what tells them apart: for a value whose
+layout libclang could not complete, the shim heap-allocates it and `release` deletes it; for a value
+constructed into Go-pinned storage, `release` calls its destructor. The generated Go value never
+needs to know which one it holds, and `Close` is correct for both.
+
 ## How a binding is carried: direct or thunk
 
 Every binding is assigned exactly one **carrier** before anything is emitted. The generator never
@@ -78,9 +96,12 @@ measured on, and all of them must hold:
 - it is **not virtual** (no vtable walk is needed: the call is to a fixed address);
 - it is **`noexcept`** (the direct path has no handler, so nothing may escape);
 - the signature is register-representable: scalars, enums, pointers and references, a slice/string
-  as `(pointer, length)`, and a POD of at most 16 bytes with no MEMORY-class part;
-- no `std::` type, no by-value non-POD, no template that has not been instantiated into a normal
-  symbol.
+  as `(pointer, length)`, and a POD of at most 16 bytes with no MEMORY-class part. No `std::` type
+  and no template that has not been instantiated into a normal symbol.
+
+A declaration outside that shape is **not refused**: it goes through a thunk. A >16-byte or
+MEMORY-class POD is copied by the thunk as an argument and returned through the sret pointer into Go
+storage; a non-POD by value is copied the same way.
 
 ### Thunk
 
@@ -93,7 +114,8 @@ C++ compiled against the same headers, with the same flags, inside the user's bu
 | virtual method, virtual destructor | calls it as C++ does — **real dispatch through the vtable**, including through a base pointer or reference |
 | template | instantiates the concrete specialisation (`template struct Box<int>;`, `template T max<T>(T,T);`) and calls it |
 | `std::string` / `string_view` / `vector` / `span` / `array` / `optional` | constructs the C++ value, converts, copies in or out (see *Type map*) |
-| non-POD by value | copies the Go-held object into the call, destoys it at the end, or placement-news the result into Go storage |
+| POD above 16 bytes / MEMORY class by value | copies it into the call; for a result, passes the hidden sret pointer aimed at Go storage |
+| non-POD by value | copies the Go-held object into the call, destroys it at the end, or placement-news the result into Go storage |
 | exception-throwing call | wraps the call in `try`/`catch`, converts `std::exception` and `...` into a `cppgo_last_error()` message |
 | multiple inheritance / virtual base | performs the `static_cast`/`dynamic_cast` that adjusts `this`, in C++, where the layout is known |
 | more than 6 INTEGER or 8 SSE arguments | takes a pointer to a packed argument block declared by the generated header, unpacks it and calls |
@@ -457,6 +479,14 @@ reached through a one-line C++ wrapper with a representable signature.
   generation error naming both.
 - `New<Type>` for a constructor, `Close` for the destructor, `<Type><Name>` for a static member:
   `mathx::Vector::dims` → `VectorDims`.
+- **Constructor overloads** follow the same suffix rule as functions, applied to `New<Type>`:
+  a class with one constructor gets `NewVector`; a class with several gives each of them the
+  parameter-type suffix, with the zero-parameter constructor keeping the bare name —
+  `Vector()` → `NewVector`, `Vector(double)` → `NewVectorFloat64`,
+  `Vector(double, double)` → `NewVectorFloat64Float64`. A copy constructor is `Clone()`, not a
+  factory, and a move constructor is not exposed separately (Go has no rvalue overload). Two
+  constructors whose Go parameter types are equal need `-rename '<qualified ctor
+  signature>=<GoName>'`.
 - A name with **one** declaration keeps its bare CamelCase form. A name with **several** overloads
   takes a suffix built from its Go parameter types, in order: `dot()` → `Dot`,
   `dot(const double *, size_t)` → `DotFloat64Slice`, `dot(Vector const &)` → `DotVector`. The
@@ -464,7 +494,10 @@ reached through a one-line C++ wrapper with a representable signature.
 - A **class template specialisation** is `<TemplateName><Arguments>`: `mathx::Box<int>` → `BoxInt`,
   `mathx::Box<mathx::Vector>` → `BoxVector`, `mathx::Pair<int, double>` → `PairIntFloat64`. A
   **function template** binding is named the same way from its specialization.
-- `Open` and `Close` are reserved by the generated package.
+- `Open` is reserved as the package-level entry point, and `Close` as the destructor method of every
+  class. A non-destructor C++ member that maps to `Close` collides with the destructor and needs
+  `-rename`; a free function mapping to `Open` collides with the package entry point and needs one
+  too. A destructor is never a collision: it *is* `Close`.
 - When the derived name collides with another binding, the manifest supplies the name:
   `-rename 'mathx::Vector::dot(const double *)'=DotSlice`. A `-rename` that matches nothing is an
   error, so a typo cannot silently do nothing.
@@ -545,8 +578,10 @@ implements:
 - `this` is the object's address. `const` members are ordinary calls; the `K` in the mangling is
   reported, never assembled by hand.
 - Argument registers are not spilled to the stack by the generated trampoline: more than 6 INTEGER
-  or 8 SSE slots routes the binding to a thunk, which takes an argument block instead. This is a
-  carrier decision, not a rejection.
+  or 8 SSE slots, or a by-value aggregate outside the 16-byte register class, routes the binding to
+  a thunk, which takes a pointer to an argument block or to the value instead. This is a carrier
+  decision, not a rejection. **Results** are different: an sret result is written through the hidden
+  pointer into Go storage.
 - A slice or string parameter is `(pointer, length)`, pointer first, adjacent in the integer file.
 - The callee may not retain a pointer into Go memory after the call returns, and the caller keeps
   the memory alive with `cppgo.KeepAlive`.
@@ -689,10 +724,14 @@ builds; the generator does not emit trampolines for an unsupported target and th
 - Table-driven tests with `t.Run` per case, `testify` `require`/`assert`, `t.Parallel()` where cases
   are independent. Concurrency tests run under `-race` and `GOMAXPROCS=1` with at least 32
   goroutines.
-- Coverage gate: **≥ 99%** on `./...`. The only exclusions are machine-written artefacts:
-  `zz_cppgo*.go`, `zz_cppgo_shim.*` and `internal/gen/testdata/`. `cmd/` is measured like everything
-  else, which is why `run(args, stdout, stderr) int` carries all the CLI logic and `main` is one
-  statement.
+- Coverage gate: **≥ 99%** on `./...`, measured by `./scripts/coverage-gate.sh`. The gate's
+  exclusions are exactly the three it prints, each with its reason:
+  `zz_cppgo*.go` (generator output), `internal/gen/testdata/` (fixtures the generator writes and
+  diffs), and `internal/testlib/` (test scaffolding: it compiles the C++ fixture library other tests
+  load and has no tests of its own). **No hand-written production package is excluded**, and `cmd/`
+  is measured like everything else — which is why `run(args, stdout, stderr) int` carries all the
+  CLI logic and `main` is one statement. The contract and the script must name the same list; a
+  fourth exclusion is a contract change, not a local edit.
 - **Carrier coverage is a test**: every binding in the fixture set is asserted to have a carrier,
   and the golden output is compiled and run for both carriers.
 - **The generated shim is compiled by the test suite** (`g++`/`clang++` with the fixture's flags),

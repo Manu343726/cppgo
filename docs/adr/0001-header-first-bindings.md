@@ -80,7 +80,8 @@ The costs, stated rather than hidden:
 - **The direct path is narrower than "the ABI".** A non-`noexcept` function cannot be called
   directly (there is no handler above a NOSPLIT trampoline), so it goes through a thunk even when
   its signature is register-representable. The measured 13.9 ns is the direct path; a thunk adds a
-  C++ call frame.
+  C++ call frame. By-value aggregates have no size ceiling: the thunk copies them as arguments and
+  a result above 16 bytes is written through the sret pointer into Go storage.
 - **Error signatures follow exceptions.** A thunk returns an error when the call can throw or its
   marshalling allocates; a direct call returns none. The contract states the exact rule so the
   generated signatures are predictable.
