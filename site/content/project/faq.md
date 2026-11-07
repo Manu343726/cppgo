@@ -10,28 +10,17 @@ Because the cost is in the runtime path, not in the call. cgo is the supported,
 battle-tested way to call C from Go, and if your bottleneck is not the boundary
 you should use it. cppgo exists for the case where the boundary is the workload.
 
-The measured difference, on the same machine and the same `dlopen`'d function:
+The measured difference for the same `dlopen`'d function is **13 cycles against
+101**: cgo pays for `entersyscall`, the `P` handoff, the `g0` stack switch and
+the bookkeeping that marks the goroutine as being in a syscall; cppgo pays for
+none of it. The [benchmarks page]({{< ref "project/benchmarks.md" >}}) has the
+numbers, the pinned clock they were taken at, and the GC cost the shortcut buys.
 
-| path | ns/op | ~cycles |
-|---|---|---|
-| cgo | 105 | 101 |
-| cppgo trampoline | 13.9 | 13 |
-
-(Same clock caveat as everywhere on this site: the CPU was pinned to 964 MHz, so
-trust the cycles and the ratio, not the nanoseconds.) cgo pays for
-`entersyscall`, the `P` handoff, the `g0` stack switch and the bookkeeping that
-marks the goroutine as being in a syscall. cppgo keeps the `P` and calls from a
-`NOSPLIT` assembly frame, so none of that happens.
-
-The secondary reasons are build-shaped:
-
-- **No `import "C"`, so no C toolchain to build the Go side.** Cross-compiling
-  the Go binary no longer needs a C cross-compiler; only *running* it needs the
-  `.so`, which you can ship separately.
-- **`CGO_ENABLED=0` builds and tests the library.** The test suite proves it in
-  a separate pass.
-- **The symbols are resolved at run time**, so the same binary can load a
-  different build of the library.
+The secondary reasons are build-shaped: no `import "C"`, so no C toolchain to
+build the Go side and cross-compiling needs no C cross-compiler; and the symbols
+are resolved at run time, so the same binary can load a different build.
+[Installation]({{< ref "manual/installation.md" >}}) covers what that does and
+does not buy.
 
 The honest costs: cgo is more mature, it supports callbacks, and it can pass
 arbitrary C types because the compiler writes the glue. cppgo's direct mode
@@ -40,8 +29,8 @@ rejects what it cannot lay out, and the `P` is not released during a call.
 ## Why not SWIG?
 
 SWIG is not evaluated in this project's design contract, so read this as a
-statement of scope rather than a benchmark: **we have not measured SWIG, and no
-number on this site compares against it.**
+statement of scope rather than a benchmark: **SWIG has not been measured here,
+and no number on this site compares against it.**
 
 The architectural difference is what cppgo is built around. A general binding
 generator is built to target many languages through a common interface, so its
@@ -62,32 +51,22 @@ you can shape, cppgo is aimed at you.
 
 ## Why does cppgo depend on purego — isn't an FFI depending on an FFI ironic?
 
-It is a fair joke, and the decision is recorded rather than dodged.
+It is a fair joke. The mechanism is in [How it works]({{< ref
+"project/architecture.md" >}}); this is the answer to the question.
 
-cppgo uses purego for two things: `dlopen`/`dlsym` without cgo, and (inside
-`internal/cxx`) the libclang calls that pass structs by value.
+purego is used twice: as the loader (`dlopen`/`dlsym` with no cgo) and, inside
+`internal/cxx`, as the call path for libclang's by-value structs.
 
-The decisive reason is not "purego is popular". It is that **a dynamically
-linked Go binary is not a normal C program**: the Go runtime installs its own
-`%fs` thread-control block, so libc code that reaches for thread-local storage —
-`errno`, `dlerror`'s per-thread result, `pthread_getspecific` — runs against a
-TCB that glibc never initialised. purego solves that in `internal/fakecgo`, which
-its non-cgo path imports on purpose. Writing our own loader would have meant
-owning fakecgo too, which is a larger and less forgiving job than the loader
-itself. A dynamic loader is also a maintenance liability: libc symbol versioning
-changes quietly, and purego has been doing this in production for years on four
-platforms.
+The loader is not written here because a Go binary that calls into libc has
+already left the world where thread-local storage is glibc-initialised: the Go
+runtime installs its own `%fs` block, so `errno`, `dlerror` and
+`pthread_getspecific` need `internal/fakecgo`. Owning that as well as the loader
+is a larger and less forgiving job than the loader itself — and it is not the
+part of cppgo that is interesting.
 
-The differentiator is not the loader and not the calling convention. It is the
-C++ layer: mangled symbols, implicit `this`, `const` methods, constructors, and
-knowing at generation time whether a binding is even possible. That is where the
-effort goes.
-
-purego is also used as a **call** path for libclang, because `CXString`, `CXType`,
-`CXCursor` and `CXSourceLocation` are passed and returned by value, including
-memory-class returns through a hidden pointer. Those are exactly the signatures
-the generated trampoline refuses for user bindings; using a library that already
-implements the aggregate rules is cheaper than writing a second ABI.
+That part is the C++ layer: mangled symbols, implicit `this`, `const` methods,
+constructors, and knowing at generation time whether a binding is even possible.
+It is where the effort goes.
 
 ## Why not shared memory always?
 

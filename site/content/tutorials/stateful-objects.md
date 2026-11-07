@@ -9,7 +9,7 @@ where the object lives and when it dies. In the direct ABI mode, Go provides the
 storage and C++ constructs into it; the destructor is the only thing that gives
 it back.
 
-We will extend the `mathx` package from [the first
+This tutorial extends the `mathx` package from [the first
 tutorial]({{< ref "tutorials/first-binding.md" >}}) with a `Vector`.
 
 ## The C++ class
@@ -183,16 +183,16 @@ $ go run .
 
 1. `cppgoAlloc(16, 8)` allocates a zeroed `[]byte`, aligns its start to 8, and
    records it in a package-level `map[cppgo.Handle][]byte`.
-2. The trampoline is called with `this` in `RDI`, `x` in `XMM0`, `y` in `XMM1`.
-   The C++ constructor runs in that Go storage — the equivalent of a placement
-   `new`.
+2. The generated constructor trampoline runs `C1` in that Go storage — the
+   equivalent of a placement `new` — with the handle as `this` and the two
+   `double`s as the arguments.
 3. The handle (the aligned address) is returned as `Vector`.
 
-`v.Norm()` passes `this` in `RDI` and reads `XMM0`; `v.Scale(2)` passes `this` in
-`RDI` and `k` in `XMM0`. Neither allocates.
+`v.Norm()` reads the value the method returns; `v.Scale(2)` changes the object in
+place. Neither allocates.
 
-`v.Destroy()` calls `D1` with `this` in `RDI`, then `cppgoRelease` deletes the
-map entry, which is what lets the collector reclaim the buffer.
+`v.Destroy()` calls `D1`, then `cppgoRelease` deletes the map entry, which is
+what lets the collector reclaim the buffer.
 
 ## The handle rules, concretely
 

@@ -71,14 +71,10 @@ position in the declaration. That is why `histogram` is
 int32_t histogram(const double *xs, size_t n, double *bins, size_t nbins, double lo, double hi);
 ```
 
-and not six arguments in some other order. The registers follow the declaration:
-
-| call | integer registers | float registers | result |
-|---|---|---|---|
-| `Mean(xs)` | `RDI=&xs[0]`, `RSI=len(xs)` | — | `XMM0` |
-| `CountAbove(xs, t)` | `RDI`, `RSI` | `XMM0=t` | `RAX` |
-| `Histogram(xs, bins, lo, hi)` | `RDI`, `RSI`, `RDX=&bins[0]`, `RCX` | `XMM0=lo`, `XMM1=hi` | `EAX` (status) |
-| `DataPointer(xs)` | `RDI`, `RSI` | — | `RAX` |
+and not six arguments in some other order. A slice is two integer arguments
+(pointer, length) and a `double` is one XMM argument, assigned in declaration
+order; [register assignment](https://manu343726.github.io/cppgo/manual/calling-convention/)
+has the full table.
 
 Note the `size_t` in the header and the `using std::size_t;` above it: the
 generator reports a result type as it is spelled in the source, and
@@ -156,9 +152,8 @@ array.
 $ go test -run '^$' -bench . -benchmem ./...
 ```
 
-with the library path in the environment. Median of three runs on this machine — a
-Ryzen 7 6800HS, **on battery in the `power-saver` profile, boost off, CPU pinned
-at 964.8 MHz**:
+with the library path in the environment. Median of three runs, with boost
+disabled and the CPU pinned at **964.8 MHz**:
 
 | benchmark | cppgo | pure Go | ratio | per element (cppgo) |
 |---|---|---|---|---|
@@ -169,15 +164,15 @@ at 964.8 MHz**:
 | `CountAbove`, 1 048 576 | 1.63 ms | 2.34 ms | 0.69x | 1.5 cycles |
 | `DataPointer` (the call itself) | 35.0 ns | 2.2 ns | 15.7x | — |
 
-This is a laptop on battery, and later runs taken while three other builds were
-in progress on the same machine read 51–69 ns for the 8-element case and 37–56 ns
-for the bare call. The absolute numbers move with the load; the **ratio** between
-the million-element arms and the fact that the crossing is a fixed ~35 ns did not.
-Run it on an idle machine, or compare cycles rather than nanoseconds.
+Later runs, taken while three other builds were in progress, read 51–69 ns for
+the 8-element case and 37–56 ns for the bare call. The absolute numbers move with
+the load; the **ratio** between the million-element arms and the fact that the
+crossing is a fixed ~35 ns did not. Run it on an idle machine, or compare cycles
+rather than nanoseconds.
 
 **Read the ratios, not the nanoseconds.** The clock is pinned at 964.8 MHz, so
-everything absolute is inflated by roughly 3.3x against the same code on a
-boosting core; the cycle column is derived from the ns at 0.9648 GHz and is the
+everything absolute is inflated by roughly 4.5x against the same code running
+with boost; the cycle column is derived from the ns at 0.9648 GHz and is the
 number that travels.
 
 What the rows mean:

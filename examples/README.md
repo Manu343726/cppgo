@@ -46,42 +46,32 @@ mathx::Vector::~Vector             mangled _ZN5mathx6VectorD1Ev                 
 ```
 
 Then open [`examples/mathx/zz_cppgo_amd64.s`](mathx/zz_cppgo_amd64.s): ten
-instructions per function, `this` in `RDI`, a slice as `RSI`/`RDX`, the double
-back in `XMM0`.
+instructions per function — the arguments loaded into registers, the call, the
+result copied back. [Register
+assignment](https://manu343726.github.io/cppgo/manual/calling-convention/) says
+which register holds what.
 
 ## Measured numbers
 
-`cd examples/stats && make bench` — one run on this laptop (Ryzen 7 6800HS, **on
-battery in `power-saver`, boost off, 964.8 MHz**), median of three. The clock is
-pinned, so the absolute nanoseconds are roughly 3.3x what a boosting core would
-give; the ratios and the cycle counts are the numbers that travel.
+`cd examples/stats && make bench` compares each function against the pure-Go
+equivalent over the same memory, at a pinned 964.8 MHz. The table, the
+run-to-run spread and the clock caveat are in
+[`examples/stats/README.md`](stats/README.md).
 
-| benchmark | cppgo | pure Go | ratio |
-|---|---|---|---|
-| `Mean`, 8 elements | 44 ns | 21 ns | 2.1x slower |
-| `Mean`, 1 048 576 | 3.40 ms (3.1 cy/elem) | 3.48 ms | 0.98x |
-| `Stddev`, 1 048 576 | 6.87 ms (6.3 cy/elem) | 7.14 ms | 0.96x |
-| `Histogram`, 1 048 576 | 11.9 ms (10.9 cy/elem) | 12.1 ms | 0.98x |
-| `CountAbove`, 1 048 576 | 1.63 ms (1.5 cy/elem) | 2.34 ms | 0.69x |
-| the call itself (`DataPointer`) | 35.0 ns | 2.2 ns | 15.7x |
-
-A repeat run while other builds were running on the same laptop read 51–69 ns for
-the 8-element row and 37–56 ns for the call: absolute values move with the load,
-the ratios and the fixed ~35 ns crossing do not.
-
-The two rows that matter are the first and the second: **35 ns of boundary is
-~80% of an 8-element call and 0.001% of a million-element one.** The crossing is
-a constant; the data is not. That is the whole argument for binding the loop, not
-the accessor, and [`examples/stats/README.md`](stats/README.md) works through the
-rest of the table (including why `CountAbove` is 1.45x faster on the C++ side:
-g++ 16 vectorises the loop at `-O2` and the Go compiler does not).
+What the table argues, in two numbers: **35 ns for the call itself** is ~80% of
+an 8-element `Mean` and 0.001% of a million-element one, and the million-element
+arms run at the same cycles per element in both languages. The crossing is a
+constant; the data is not. That is the argument for binding the loop and not the
+accessor. The one row where the languages differ is `CountAbove`, 1.45x faster on
+the C++ side because g++ 16 vectorises the loop at `-O2` and the Go compiler does
+not — a compiler difference, not a boundary one.
 
 ## How they relate to the documentation site
 
 The site's [examples](https://manu343726.github.io/cppgo/examples/) pages are
 written against these directories, and the tutorials go deeper on the pieces:
 
-- [Your first binding](https://manu343726.github.io/cppgo/tutorials/first-binding/) — the shim mode, start to finish.
+- [Your first binding](https://manu343726.github.io/cppgo/tutorials/first-binding/) — one free function, from header to running program.
 - [Stateful objects](https://manu343726.github.io/cppgo/tutorials/stateful-objects/) — handles, lifetimes, double close.
 - [Bulk data](https://manu343726.github.io/cppgo/tutorials/bulk-data/) — slices as `(pointer, length)`, and when not to loop.
 - [When the generator refuses](https://manu343726.github.io/cppgo/tutorials/when-generation-refuses/) — the inline member `mathx` demonstrates with `make inline-demo`.

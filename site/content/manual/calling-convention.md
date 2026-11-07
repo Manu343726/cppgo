@@ -1,6 +1,6 @@
 +++
 title = "Register assignment"
-description = "How cppgo lays arguments out in RDI/RSI/RDX/RCX/R8/R9 and XMM0-XMM7, where this and the hidden sret pointer sit, how results come back, and why the trampoline switches the stack pointer."
+description = "How cppgo lays arguments out in RDI/RSI/RDX/RCX/R8/R9 and XMM0-XMM7, where this and the hidden sret pointer sit, how results come back, and what the caller pays before each call."
 weight = 50
 +++
 
@@ -122,41 +122,29 @@ TEXT ·cppgo__ZN5mathx3addEdd(SB), NOSPLIT, $0-32
 	RET
 ```
 
-Read it in four steps:
+Read it in two parts. What belongs on this page is where the values come from:
 
-1. **Load the arguments from the Go frame.** `fn` is passed as an ordinary Go
-   argument and kept in `R12`; the C arguments go straight into their
-   registers. This happens *before* `SP` moves, because `FP` is relative to
-   `SP`.
-2. **Save and align the stack.** `R13` keeps the Go stack pointer; `ANDQ $~15`
-   aligns `RSP` to 16 bytes, which SysV requires *before* the `CALL` pushes the
-   return address.
-3. **Call.** `CALL R12`. The C++ frame lives on the goroutine's stack from here
-   on, which is why the wrapper calls `ProbeStack` first and why `StackReserve`
-   is 32 KiB.
-4. **Restore, then store.** `MOVQ R13, SP` puts the Go stack pointer back, and
-   only then is the result written to `ret+24(FP)`; storing before the restore
-   would write to the wrong address.
+1. **`fn` is not a C argument.** It is an ordinary Go argument, read from the Go
+   frame into `R12`, and `CALL R12` is what reaches the symbol.
+2. **The C arguments are loaded into their registers before `SP` moves**, because
+   `FP` is relative to `SP`.
+
+The rest — the `SP` switch, the 16-byte alignment SysV requires before the
+`CALL`, why the result is stored only after `SP` is restored, and what `NOSPLIT`
+buys — is explained once in [How it works]({{< ref "project/architecture.md"
+>}}).
 
 `R12` and `R13` are callee-saved in SysV, so the C++ function preserves them
 across the call without cppgo doing anything.
 
-The function is `NOSPLIT` with a `$0` frame: it allocates nothing, touches no Go
-memory, and cannot be asynchronously preempted. That is the property the design
-relies on — `runtime.isAsyncSafePoint` returns false for any assembly function,
-and a foreign stack pointer is never inside `g.stack`, so the GC skips the
-goroutine while the call is in flight.
-
 ## What the caller pays
 
-`ProbeStack` runs before every call. It guarantees at least `StackReserve`
-(32 KiB) of headroom below the current frame, by entering an assembly function
-with a 32 KiB frame — not by allocating a large Go array, which the compiler
-would zero on entry (~1.2 µs per call, measured). After the first call on a
-goroutine it is a frame adjustment, and it measured 14.9 ns versus 13.9 ns for
-the bare trampoline on the machine described in [benchmarks]({{< ref
-"project/benchmarks.md" >}}).
+`ProbeStack` runs before every call and guarantees `StackReserve` (32 KiB) of
+headroom; the mechanism, and why it is not a large Go local array, is in [How it
+works]({{< ref "project/architecture.md" >}}). It measured 14.9 ns against
+13.9 ns for the bare trampoline, at the clock [benchmarks]({{< ref
+"project/benchmarks.md" >}}) describes.
 
 The other cost is that the `P` stays with the goroutine: the runtime does not
 hand it off, so a foreign call in flight delays a GC cycle by up to its
-duration. That is the deliberate trade for not paying cgo's 100-cycle entry.
+duration. That is the deliberate trade for not paying cgo's ~100-cycle entry.

@@ -49,7 +49,7 @@ the parse used the same `-std=c++17 -fPIC -I…` a real build uses.
 | the whole binding is one Go file with `//cppgo:` directives | [`mathx.go`](mathx.go) |
 | C++ members must be defined **out of line** to have a symbol | [`src/vector.cpp`](src/vector.cpp) |
 | an inline member is refused at build time, not at run time | `make inline-demo` |
-| `this` in RDI, floats in XMM0/XMM1, slice as (pointer, length) | [`zz_cppgo_amd64.s`](zz_cppgo_amd64.s) |
+| the method trampoline: arguments in registers, result copied back | [`zz_cppgo_amd64.s`](zz_cppgo_amd64.s) |
 | the object is Go-allocated, sized by libclang, freed by the dtor | [`zz_cppgo.gen.go`](zz_cppgo.gen.go) |
 | generated files are checked in and verifiable | `make check` |
 
@@ -115,26 +115,16 @@ here, a static member.
 
 ## What the generator produced
 
-The trampoline for `dot` is the ABI in ten instructions:
+One `NOSPLIT` trampoline per bound symbol: `this` in `RDI`, a slice as
+`RSI`/`RDX`, the `double` back in `XMM0`. The file is checked in at
+[`zz_cppgo_amd64.s`](zz_cppgo_amd64.s), and the [generated-files
+reference](https://manu343726.github.io/cppgo/reference/generated-code/)
+documents it line by line.
 
-```asm
-TEXT ·cppgo__ZNK5mathx6Vector3dotEPKdm(SB), NOSPLIT, $0-40
-	MOVQ	fn+0(FP), R12
-	MOVQ	this+8(FP), DI        // this
-	MOVQ	a0+16(FP), SI         // &ys[0]
-	MOVQ	a0_len+24(FP), DX     // len(ys)
-	MOVQ	SP, R13
-	ANDQ	$~15, SP              // SysV wants RSP 16-aligned before the CALL
-	CALL	R12
-	MOVQ	R13, SP
-	MOVSD	X0, ret+32(FP)        // the double comes back in XMM0
-	RET
-```
-
-And the wrapper around it is ordinary Go: a `sync.Once` for the `dlopen`, a
-`ProbeStack()` for the 32 KiB of stack headroom the foreign frame may need, the
-call, then `cppgo.KeepAlive(ys)` so the backing array is still there while C++
-is reading it.
+The wrapper around it is ordinary Go: a `sync.Once` for the `dlopen`, a
+`ProbeStack()` for the stack headroom the foreign frame may need, the call, then
+`cppgo.KeepAlive(ys)` so the backing array is still there while C++ is reading
+it.
 
 The constructor is the one place with real work on the Go side. libclang was
 asked for `sizeof`/`alignof` (16/8 for two doubles), the wrapper allocates that
@@ -169,13 +159,7 @@ virtual function, a template without an explicit instantiation, a `std::` type
 by value, a struct parameter passed by value, and more than 6 integer or 8 float
 argument registers.
 
-## Two things that look like style but are not
-
-**The definitions are out of line.** `Vector::norm` is declared in the header and
-defined in `src/vector.cpp`. A member defined in the class body has no symbol,
-and the generator finds out-of-line bodies by parsing the translation units that
-carry them — the source next to the header, and the sources a compilation
-database lists — so the `.cpp` is not optional bookkeeping.
+## How the generator finds the definitions
 
 **`src/vector.cpp` includes `"vector.hpp"`, not `<mathx/vector.hpp>`.** cppgo
 discovers the translation units that hold the bodies by looking for a source
@@ -183,6 +167,9 @@ that includes the header *by file name*. That is why `include/mathx` is on the
 include path in the Makefile (`-Iinclude -Iinclude/mathx`) and why the include is
 spelled the short way. A `.cpp` that only says `#include <mathx/vector.hpp>`
 makes every member look inline, and the failure is the message above.
+
+Which sources are parsed, and in what order, is in [validation and the
+report](https://manu343726.github.io/cppgo/manual/validation/).
 
 ## Requirements
 
