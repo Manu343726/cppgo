@@ -78,8 +78,8 @@ private:
     double x_, y_;
 };
 
-// y[i] = a * x[i] + y[i] for i in [0, n).
-void saxpy(double a, const double *x, double *y, std::size_t n);
+// y[i] = a * x[i] + y[i] for i in [0, min(x_len, y_len)).
+void saxpy(double a, const double *x, std::size_t x_len, double *y, std::size_t y_len);
 
 Point centroid(const Point *ps, std::size_t n);
 
@@ -159,9 +159,10 @@ func (v *Vector) Scale(k float64)
 // C++: mathx::Vector::dims(), _ZN5mathx6Vector4dimsEv
 func Dims() int32
 
-// Saxpy computes y[i] = a*x[i] + y[i] in place, for i in [0, len(y)).
+// Saxpy computes y[i] = a*x[i] + y[i] in place, for i in
+// [0, min(len(x), len(y))).
 //
-// C++: mathx::saxpy(double, const double *, double *, std::size_t), _Z5saxpydPKdPdm
+// C++: mathx::saxpy(double, const double *, std::size_t, double *, std::size_t), _Z5saxpydPKdmPdm
 func Saxpy(a float64, x, y []float64)
 
 // Centroid returns the centroid of ps.
