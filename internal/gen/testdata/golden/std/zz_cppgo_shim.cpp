@@ -8,6 +8,7 @@
 #include "testdata/std/std.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <exception>
 #include <memory>

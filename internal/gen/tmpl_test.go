@@ -79,14 +79,33 @@ func TestInstantiateUnmatched(t *testing.T) {
 	assert.Contains(t, err.Error(), "names no instantiation")
 }
 
-// TestTemplateWithoutInstantiate checks that the template error points at the
-// flag that exists.
-func TestTemplateWithoutInstantiate(t *testing.T) {
-	cfg := fixtureConfig("tmpl", "cell.hpp")
-	_, err := build(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "class template is not a type")
-	assert.Contains(t, err.Error(), "-instantiate 'tmpl::Cell<...>'")
+// TestTemplateGenericAPI checks phase one: a class template becomes a generic
+// Go type whose constructors and methods substitute the type parameter, and the
+// package compiles before any concrete instantiation exists.
+func TestTemplateGenericAPI(t *testing.T) {
+	model, err := build(fixtureConfig("tmpl", "cell.hpp"))
+	require.NoError(t, err)
+	require.Len(t, model.templates, 1)
+	tmpl := model.templates[0]
+	assert.Equal(t, "Cell", tmpl.GoName)
+	assert.Equal(t, "tmpl::Cell", tmpl.CxxName)
+	require.Len(t, tmpl.Ctors, 1)
+	require.Len(t, tmpl.Methods, 2)
+	require.NotNil(t, tmpl.Dtor)
+	assert.Empty(t, model.instantiations, "phase one knows no concrete type")
+
+	files := renderMap(t, fixtureConfig("tmpl", "cell.hpp"))
+	gen := files[GenFileName]
+	for _, want := range []string{
+		"type Cell[T any] struct {",
+		"func NewCell[T any](value T) (*Cell[T], error)",
+		"func (c *Cell[T]) Close() error",
+		"func (c *Cell[T]) Get() (T, error)",
+		"func (c *Cell[T]) Set(value T) error",
+	} {
+		assert.Contains(t, gen, want)
+	}
+	assert.NotContains(t, files[ShimSourceFileName], "template class ::tmpl::Cell")
 }
 
 // TestInstantiateShimCompiles compiles the generated shim and links it with the

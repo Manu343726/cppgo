@@ -16,6 +16,9 @@ func (m *packageModel) emitGo() ([]byte, error) {
 
 	usesUnsafe := m.usesUnsafe()
 	b.WriteString("import (\n\t\"fmt\"\n")
+	if m.hasTemplates() {
+		b.WriteString("\t\"hash/fnv\"\n\t\"reflect\"\n\t\"strings\"\n")
+	}
 	if m.libraryName != "" {
 		// Where the user's library is loaded from is a filesystem question at
 		// load time: beside the shim, or wherever the deployment points.
@@ -44,6 +47,7 @@ func cppgoBool(v bool) int64 {
 	for _, record := range m.records {
 		m.emitRecord(&b, record)
 	}
+	m.emitTemplates(&b)
 	m.emitPackageFunctions(&b)
 	m.emitTrampolineDeclarations(&b)
 	return gofmtSource(b.String())
@@ -52,6 +56,11 @@ func cppgoBool(v bool) int64 {
 // usesUnsafe reports whether the generated file mentions unsafe.Pointer or
 // unsafe.Sizeof.
 func (m *packageModel) usesUnsafe() bool {
+	if m.hasTemplates() {
+		// A generic call hands out-pointers to the frame, which is unsafe
+		// whatever the instantiation.
+		return true
+	}
 	for _, record := range m.records {
 		if record.Mirrored {
 			return true

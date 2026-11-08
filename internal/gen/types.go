@@ -22,6 +22,10 @@ const (
 	goArray
 	goOptional
 	goFunc
+	// goTypeParam is a class or function template's type parameter used as a
+	// value, e.g. T in `T get() const`. The generic API's declaration spells
+	// it; every concrete instantiation substitutes one scalar for it.
+	goTypeParam
 )
 
 // stdKind is the standard-library shape a type crosses as.
@@ -66,6 +70,9 @@ type goType struct {
 	Const bool
 	// Param is the model type this was mapped from.
 	Param cxx.Param
+	// ParamName is the C++ template parameter a goTypeParam stands for, e.g.
+	// "T". It is empty for every other kind.
+	ParamName string
 	// Callback is the signature of a function-pointer or std::function
 	// parameter, nil for everything else.
 	Callback *callbackType
@@ -102,6 +109,10 @@ type mapper struct {
 	// usesSpan is true when std::span is part of the API, whose header needs
 	// C++20.
 	usesSpan bool
+	// templateParams maps a class or function template's parameter names —
+	// and libclang's indexed "type-parameter-0-N" spelling — to the Go name
+	// the generic API declares. It is nil for a non-template declaration.
+	templateParams map[string]string
 }
 
 // mapType maps one C++ type, rejecting only what this build cannot emit yet.
@@ -116,6 +127,9 @@ func (m *mapper) mapType(p cxx.Param) (*goType, error) {
 	// as a standard-library type named std::int32_t (*)(int).
 	if callable, ok := functionPointer(p); ok {
 		return m.mapFunction(p, callable, false)
+	}
+	if name, ok := m.templateParam(p.Spelling); ok {
+		return &goType{Kind: goTypeParam, Go: name, ParamName: name, Param: p}, nil
 	}
 	if name, ok := stdTypeName(p); ok {
 		return m.mapStd(p, name)
@@ -272,6 +286,9 @@ func (m *mapper) mapElement(spelling string) (*goType, error) {
 		}
 	}
 trimmed:
+	if param, ok := m.templateParam(name); ok {
+		return &goType{Kind: goTypeParam, Go: param, ParamName: param, Const: isConst}, nil
+	}
 	if scalar, ok := elementScalars[name]; ok {
 		return &goType{Kind: scalar.kind, Go: scalar.goName, C: scalar.cName, Cxx: scalar.cName, Const: isConst}, nil
 	}
@@ -717,4 +734,29 @@ func stdFunctionType(callback *callbackType) string {
 		result = callback.Result.C
 	}
 	return "std::function<" + result + "(" + strings.Join(params, ", ") + ")>"
+}
+
+// templateParam reports whether a type spelling names one of the template's
+// parameters, and returns the Go name the generic declaration uses. A
+// parameter reached through libclang's canonical "type-parameter-0-N" spelling
+// is matched by the map too; leading const and volatile qualifiers are not
+// part of the identity.
+func (m *mapper) templateParam(spelling string) (string, bool) {
+	if m.templateParams == nil {
+		return "", false
+	}
+	name := strings.TrimSpace(spelling)
+	for {
+		switch {
+		case strings.HasPrefix(name, "const "):
+			name = strings.TrimSpace(name[len("const "):])
+		case strings.HasPrefix(name, "volatile "):
+			name = strings.TrimSpace(name[len("volatile "):])
+		default:
+			goto trimmed
+		}
+	}
+trimmed:
+	param, ok := m.templateParams[strings.TrimSpace(name)]
+	return param, ok
 }

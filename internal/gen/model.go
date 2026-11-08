@@ -170,6 +170,8 @@ type binding struct {
 	sym cxx.Symbol
 	// Owner is the record a method, constructor or destructor belongs to.
 	Owner *recordModel
+	// Template is the pattern a generic binding belongs to, nil otherwise.
+	Template *templateModel
 	// GoName is the final Go identifier.
 	GoName string
 
@@ -259,8 +261,13 @@ type packageModel struct {
 	headers     []string
 	records     []*recordModel
 	bindings    []*binding
-	verified    string
-	warn        []string
+	// templates are the class and function templates the package exposes
+	// generically, and instantiations are the concrete specializations the
+	// second phase collected from the Go program.
+	templates      []*templateModel
+	instantiations []*templateInstantiation
+	verified       string
+	warn           []string
 	// usesFree is true when a result is a heap copy that Go releases with
 	// cppgo_free.
 	usesFree bool
@@ -285,6 +292,13 @@ type builder struct {
 	// order records the insertion order of records, for deterministic output.
 	order    []string
 	bindings []*binding
+	// templates are the generic models of every template pattern, and
+	// templateByName finds one by its qualified C++ name for the scan.
+	templates      []*templateModel
+	templateByName map[string]*templateModel
+	// instantiations are the concrete specializations the Go program uses, as
+	// collected by the two-phase scan.
+	instantiations []*templateInstantiation
 	// synthMembers are the members of included template specializations. The
 	// model reads them from the pattern, because libclang exposes no cursor for
 	// the instantiated definition, so they are not in the project's symbol list.
@@ -339,6 +353,12 @@ func build(cfg Config) (*packageModel, error) {
 	}
 	b.mapper = &mapper{records: b.records}
 	if err := b.buildRecords(); err != nil {
+		return nil, err
+	}
+	if err := b.buildTemplates(); err != nil {
+		return nil, err
+	}
+	if err := b.loadInstantiations(); err != nil {
 		return nil, err
 	}
 	if err := b.buildBindings(); err != nil {
@@ -547,6 +567,10 @@ func mirrorFieldType(p cxx.Param) *goType {
 func (b *builder) buildBindings() error {
 	symbols := append(append([]cxx.Symbol(nil), b.symbols...), b.synthMembers...)
 	for _, sym := range symbols {
+		if sym.IsTemplate {
+			// A template is the generic API's input; buildTemplates binds it.
+			continue
+		}
 		owner := b.records[sym.Parent]
 		if owner == nil {
 			if sym.Kind != cxx.FreeFunc {
@@ -1358,19 +1382,21 @@ func (b *builder) model() *packageModel {
 		return displaySignature(b.bindings[i].sym) < displaySignature(b.bindings[j].sym)
 	})
 	return &packageModel{
-		cfg:         b.cfg,
-		mapper:      b.mapper,
-		name:        b.cfg.Package,
-		library:     b.cfg.Library,
-		libraryName: b.linkedName,
-		headers:     b.cfg.Headers,
-		records:     records,
-		bindings:    b.bindings,
-		verified:    b.verified,
-		warn:        b.warnings,
-		flags:       b.flags,
-		usesFree:    b.usesFree,
-		usesSpan:    b.mapper.usesSpan,
+		cfg:            b.cfg,
+		mapper:         b.mapper,
+		name:           b.cfg.Package,
+		library:        b.cfg.Library,
+		libraryName:    b.linkedName,
+		headers:        b.cfg.Headers,
+		records:        records,
+		bindings:       b.bindings,
+		templates:      b.templates,
+		instantiations: b.instantiations,
+		verified:       b.verified,
+		warn:           b.warnings,
+		flags:          b.flags,
+		usesFree:       b.usesFree,
+		usesSpan:       b.mapper.usesSpan,
 	}
 }
 
@@ -1379,10 +1405,16 @@ func (m *packageModel) warnings() []string { return m.warn }
 
 // report renders one line per binding: the carrier, the symbol and the reason.
 func (m *packageModel) report() []string {
-	lines := make([]string, 0, len(m.bindings))
+	lines := make([]string, 0, len(m.bindings)+len(m.templates)+len(m.instantiations))
 	for _, binding := range m.bindings {
 		symbol := binding.Symbol
 		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", displaySignature(binding.sym), binding.Carrier, symbol, binding.Reason))
+	}
+	for _, tmpl := range m.templates {
+		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s generic API, %d binding(s)", tmpl.CxxName+"<"+paramNames(tmpl)+">", "tmpl", "-", len(tmpl.bindings())))
+	}
+	for _, inst := range m.instantiations {
+		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", inst.cxxName(), "tmpl", inst.Key, inst.explicitInstantiation()))
 	}
 	return lines
 }

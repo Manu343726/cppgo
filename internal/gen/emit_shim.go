@@ -53,7 +53,7 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		seen[header] = true
 		fmt.Fprintf(&s, "#include %q\n", header)
 	}
-	s.WriteString("\n#include <array>\n#include <cstring>\n#include <exception>\n#include <memory>\n#include <new>\n#include <optional>\n#include <string>\n#include <string_view>\n#include <vector>\n")
+	s.WriteString("\n#include <array>\n#include <cstdint>\n#include <cstring>\n#include <exception>\n#include <memory>\n#include <new>\n#include <optional>\n#include <string>\n#include <string_view>\n#include <vector>\n")
 	if m.usesSpan {
 		s.WriteString("#include <span>\n")
 	}
@@ -91,6 +91,12 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		s.WriteString(body)
 		s.WriteString("}\n")
 		spans = append(spans, thunkSpan{start: start, end: shimLine(&s), symbol: binding.sym.QualifiedName})
+	}
+
+	if only == nil {
+		if err := m.emitTemplateShim(&h, &s, &spans); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 
 	fmt.Fprintf(&h, "\n#ifdef __cplusplus\n}\n#endif\n\n#endif /* %s */\n", guard)
