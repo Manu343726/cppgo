@@ -1,3 +1,9 @@
-# Build outputs of the examples: the shared library, the locally built cppgo
-# binary, the compilation database and the scratch trees the make targets use.
+# Build outputs of the examples: the user's shared library, the cppgo-built shim
+# beside each package, the locally built generator and the build/ trees.
+#
+# The generated *sources* (zz_cppgo.gen.go, zz_cppgo_amd64.s and cppgo_shim/) are
+# committed on purpose: they are the example's teaching material, `make gen`
+# reproduces them and `make check` proves they are current. Only the compiled
+# objects are ignored.
 build/
+libcppgo_*.so
