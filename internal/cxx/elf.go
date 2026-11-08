@@ -8,13 +8,13 @@ import (
 )
 
 // DefinedDynamicSymbols returns the names in the dynamic symbol table of an ELF
-// shared object that are defined by it — exactly what
-// `nm -D --defined-only <file>` lists.
+// shared object that are defined by it. That is exactly the list
+// `nm -D --defined-only <file>` prints.
 //
-// This is the ground truth for Symbol.HasOutOfLineBody: libclang says a
-// declaration has a body outside its class definition, and this says whether
+// This is the ground truth for Symbol.HasOutOfLineBody, because libclang says
+// a declaration has a body outside its class definition and this says whether
 // the linker actually kept a symbol for it. A test that compares the two is the
-// only way to know the rule is right rather than merely plausible.
+// only way to tell a correct rule from a plausible one.
 func DefinedDynamicSymbols(path string) ([]string, error) {
 	file, err := elf.Open(path)
 	if err != nil {
@@ -43,8 +43,8 @@ func DefinedDynamicSymbols(path string) ([]string, error) {
 // the object declares none.
 //
 // It is what the generated shim is linked against and what the generated
-// package records: a shared object's DT_NEEDED entry takes the soname, so a
-// build directory never reaches the binary, and a deployment that keeps the
+// package records. A shared object's DT_NEEDED entry takes the soname so a
+// build directory never reaches the binary. A deployment that keeps the
 // library and the shim together resolves it through $ORIGIN.
 func Soname(path string) (string, error) {
 	file, err := elf.Open(path)

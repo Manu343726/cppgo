@@ -12,15 +12,15 @@ import (
 
 // ShimLibraryName is the shared object cppgo compiles the generated shim into.
 // It is written beside the generated Go package and linked against the user's
-// library, which it names in its DT_NEEDED entry: the generated Open loads the
-// user's library first and the shim second, so a shim symbol is always
-// resolvable and a missing one is a build error the message names.
+// library, which it names in its DT_NEEDED entry. The generated Open loads the
+// user's library first and the shim second. A shim symbol is therefore always
+// resolvable, and a missing symbol is a build error the message names.
 func ShimLibraryName(pkg string) string { return "libcppgo_" + pkg + ".so" }
 
 // findCompiler resolves the C++ compiler the shim is built with: -cxx when it
 // is given, then g++, then clang++. A -cxx that is not executable is an error
-// naming it, never a silent fallback: the shim and the library have to share a
-// compiler family and a standard library, so a fallback could mix the two.
+// naming it, never a silent fallback. The shim and the library have to share a
+// compiler family and a standard library, and a fallback could mix the two.
 func findCompiler(configured string) (string, error) {
 	if configured != "" {
 		path, err := exec.LookPath(configured)
@@ -51,8 +51,8 @@ type shimBuild struct {
 }
 
 // buildShim compiles zz_cppgo_shim.cpp into libcppgo_<pkg>.so, linked against
-// the user's library. It is the v4 gate: the shim is C++ cppgo owns, so a shim
-// that does not compile is a generation error carrying the compiler's
+// the user's library. It is the v4 gate. The shim is C++ cppgo owns, and a shim
+// that fails to compile is a generation error carrying the compiler's
 // diagnostic and the binding whose thunk it is in, never a symbol that fails at
 // the first call.
 func (m *packageModel) buildShim(dir string) (*shimBuild, error) {

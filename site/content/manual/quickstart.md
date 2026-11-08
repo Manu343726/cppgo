@@ -1,17 +1,22 @@
 +++
 title = "Quickstart"
-description = "One class, end to end: a C++ header and its out-of-line definitions, the Go declarations with cppgo directives, the generator run, and a call site that prints the answer."
+description = "One class, end to end: a C++ header and its out-of-line definitions, one cppgo gen command, the Go package it generates, and a call site that prints the answer."
 weight = 20
 +++
 
-This page binds one real C++ class from scratch. Every file below is complete;
-copy them into a directory and the last command prints `5`.
+This page binds one real C++ class from scratch. Every file below is complete.
+copy them into a directory and the last command prints `5` and `10`.
+
+**Audience:** your first binding. You need Go, libclang and a C++ compiler as
+described in [installation]({{< ref "manual/installation.md" >}}).
 
 ## 1. The C++ library
 
-Two files: a header that *declares*, and a source that *defines*. The split is
-not cosmetic. A member defined inside the class definition is implicitly inline,
-emits no dynamic symbol, and cannot be bound in the direct ABI mode.
+Two files. A header that *declares*, and a source that *defines*. The split is
+not cosmetic, a member defined inside the class definition is implicitly inline,
+and the compiler has no obligation to emit a callable symbol for it. cppgo can
+still bind it (through a thunk), but an out-of-line `noexcept` member is the one
+that takes the fast path.
 
 <span class="filename">include/mathx/vector.hpp</span>
 
@@ -29,10 +34,10 @@ public:
 
     double norm() const;
     double dot(const double *ys, std::size_t n) const;
+    void scale(double k) noexcept;
 
 private:
-    double x_;
-    double y_;
+    double x_, y_;
 };
 
 } // namespace mathx
@@ -64,134 +69,88 @@ double Vector::dot(const double *ys, std::size_t n) const {
     return sum;
 }
 
+void Vector::scale(double k) noexcept {
+    x_ *= k;
+    y_ *= k;
+}
+
 } // namespace mathx
 ```
 
-Build it:
+Build it with your own command. `-Wl,-soname` is what lets the cppgo-built shim
+name the library instead of a build path:
 
 ```console
-$ g++ -std=c++17 -O2 -fPIC -shared -Iinclude -o build/libmathx.so src/vector.cpp
+$ g++ -std=c++17 -O2 -fPIC -shared -Wl,-soname,libmathx.so \
+      -Iinclude -o build/libmathx.so src/vector.cpp
 ```
 
-## 2. The Go module
+## 2. Generate the Go package
 
 ```console
-$ go mod init example.com/mathxdemo
-$ go get github.com/Manu343726/cppgo
+$ cppgo gen -header include/mathx/vector.hpp -package mathx \
+      -library build/libmathx.so -out ./mathx
+mathx::Vector::Vector(double, double)   thunk  cppgo_thunk_7d8c482bce3e   not noexcept: an exception would unwind into Go
+mathx::Vector::scale(double) noexcept   direct _ZN5mathx6Vector5scaleEd    noexcept, out of line, not virtual, register class
+mathx::Vector::~Vector()                thunk  cppgo_thunk_06a8bef46cac   not noexcept: an exception would unwind into Go
+cppgo: built mathx/libcppgo_mathx.so with /usr/bin/g++
 ```
 
-The bindings live in their own package, because the generator rewrites the files
-it reads:
+Read the report as three answers:
 
-<span class="filename">bindings/mathx/mathx.go</span>
+- **`mathx::Vector::scale(double) noexcept`** — the declaration libclang found,
+  with the qualifiers that decide the carrier.
+- **`direct`** — the generated trampoline calls the mangled symbol
+  `_ZN5mathx6Vector5scaleEd` in your library. The constructor is `thunk`
+  because it omits `noexcept`. An exception has to be caught in a C++ frame.
+- **the reason** — why that carrier. `noexcept, out of line, not virtual,
+  register class` is the direct carrier's recipe.
+
+Because the header is the unit of selection, the package contains the whole
+class. `-bind` and `-exclude` narrow
+it when a header is too large. See [the generation
+input]({{< ref "manual/manifest.md" >}}).
+
+## 3. The Go package you got
+
+```console
+$ ls mathx
+cppgo_shim  libcppgo_mathx.so  zz_cppgo.gen.go  zz_cppgo_amd64.s
+$ ls mathx/cppgo_shim
+zz_cppgo_shim.cpp  zz_cppgo_shim.h
+```
+
+- `zz_cppgo.gen.go` is the API: types, `NewVector`, methods, `Close`, `Open`.
+- `zz_cppgo_amd64.s` has one `NOSPLIT` trampoline per binding.
+- `cppgo_shim/` holds the generated C++ thunks. It is cppgo's source, not
+  yours. The Go tool ignores it because it is one directory down.
+- `libcppgo_mathx.so` is the shim cppgo compiled and linked against the
+  library.
+
+The declarations, bodies omitted:
 
 ```go
-// Package mathx binds mathx::Vector directly, with no extern "C" layer.
-package mathx
+func Open(path string) error
 
-import "github.com/Manu343726/cppgo"
-
-//cppgo:library libmathx
-//cppgo:header ../../../include/mathx/vector.hpp
-
-// Vector mirrors mathx::Vector. A defined type over cppgo.Handle: the
-// receiver value *is* the object pointer.
-//
-//cppgo:class mathx::Vector
-type Vector cppgo.Handle
-
-// New constructs a Vector.
-//
-//cppgo:ctor
-func New(x, y float64) (Vector, error)
-
-// Norm returns the Euclidean norm.
-//
-//cppgo:method norm
-func (v Vector) Norm() float64
-
-// Dot returns the dot product with the first n components of ys.
-//
-//cppgo:method dot
-func (v Vector) Dot(ys []float64) (float64, error)
-
-// Destroy destroys the object.
-//
-//cppgo:dtor
-func (v Vector) Destroy()
+func NewVector(x float64, y float64) (*Vector, error)
+func (v *Vector) Close() error
+func (v *Vector) Clone() (*Vector, error)
+func (v *Vector) Dot(ys []float64) (float64, error)
+func (v *Vector) Norm() (float64, error)
+func (v *Vector) Scale(k float64)
 ```
 
-Rules that are already visible here:
+Three shapes are worth noticing:
 
-- `//cppgo:library` and `//cppgo:header` are package-level, once each.
-- `//cppgo:header` is resolved relative to the package directory.
-- `//cppgo:class` sits on a `type X cppgo.Handle`; that type is how the
-  generator knows `Vector` is a C++ object rather than an integer.
-- `//cppgo:ctor`, `//cppgo:dtor`, `//cppgo:method` and `//cppgo:function` are
-  written in the doc comment of the Go function they bind.
-- The `error` results here are placeholders. In the direct ABI mode a call has
-  no status channel, so the generated wrapper documents "the trailing error is
-  always nil" and returns `nil`. Errors come from C++ only when it returns an
-  integer status (see [error handling]({{< ref "manual/errors.md" >}})).
-
-## 3. Generate
-
-```console
-$ cppgo gen -dir ./bindings/mathx
-```
-
-The report goes to stdout, one line per binding, ordered by C++ name:
-
-```
-mathx::Vector::Vector              mangled _ZN5mathx6VectorC1Edd     abi from fallback flags (assumed); note: the object is allocated in Go storage owned by this package (16 bytes, alignment 8) and released by //cppgo:dtor
-mathx::Vector::dot                 mangled _ZNK5mathx6Vector3dotEPKdm abi from fallback flags (assumed); note: the trailing error is always nil: a direct C++ call has no status channel (return an int32 status and declare only error to get one)
-mathx::Vector::norm                mangled _ZNK5mathx6Vector4normEv  abi from fallback flags (assumed); note: the trailing error is always nil ...
-mathx::Vector::~Vector             mangled _ZN5mathx6VectorD1Ev      abi from fallback flags (assumed)
-```
-
-Two things to read in that output:
-
-- **`abi from fallback flags (assumed)`** means there was no
-  `compile_commands.json` and no `.clangd`, so the header was parsed with
-  `-std=c++17 -I<header dir>`. It worked here. On a header with includes of its
-  own, point `-compile-commands` at your project's database instead. The
-  generator also prints a warning to stderr when it assumes flags.
-- **`mangled _ZN5mathx6VectorC1Edd`** is the symbol the trampoline will `dlsym`.
-  `C1` is the complete-object constructor; the `K` in `_ZNK...normEv` is the
-  `const` qualifier. You never write these by hand.
-
-The files written next to `mathx.go` are:
-
-```
-bindings/mathx/mathx.go          rewritten in place: each body now delegates
-bindings/mathx/zz_cppgo.gen.go   wrappers, lazy library binding, trampoline declarations
-bindings/mathx/zz_cppgo_amd64.s  one NOSPLIT trampoline per bound function
-```
-
-Because `-out` defaulted to `-dir`, the input file is rewritten **in place**
-rather than copied to `zz_cppgo_stub.go`. That is deliberate: regeneration is
-idempotent, the directives stay where you wrote them, and the package keeps
-compiling. With `-out ./gen` you get a separate package instead, and the
-rewritten source appears as `zz_cppgo_stub.go`.
-
-`mathx.go` now reads:
-
-```go
-//cppgo:ctor
-func New(x, y float64) (Vector, error) { return cppgoCallNew(x, y) }
-
-//cppgo:method norm
-func (v Vector) Norm() float64 { return cppgoCallNorm(v) }
-
-//cppgo:method dot
-func (v Vector) Dot(ys []float64) (float64, error) { return cppgoCallDot(v, ys) }
-
-//cppgo:dtor
-func (v Vector) Destroy() { cppgoCallDestroy(v) }
-```
-
-The directives stay in the doc comments, so `cppgo gen` can be run again from
-the rewritten source and will produce the same bytes.
+- **`NewVector` is a function, `Close` is a method.** The destructor is always
+  `Close() error`. A second `Close` and a nil receiver return
+  `cppgo.ErrClosed`, never a use-after-free.
+- **`Scale` has no error, `Norm` has one.** `scale` declares `noexcept`. The
+  call is direct and cannot fail. `norm` declares no `noexcept`, so the thunk
+  catches what it throws and the signature carries the error. The rule comes
+  from the C++ declaration.
+- **`Close` and `Norm` return errors a zero value can produce** — a closed
+  object and a C++ failure respectively.
 
 ## 4. Call it
 
@@ -204,54 +163,89 @@ import (
 	"fmt"
 	"log"
 
-	"example.com/mathxdemo/bindings/mathx"
+	"example.com/mathxdemo/mathx"
 )
 
 func main() {
-	// The library name given to //cppgo:library is passed to dlopen as
-	// written. Point the generated package at the .so you just built; this
-	// variable is read once, on the first call.
-	mathx.CppgoLibraryPath = "./build/libmathx.so"
+	// The shim cppgo compiled. Open("") uses the name the package was
+	// generated with and leaves the search to the loader.
+	if err := mathx.Open("./mathx/libcppgo_mathx.so"); err != nil {
+		log.Fatal(err)
+	}
 
-	v, err := mathx.New(3, 4)
+	v, err := mathx.NewVector(3, 4)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer v.Destroy()
+	defer v.Close()
 
-	fmt.Println(v.Norm())                  // 5
-	fmt.Println(v.Dot([]float64{1, 0}))    // 3
+	n, err := v.Norm()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(n) // 5
+
+	v.Scale(2)
+
+	n, err = v.Norm()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(n) // 10
 }
 ```
 
 ```console
+$ cp build/libmathx.so ./mathx/     # the shim names it through DT_NEEDED
 $ go run .
 5
-3
+10
 ```
 
-`CppgoLibraryPath` is emitted into every generated package and is the simplest
-way to load a library from a relative path. The alternatives are an absolute
-path in `//cppgo:library`, `LD_LIBRARY_PATH`, or an `-rpath` on the binary.
+No cgo in the build:
+
+```console
+$ CGO_ENABLED=0 go build -o mathxdemo .
+$ ./mathxdemo
+5
+10
+```
+
+The binary is dynamically linked because it loads `libmathx.so` at run time, but
+it needed no C toolchain to build, and it contains no `import "C"`.
 
 <div class="callout callout-warn">
-<span class="callout-title">Destroy is not optional</span>
+<span class="callout-title">Keep the two objects together</span>
 <p>
-A constructor allocates storage that the generated package keeps alive in a
-registry; the destructor calls <code>D1</code> and drops the registry entry.
-There is no finalizer, on purpose: a finalizer would run on an arbitrary
-goroutine at an unpredictable time, possibly after the library is closing. An
-object that is never destroyed is never reclaimed. Every constructor needs its
-destructor, exactly as in C++.
+The shim is linked with <code>-Wl,-rpath,$ORIGIN</code> and names your library by
+soname, and the default deployment is "the user's library beside the shim". If you
+keep it elsewhere, set <code>CPPGO_LIBRARY_PATH</code> or
+<code>mathx.CppgoLibraryPath</code> before the first call. A missing shim is an
+<code>Open</code> error naming the file. A missing library is the loader naming
+the soname.
 </p>
 </div>
 
+## 5. Make regeneration a check
+
+The generated files are ordinary Go and assembly sources. Commit them, and let
+CI prove they are current:
+
+```console
+$ cppgo check -header include/mathx/vector.hpp -package mathx \
+      -library build/libmathx.so -out ./mathx
+./mathx: generated files are up to date
+```
+
+`check` writes and builds no artefacts. It regenerates the sources in memory
+and compares them byte for byte. See [cppgo check in
+CI]({{< ref "manual/ci.md" >}}).
+
 ## Where to go next
 
-- Every directive, including `//cppgo:function` for free functions and
-  `//cppgo:mode shim`: [directives]({{< ref "manual/directives.md" >}}).
-- What each generated file contains, line by line: [generated
+- Every generation flag, including `-bind`, `-instantiate`, `-rename` and
+  `-status`: [the generation input]({{< ref "manual/manifest.md" >}}).
+- What each generated file contains is in [generated
   code]({{< ref "reference/generated-code.md" >}}).
-- What to do when the generator refuses a member: [troubleshooting]({{< ref
-  "manual/troubleshooting.md" >}}) and [when the generator
+- For a refused construct, read [when generation
   refuses]({{< ref "tutorials/when-generation-refuses.md" >}}).

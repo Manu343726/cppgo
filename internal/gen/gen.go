@@ -2,8 +2,8 @@
 //
 // It reads C++ headers through internal/cxx and emits, for one Go package:
 //
-//   - zz_cppgo.gen.go, the only API a caller sees;
-//   - zz_cppgo_amd64.s, one NOSPLIT trampoline per binding;
+//   - zz_cppgo.gen.go, the only API a caller sees.
+//   - zz_cppgo_amd64.s, one NOSPLIT trampoline per binding.
 //   - zz_cppgo_shim.h and zz_cppgo_shim.cpp, one extern "C" thunk per binding
 //     the direct ABI cannot call.
 //
@@ -15,11 +15,11 @@
 // was not built for fails when it is used and names the `template ...;` line to
 // add.
 //
-// Every binding is assigned exactly one carrier before anything is emitted: the
-// direct trampoline when the declaration is noexcept, not virtual, defined out
-// of line, and register representable, and a generated thunk everywhere else.
-// The carrier is invisible in the Go API and named in the report and in the
-// binding's evidence comment.
+// Every binding is assigned exactly one carrier before anything is emitted. A
+// declaration that is noexcept, non-virtual, defined out of line and register
+// representable takes the direct trampoline. Every other declaration gets a
+// generated thunk. The carrier is invisible in the Go API and named in the
+// report and in the binding's evidence comment.
 package gen
 
 import (
@@ -43,7 +43,7 @@ type Instantiation struct {
 	Args     []string
 }
 
-// Names of the generated files. They are part of the contract: the shim is
+// Names of the generated files. They are part of the contract. The shim is
 // compiled by the user's build, and Open names it when a thunk is missing.
 const (
 	GenFileName        = "zz_cppgo.gen.go"
@@ -55,11 +55,11 @@ const (
 // ShimDirName is the subdirectory of the output directory that holds the
 // shim's two sources.
 //
-// A Go package directory cannot contain C++ sources: the go tool refuses a
-// directory with a .cpp in it unless the package uses cgo, which cppgo's
-// packages never do. The shim is cppgo's own translation unit anyway, so it
-// lives one level down, where the go tool ignores it, and only the compiled
-// libcppgo_<pkg>.so sits beside the generated Go.
+// A Go package directory cannot contain C++ sources. The go tool refuses a
+// directory with a .cpp in it unless the package uses cgo, and cppgo's packages
+// never do. The shim is cppgo's own translation unit anyway. It lives one level
+// down, where the go tool ignores it, and only the compiled libcppgo_<pkg>.so
+// sits beside the generated Go.
 const ShimDirName = "cppgo_shim"
 
 // ShimPath is where one of the shim's sources is written under outDir.
@@ -119,8 +119,8 @@ type Config struct {
 }
 
 // Output is one generated file. Subdir is the directory under the output
-// directory it belongs in: empty for the package's own files, ShimDirName for
-// the shim's sources.
+// directory it belongs in. It is empty for the package's own files, and
+// ShimDirName for the shim's sources.
 type Output struct {
 	Name   string
 	Subdir string
@@ -138,7 +138,7 @@ type Result struct {
 }
 
 // Render parses the headers described by cfg and returns the files Generate
-// would write, sorted by name. Nothing is written to disk.
+// would write, sorted by name. It writes no file.
 func Render(cfg Config) ([]Output, error) {
 	result, err := RenderResult(cfg)
 	if err != nil {
@@ -185,7 +185,7 @@ func renderModel(model *packageModel) (*Result, error) {
 }
 
 // Generate writes the generated files and compiles the shim, or verifies the
-// files in check mode. Check mode writes nothing and builds nothing: the shim
+// files in check mode. Check mode writes no file and builds no shim. The shim
 // is a build artifact, and what a stale check measures is the sources.
 func Generate(cfg Config) error {
 	model, err := build(cfg)

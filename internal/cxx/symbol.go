@@ -4,9 +4,9 @@ import (
 	"strings"
 )
 
-// Kind is the C++ flavor of a declaration, which is what decides the ABI
-// shape of the call: constructors and methods carry an implicit `this`,
-// static methods and free functions do not.
+// Kind is the C++ flavor of a declaration. It decides the ABI shape of the
+// call. Constructors and methods carry an implicit `this`, and static methods
+// and free functions carry none.
 type Kind uint8
 
 const (
@@ -43,8 +43,8 @@ func (k Kind) String() string {
 }
 
 // TypeKind is the ABI-facing classification of a parameter or result type. It
-// is deliberately coarse: it is what decides whether a value travels in an
-// integer register or in an XMM register, which is all the emitter needs.
+// is deliberately coarse. It decides whether a value travels in an integer
+// register or in an XMM register. That is all the emitter needs.
 type TypeKind string
 
 const (
@@ -120,8 +120,9 @@ type Param struct {
 }
 
 // IsStream reports whether the value is a canonical C++ stream reference or
-// value: std::basic_ostream<C,T> or std::basic_istream<C,T>, which is what the
-// std::ostream/istream aliases resolve to. The operator naming rule uses it.
+// value. The canonical forms are std::basic_ostream<C,T> and
+// std::basic_istream<C,T>, and the std::ostream/istream aliases resolve to
+// them. The operator naming rule uses it.
 func (p Param) IsStream() bool {
 	if p.Ptr && p.Pointee != nil {
 		return p.Pointee.stream()
@@ -162,7 +163,7 @@ trimmed:
 
 // Symbol is one bindable C++ function.
 //
-// The field that matters most is HasOutOfLineBody: a member defined inside its
+// The field that matters most is HasOutOfLineBody. A member defined inside its
 // class definition is implicitly inline, emits no dynamic symbol, and binding
 // it produces a trampoline that fails at load time. See Project for how the
 // answer is computed across translation units.
@@ -286,14 +287,14 @@ func (l *Libclang) isPureVirtual(cursor CXCursor) bool {
 }
 
 // HasExportedSymbol reports whether a library built from these sources must
-// export Mangled: the function needs a definition outside its class definition
-// and external linkage. A namespace-scope `static` function has the first and
-// not the second, and a template pattern has neither until it is instantiated.
+// export Mangled. The function needs a definition outside its class definition
+// and external linkage. A namespace-scope `static` function has the first
+// only, and a template pattern has both only once it is instantiated.
 //
-// One corner is not covered: for an abstract class, clang++ emits only the
-// base-object constructor (C2) and not the complete-object one (C1), which is
-// what libclang's mangling names. g++ emits both. Nothing a binding tool can do
-// about it beyond failing at load time, which it does loudly.
+// One corner falls outside the rule. For an abstract class, clang++ emits only
+// the base-object constructor (C2), while libclang's mangling names the
+// complete-object one (C1). g++ emits both. A binding tool can only fail at
+// load time, which it does loudly.
 func (s Symbol) HasExportedSymbol() bool {
 	if s.IsTemplate {
 		return false

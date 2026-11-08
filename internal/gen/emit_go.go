@@ -95,15 +95,15 @@ func (m *packageModel) usesBool() bool {
 //
 // Two objects are loaded, in this order: the user's library, which carries the
 // direct symbols, and the shim cppgo compiled, which carries the thunks. The
-// shim names the user's library in its DT_NEEDED entry — by soname, never by
-// the path the build found it at — so opening the shim brings the library in as
-// well, and loading the library first is what makes the name resolve to the
-// object the Go side already holds.
+// shim names the user's library in its DT_NEEDED entry, by soname and never by
+// the path the build found it at. Opening the shim therefore brings the library
+// in as well, and loading the library first is what makes the name resolve to
+// the object the Go side already holds.
 //
-// Nothing here is a build path. The default deployment keeps the two shared
-// objects together: the user's library beside the shim, found through $ORIGIN
-// and through the directory of the path Open was given. A deployment with
-// another layout sets CppgoLibraryPath or CPPGO_LIBRARY_PATH.
+// The generated name is never a build path. The default deployment keeps the
+// two shared objects together: the user's library beside the shim, found through
+// $ORIGIN and through the directory of the path Open was given. A deployment
+// with another layout sets CppgoLibraryPath or CPPGO_LIBRARY_PATH.
 func (m *packageModel) emitOpen(b *strings.Builder) {
 	b.WriteString(`
 // Open loads the cppgo-built shim and, when the package has one, the user's

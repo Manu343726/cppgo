@@ -32,13 +32,14 @@ PUBLIC_DIR      ?= site/public
 COVER_PROFILE   ?= coverage.out
 COVER_THRESHOLD ?= 99.0
 COVERMODE       ?= atomic
+PROSE_CHECK_ARGS ?=
 
 GREEN  := \033[1;32m
 YELLOW := \033[1;33m
 RESET  := \033[0m
 
 .PHONY: help build test test-race test-nocgo cover cover-gate bench lint fmt fmt-check \
-        examples site clean clean-examples tidy verify
+        examples site prose-check clean clean-examples tidy verify
 
 ## ---------------------------------------------------------------------------
 ## Targets
@@ -145,6 +146,9 @@ site: ## Build the Hugo site from site/ into site/public/
 	fi
 	$(HUGO) version
 	$(HUGO) --source $(SITE_DIR) --gc --minify --destination "$$(pwd)/$(PUBLIC_DIR)"
+
+prose-check: ## Score README, DESIGN, docs, site, example READMEs and godoc with the vendored checker
+	@./scripts/prose-check.sh $(PROSE_CHECK_ARGS)
 
 clean-examples: ## Remove build outputs left inside examples/
 	@if [ -d examples ]; then \

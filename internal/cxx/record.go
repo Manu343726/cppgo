@@ -78,8 +78,8 @@ func (l *Libclang) access(cursor CXCursor) Access {
 }
 
 // Field is one data member of a record, with everything the generator needs to
-// place it in a Go mirror: its type, its offset, its visibility, and whether it
-// is a bitfield (which no Go field can represent).
+// place it in a Go mirror. Those are its type, its offset, its visibility, and
+// whether it is a bitfield (which no Go field can represent).
 type Field struct {
 	// Name is the member name as written, without a trailing underscore being
 	// interpreted: "x_", "tag".
@@ -115,8 +115,8 @@ type Base struct {
 	OffsetBytes int64
 }
 
-// Record is one class, struct or union definition: the layout the ABI needs
-// plus the visibility the generator needs.
+// Record is one class, struct or union definition. It carries the layout the ABI
+// needs plus the visibility the generator needs.
 type Record struct {
 	// QualifiedName is the C++ name, e.g. "mathx::Vector".
 	QualifiedName string
@@ -204,8 +204,8 @@ type Record struct {
 	DeclLine int
 }
 
-// StaticField is one static data member: a value that belongs to the class, not
-// to an instance. The generated Go API reads it through a package function
+// StaticField is one static data member. It is a value that belongs to the
+// class. The generated Go API reads it through a package function
 // `<Type><Field>()` and writes it through `<Type>Set<Field>` only when it is
 // non-const.
 type StaticField struct {
@@ -245,7 +245,8 @@ type Enumerator struct {
 	IsUnsigned bool
 }
 
-// Enum is one enum definition: its underlying integer type and its values.
+// Enum is one enum definition. It carries the underlying integer type and the
+// values.
 type Enum struct {
 	// QualifiedName is the C++ name, e.g. "mathx::Axis".
 	QualifiedName string
@@ -999,10 +1000,10 @@ func (e *recordExtractor) offsetOf(loc CXSourceLocation) (string, uint32, bool) 
 }
 
 // InstantiateMember returns the concrete instantiation of a member function
-// template: the pattern's signature with both the class and the member
-// arguments substituted. libclang exposes no mangled name for the
-// instantiation (it is not a cursor in the TU), so Mangled stays empty and the
-// emitter carries the call through a thunk.
+// template. It carries the pattern's signature with both the class and the
+// member arguments substituted. libclang exposes no mangled name for the
+// instantiation (it has no cursor in the TU). Mangled therefore stays empty,
+// and the emitter carries the call through a thunk.
 func (tu *TU) InstantiateMember(record, member string, args []TemplateArgument) (Symbol, bool) {
 	tu.once.Do(tu.extract)
 	pattern, ok := tu.memberTemplates[record+"::"+member]

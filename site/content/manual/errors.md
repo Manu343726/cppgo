@@ -1,155 +1,165 @@
 +++
 title = "Error handling"
-description = "The int32 status convention, cppgo_last_error, what the generated wrappers turn a failure into, and why a trailing error in direct ABI mode is always nil unless C++ returns a status."
+description = "What v4 emits today — exceptions caught by the shim and -status — what a direct call can and cannot report, and the std::error_code / std::expected mapping that is designed and tracked in #19."
 weight = 60
 +++
 
-C++ has no Go-style multiple returns, so a failure has to travel in the return
-value. cppgo uses one convention on the C side and translates it once in the
-generated Go wrapper.
+**Audience:** you have a C++ function that can fail and want to know what the Go
+caller sees.
 
-## The status convention
+## The rule
 
-A C++ function that can fail returns `int32_t`:
+**Every call that can fail returns `(T, error)`, value first, error last, and
+every call that cannot fail returns no error at all.** The generated signature
+answers the question before you write any Go. A `noexcept` function that returns
+`int` is `func(...) int32`, and the package contains no error that is always nil.
 
-- **`0` means success.**
-- **anything else means failure**, and the shim stores a message that
-  `cppgo_last_error()` returns.
-
-```c
-const char *cppgo_last_error(void);   /* thread-local, valid until the next call */
-```
-
-The accessor is thread-local and the pointer stays valid only until the next
-`cppgo_*` call on the same thread, so the generated wrapper copies the message
-out immediately. A library that cannot fail does not need to export it at all:
-`cppgo.LastError` returns `nil` when the symbol is absent.
-
-<span class="filename">cppgo_shim.h (excerpt)</span>
-
-```c
-/* cppgo_dot implements func Dot(a []float64, b []float64) (float64, error).
- * Returns 0 on success. On failure it returns a non-zero status and
- * leaves the message for cppgo_last_error(); the value is written through ret. */
-int32_t cppgo_dot(double* a, size_t a_len, double* b, size_t b_len, double* ret);
-```
-
-The value is written through a trailing out-pointer because the ABI allows one
-return register and the status already owns it. The wrapper declares a local,
-passes its address, and only reads it when the status is zero.
-
-## What the wrapper does with a non-zero status
-
-```go
-cppgoStatus := cppgo_dot(cppgoSymDot, cppgo.Ptr(a), uintptr(len(a)),
-	cppgo.Ptr(b), uintptr(len(b)), unsafe.Pointer(&cppgoRet))
-cppgo.KeepAlive(a, b)
-if cppgoStatus != 0 {
-	if err := cppgo.LastError(cppgoLib); err != nil {
-		return 0, fmt.Errorf("dot: %w", err)
-	}
-	return 0, fmt.Errorf("dot: call failed with status %d", cppgoStatus)
-}
-```
-
-Three details worth knowing:
-
-- The message is prefixed with the C entity: the **symbol** in shim mode
-  (`dot: ...`), the **qualified C++ name** in ABI mode
-  (`mathx::Vector::dot: ...`). The native text is a `*cppgo.NativeError`, so
-  `errors.As` can recover it if you need the message without the prefix.
-- If the library recorded no message, the fallback is
-  `"<prefix>: call failed with status %d"` — a non-zero status is never
-  silently swallowed.
-- A library that fails but exports no `cppgo_last_error` still produces that
-  fallback, not a panic.
-
-## Direct ABI mode: there is no status channel
-
-The direct call returns whatever the C++ function returns. It has no place to
-put a status beside a `double`, and no shim to store a message. So:
-
-- If the C++ result is **not an integer**, a binding declared as
-  `(T, error)` compiles to `return value, nil`. The generator says so in the
-  report and in the generated file:
-
-  > the trailing error is always nil: a direct C++ call has no status channel
-  > (return an int32 status and declare only error to get one)
-
-- If the C++ result **is an integer or enum** and the binding declares only
-  `error`, the integer is read as the status: `0` is success and returns `nil`,
-  non-zero returns the native message when the library exports
-  `cppgo_last_error`, or `call failed with status N` otherwise.
-- If the C++ function returns `void` and the binding declares `error`, the
-  error is always `nil` (shape `abiErrorOnly`).
-
-The integer status is read at its own width: a 4-byte result is read from `EAX`,
-an 8-byte one from `RAX`, so a non-zero high word is not lost.
-
-```go
-//cppgo:function stats::load
-func Load(path string) error
-```
-
-The C++ side is `int32_t stats::load(const char *path, std::size_t n)`: a
-non-zero return becomes a Go error, and a zero return becomes `nil`.
-
-This is the only way to get a real error out of the direct ABI mode without a
-shim: return an `int32_t` status, and use the same `cppgo_last_error`
-convention in your C++ source.
+The mechanism lives in the C++ shim, which can catch an exception and read a
+status. The projection lives in the Go wrapper.
 
 ## Exceptions
 
-- **Shim mode** gives you an `extern "C"` entry point in your own translation
-  unit, where a C++ exception can be caught and converted into a non-zero status
-  plus a message. The generated `cppgo_shim.h` documents that contract (return 0
-  on success, leave the text for `cppgo_last_error()` on failure); the catching
-  itself is in the code you write. An exception must never unwind into Go.
-- **Direct ABI mode** has no shim in between. A C++ exception that escapes the
-  function is **undefined behaviour** — it will attempt to unwind through a
-  frame the Go runtime does not describe. Catch inside the C++ function and
-  return a status.
+A declaration without `noexcept` goes through a thunk. The thunk wraps the
+call, and its argument marshalling, in `try`/`catch`, stores the message in a
+thread-local string, and returns a status:
+
+```cpp
+extern "C" int32_t cppgo_thunk_d691e1c0b71e(int32_t a, int32_t b, int32_t * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = ::analytic::ratio(a, b);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+```
+
+On the Go side a non-zero status becomes a `*cppgo.CallError` naming the
+declaration and wrapping the message:
+
+```go
+q, err := analytic.Ratio(6, 0)
+// q == 0
+// err: cppgo: analytic::ratio: division by zero
+// errors.As(err, &callErr)  → *cppgo.CallError{Symbol: "analytic::ratio", ...}
+// errors.As(err, &native)   → *cppgo.NativeError{Message: "division by zero"}
+```
+
+The message is copied out of C++ immediately, because `cppgo_last_error()` is
+thread-local and valid only until the next call on the same thread. A library
+that cannot fail omits it entirely. `cppgo.LastError` returns nil then.
+
+The same path covers **construction and destruction**: a constructor that throws
+returns `(nil, error)` and releases the object's storage. `Close` returns the
+error the destructor stored. `bad_alloc` while marshalling a `std::string` or a
+`std::vector` is caught by the same `try`.
+
+<div class="callout callout-warn">
+<span class="callout-title">An exception must not cross a Go frame</span>
+<p>
+The shim is the C++ frame that makes catching possible. A direct binding is
+<code>noexcept</code> by construction, so no handler exists. A throw out
+of a function declared <code>noexcept</code> terminates the process. That is measured in <code>internal/callback</code>'s child-process tests. A library that throws and whose header cannot be included by the shim
+cannot be bound safely. The fix is a <code>noexcept</code> entry point in the
+library.
+</p>
+</div>
+
+## `-status`: a 32-bit return that is a code
+
+Some C++ APIs follow the C convention. The function returns an `int32_t`, `0` is
+success, anything else is an error. The declaration alone cannot say that, a
+`bool` or an `int` carries no information, so you name it:
+
+```console
+$ cppgo gen -header include/stats/stats.hpp -package stats \
+      -library build/libstats.so -out ./stats -status stats::ensure
+```
+
+```go
+func Ensure() error
+```
+
+A non-zero value is wrapped in `*cppgo.CallError`. The integer stays out of the result, because it never was one. The return type has to be a 32-bit integer:
+`-status` on a `void` function or a `double` is a generation error naming the
+type it found.
+
+This is the whole error story v4 emits today, and it is measured. The exception
+row by `TestExceptionsBecomeErrors` and the generated package's
+`Ratio(6, 0)` assertion, the status row by the `-status` fixture.
+
+## What is designed, and not emitted yet
+
+[Issue #19](https://git.manu343726.com/manu343726/cppgo/issues/19) specifies the
+rest of the mapping. The mechanism is implemented and measured in
+`internal/errormap`. The generator ignores it so far.
+
+| C++ convention | how it is recognised | Go |
+|---|---|---|
+| `std::error_code` as a return | the return type is `std::error_code` | `(T, error)`; `*errormap.ErrorCode` with code, category and message; `errors.Is` compares code **and** category |
+| `std::expected<T,E>`, `tl::expected` | the return type has `has_value()`/`value()`/`error()`, or is spelled `std::expected` | `(T, error)`; `E = std::error_code` → `ErrorCode`, `E = std::string` → `Message` |
+| a custom result type (`outcome<T>`, `absl::StatusOr<T>`) | the shape `has_value`/`value`/`error` | `(T, error)`, with the error member projected |
+| `std::optional<T>` | the return type is `std::optional<T>` | **not an error by default**: `(T, bool)`; a config entry with `absent:` makes it `(T, error)` |
+| status int, `errno` | a config entry, never inferred | `(T, error)` with a named category |
+| `bool` + out parameters | never inferred: a `bool` says nothing | a config entry names the value and error channels |
+| `std::variant<T,E>` | never guessed | a config entry names the error alternative |
+
+Two rules make the future API predictable:
+
+- **no error is synthesized for a call that cannot fail** (already true).
+- **no failure is dropped** — a declaration that can fail and whose convention is missing from both inference and configuration will be a generation error that names the declaration. The alternative is a call whose failure becomes a zero value.
+
+The configuration will be a `cppgo.yaml` beside the generation command, and it
+will be a generation input, so `cppgo check` will fail when it changes without a
+regeneration. None of that is true of today's `cppgo gen`: there is no `-errors`
+flag and no `cppgo.yaml` reader outside `internal/errormap`'s tests.
 
 ## Library and symbol errors
 
-These are Go errors from the runtime package, not statuses from C++:
+These are Go errors from the runtime package. C++ statuses arrive through the mapping above.
 
 | error | when | `errors.Is` / `errors.As` |
 |---|---|---|
-| `*cppgo.OpenError` | `dlopen` failed, or the path was empty | `errors.As(err, &openErr)`; `Unwrap` exposes the loader error |
-| `*cppgo.SymbolError` | `dlsym` failed, or the library is closed | `errors.As(err, &symErr)`; `errors.Is(err, cppgo.ErrClosed)` |
-| `cppgo.ErrClosed` | any `Symbol` after `Close`, and a second `Close` | `errors.Is` |
-| `*cppgo.NativeError` | the message from `cppgo_last_error` | `errors.As`; it has no `Unwrap`, so `errors.Is` only matches the exact pointer |
+| `*cppgo.OpenError` | `dlopen` failed, or the path was empty | `errors.As`; `Unwrap` exposes the loader error |
+| `*cppgo.SymbolError` | `dlsym` failed, or the library is closed | `errors.As`; `errors.Is(err, cppgo.ErrClosed)` |
+| `cppgo.ErrClosed` | any symbol after `Close`, and a second `Close` | `errors.Is` |
+| `*cppgo.CallError` | a thunk reported a non-zero status | `errors.As`; `Unwrap` exposes the native error |
+| `*cppgo.NativeError` | the message from `cppgo_last_error` | `errors.As`; no `Unwrap` |
+| `*cppgo.ExtractError` | an embedded object could not be extracted by `OpenFS` | `errors.As` |
+| `cppgo.ErrInsecureCache` | the cache path is not a private directory | `errors.Is` |
 
-A generated package resolves every symbol **once**, on the first call, and
-panics if a binding has no `error` result:
+A generated package loads its two objects on the **first call**. A binding with
+an `error` result returns the load failure. A binding without one panics, which
+is the intended severity for a program built against a library that is absent:
 
 ```go
-if err := cppgoEnsure(); err != nil {
-	panic(err)   // for func F() float64
+if err := cppgoOpen(""); err != nil {
+	return 0, err        // func (v *Vector) Norm() (float64, error)
 }
 ```
 
-A binding with an error result returns the failure instead:
-
 ```go
-if err := cppgoEnsure(); err != nil {
-	return 0, err
+if err := cppgoOpen(""); err != nil {
+	panic(err)           // func (v *Vector) Scale(k float64)
 }
 ```
 
-So a missing `.so` surfaces as a panic on a no-error binding — which is the
-intended severity: the program was built against a library that is not there.
+A **panic inside a callback** never unwinds into C++: the dispatcher recovers
+it, the binding checks after the foreign call returns, and re-panics on the Go
+side. Measured by the project fixture's `Integrate` panic subtest.
 
 ## What is not an error
 
-- A **zero handle** from a constructor is not a failure. In the direct ABI mode
-  the handle is the address of storage Go allocated, so it is never zero. If you
-  need "construction failed", return a status from a static factory function
-  instead.
-- A **negative** status is not special: any non-zero value is a failure.
-- **Parameter validation** is not done at call time. A nil slice arrives as
+- A **zero value of a class type** is a nil object. A method on
+  it returns `cppgo.ErrClosed`.
+- A **negative** status behaves like any other failure. Any non-zero value is a failure.
+- The generated code validates no parameters at call time. A nil slice arrives as
   `(nil, 0)`, a null `*T` as a null pointer, and the C++ side has to reject
-  them. The generated code does not synthesize checks.
+  them. The generated code synthesizes no checks beyond the slice-length check described in [type mapping]({{< ref "manual/type-mapping.md" >}}).
 
-Next: [object lifetimes]({{< ref "manual/lifetimes.md" >}}).
+Next is [object lifetimes]({{< ref "manual/lifetimes.md" >}}).
