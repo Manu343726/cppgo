@@ -122,7 +122,9 @@ because of its name alone.
   object is `/proc/self/fd`, which is not a directory of siblings, so the second object ADR-0002
   introduced could not be found at all. An anonymous inode cannot be the neighbour of another
   anonymous inode. Nothing in this feature needs to avoid the disk, so the memory route buys nothing
-  and loses the dependency story.
+  and loses the dependency story. Measured, because "an anonymous file has no name" is the tempting
+  extra argument: `memfd_create("cppgo-probe", 0)` + `mmap` appears in `/proc/self/maps` as
+  `/memfd:cppgo-probe (deleted)`, so that argument is not made.
 - **Extract to `os.TempDir()` under a fixed name** — a predictable path in a shared, world-writable
   directory: another local user can pre-create it, replace the object between write and `dlopen`, or
   plant a symlink. The user cache directory with `0700`/`0600` and `O_EXCL` closes that.
