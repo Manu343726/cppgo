@@ -1,30 +1,26 @@
 {{ define "main" }}
 <article class="home">
   <section class="hero">
-    <p class="eyebrow">Go &rarr; C++ &middot; direct ABI</p>
+    <p class="eyebrow">Go &rarr; C++ &middot; header-first</p>
     <h1>Call C++ from Go<br>without cgo.</h1>
     <p class="hero-lede">
       No cgo. No <code>import "C"</code>. No hand-written <code>extern "C"</code> layer.
-      <strong>cppgo</strong> resolves your C++ declarations through libclang, mangles them
-      with the Itanium ABI, and generates one <code>NOSPLIT</code> assembly trampoline per
-      bound function — so a goroutine enters the System&nbsp;V C ABI directly, with
-      <code>this</code> in <code>RDI</code>.
+      Point <strong>cppgo</strong> at your C++ headers and the compilation flags your
+      build already uses. It generates the Go API, and it compiles the small C++
+      shim that carries the constructs the direct call cannot express.
     </p>
-    <pre class="hero-code"><code>//cppgo:library libmathx
-//cppgo:header include/mathx/vector.hpp
+    <pre class="hero-code"><code>$ cppgo gen -header include/mathx/vector.hpp \
+      -package mathx -library build/libmathx.so -out ./mathx
 
-//cppgo:class mathx::Vector
-type Vector cppgo.Handle
+// the generated API
+v, err := mathx.NewVector(3, 4)
+defer v.Close()
 
-//cppgo:ctor
-func New(x, y float64) (Vector, error)
-
-//cppgo:method norm
-func (v Vector) Norm() float64</code></pre>
+n, err := v.Norm()</code></pre>
     <div class="hero-actions">
       <a class="button" href="{{ "manual/installation/" | relURL }}">Install</a>
       <a class="button button-ghost" href="{{ "manual/quickstart/" | relURL }}">Quickstart</a>
-      <a class="button button-ghost" href="{{ "tutorials/first-binding/" | relURL }}">First binding</a>
+      <a class="button button-ghost" href="{{ "project/why/" | relURL }}">Why cppgo</a>
     </div>
   </section>
 
@@ -40,7 +36,7 @@ func (v Vector) Norm() float64</code></pre>
     <p class="note">
       Measured with the CPU pinned to <strong>964&nbsp;MHz</strong> and boost disabled,
       so the absolute nanoseconds are inflated by the
-      clock — <strong>cycles and ratios are the honest numbers</strong>.
+      clock. <strong>Cycles and ratios are the honest numbers.</strong>
     </p>
     <table class="bench-table">
       <thead>
@@ -68,16 +64,17 @@ func (v Vector) Norm() float64</code></pre>
       </tbody>
     </table>
     <p>
-      A call is not free — 13 cycles is not 2 — but it is close enough to a normal Go call
-      that the boundary stops dictating your architecture. A stack switch, which is what
-      the generated wrapper pays for the headroom guarantee, measured 14.9&nbsp;ns
-      (~14&nbsp;cycles) on the same machine.
+      A call is not free. 13 cycles is not 2. It is close enough to a normal Go call
+      that the boundary stops dictating your architecture. A stack switch, which is
+      what the generated wrapper pays for the headroom guarantee, measured
+      14.9&nbsp;ns (~14&nbsp;cycles) on the same machine.
     </p>
     <p>
-      The trade-off is that the <code>P</code> is not released during the call, so a
-      foreign call in flight delays a GC cycle by up to its duration: a 2&nbsp;ms call
-      delayed the worst GC cycle by 1.1&nbsp;ms, against 2.4&nbsp;ms for a spinning Go
-      goroutine. Right for short, compute-bound calls; wrong for calls that block.
+      The trade-off is that the <code>P</code> stays with the goroutine during a
+      direct call, so a foreign call in flight delays a GC cycle by up to its
+      duration. A 2&nbsp;ms call delayed the worst GC cycle by 1.1&nbsp;ms, against
+      2.4&nbsp;ms for a spinning Go goroutine. That is the right trade for short,
+      compute-bound calls and the wrong one for calls that block.
     </p>
   </section>
 
@@ -105,24 +102,25 @@ func (v Vector) Norm() float64</code></pre>
         <pre><code>go install github.com/Manu343726/cppgo/cmd/cppgo@latest</code></pre>
       </li>
       <li>
-        <h3>Annotate your Go declarations</h3>
+        <h3>Point it at your header</h3>
         <p class="step-note">
-          A <code>//cppgo:library</code>, a <code>//cppgo:header</code>, one
-          <code>//cppgo:class</code> per mirrored C++ type, then one directive per binding.
+          One <code>-header</code> per header to bind, <code>-package</code> for the
+          Go package name, <code>-library</code> for the shared object your build
+          already produces. Add <code>-compile-commands</code> so the parse uses
+          the flags the build uses.
         </p>
       </li>
       <li>
         <h3>Generate and call</h3>
-        <pre><code>cppgo gen -dir ./bindings/mathx
+        <pre><code>cppgo gen -header include/mathx/vector.hpp -package mathx \
+    -library build/libmathx.so -out ./mathx
 go test ./...</code></pre>
       </li>
     </ol>
     <p>
-      If a binding cannot work — the member is inline and has no symbol, it is virtual, it
-      takes a <code>std::string</code> by value, or it returns a struct by value — the
-      generator fails the build and says which of those it is. That is the point of the
-      direct ABI mode: the failure happens at generation time, not as a segfault in
-      production.
+      A construct the emitter cannot carry yet is refused at generation time, and
+      the message names the file, the declaration and the fix. Everything the
+      direct ABI cannot express goes through the generated shim instead.
     </p>
   </section>
 </article>
