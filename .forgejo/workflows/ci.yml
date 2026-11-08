@@ -19,22 +19,31 @@ name: CI
 #
 #      registry.docker.manu343726.com/homelab/cppgo-ci:<recipe>
 #
-#    `<recipe>` is the 7-character short sha of the commit that last touched `Dockerfile`:
+#    `<recipe>` is the Dockerfile's content address — the first 12 hex of `sha256(Dockerfile)`:
 #
-#        git log -1 --format=%h -- Dockerfile     # 1914e8c, for the recipe this file names
+#        sha256sum Dockerfile | cut -c1-12     # 0e49b1c2f9b7, for the recipe this file names
+#
+#    `ghcr.io/manu343726/cppgo-ci` carries the same tag and `.github/workflows/ci.yml`
+#    resolves it the same way (it hashes the Dockerfile it checked out and waits for
+#    `image.yml` to publish it), so both forges run the same recipe under one address — when
+#    the gate is red in one it is red in the other for a reason in the tree, not in the
+#    environment. Content-addressed and not the commit's sha, because a tag computed from the
+#    commit cannot exist until the commit does, which would take a second commit to point this
+#    file at the image its own tree produces.
 #
 #    The tag is the recipe's address, so a green run can be re-read months later and describe
 #    the same environment. It is immutable: a published tag is never rebuilt over, because a
 #    run that reported on one environment cannot be told apart from a run on the next. A
-#    changed recipe gets a new tag (the new commit's sha), built, run, and only then used here.
-#    `latest` exists beside it for humans reading the registry; no workflow may run in it.
+#    changed recipe gets a new tag, built, run, and only then used here. `latest` exists
+#    beside it for humans reading the registry; no workflow may run in it.
 #
 #    The image is published by hand today, and the tag below names the last build that was
-#    pushed: it was built from this repository's `Dockerfile` when the recipe moved to clang 22
-#    (trixie's archive stops at 19 and the tree binds `clang_getOffsetOfBase`; the reason and
-#    the measured choice of major are in the `Dockerfile`'s base note, which owns them) and
-#    gained the target libraries. Its index digest is
-#    `sha256:42e52d97eb251d7fc608ac41d08aacdc60bd8acfa64627b24f13bca0941cefce`.
+#    pushed: the recipe that moved to clang 22 (trixie's archive stops at 19 and the tree binds
+#    `clang_getOffsetOfBase`; the reason and the measured choice of major are in the
+#    `Dockerfile`'s base note, which owns them) and gained the target libraries. Its index
+#    digest is `sha256:42e52d97eb251d7fc608ac41d08aacdc60bd8acfa64627b24f13bca0941cefce`, the
+#    same manifest that was pushed as `3610540` before the tag became content-addressed
+#    (`docker tag` + push, no rebuild: same digest, second name).
 #
 #    Publishing on a `Dockerfile` change is not automated yet: a change lands in
 #    `.forgejo/workflows/image.yml` on the day it does, and this block gains one link to it.
@@ -138,7 +147,7 @@ env:
   # coverage profile and the gate then fails with a number nobody can explain. Require libclang
   # instead of skipping.
   CPPGO_REQUIRE_LIBCLANG: '1'
-  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:3610540
+  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-0e49b1c2f9b7
 
 jobs:
   test:
@@ -152,7 +161,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:3610540
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-0e49b1c2f9b7
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}
@@ -257,7 +266,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:3610540
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-0e49b1c2f9b7
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}
