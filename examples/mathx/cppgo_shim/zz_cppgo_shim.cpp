@@ -8,6 +8,7 @@
 #include "include/mathx/vector.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <exception>
 #include <memory>
