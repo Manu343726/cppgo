@@ -1,34 +1,58 @@
 # cppgo examples
 
-Two complete, runnable bindings. Not fixtures: each one is a package you can
-`cd` into, build, test and read, with the generated files checked in so the shape
-of what cppgo produces is visible before you run anything.
+Two complete, runnable bindings, written header-first against `cppgo gen`. They
+are not fixtures: each is a package you can `cd` into, build, test and read.
+
+```console
+$ cd examples/mathx && make
+$ cd examples/stats  && make && make bench
+```
 
 Both are their own Go modules (each with a `go.mod` and a
 `replace github.com/Manu343726/cppgo => ../..`), so the repository's own
-`go test ./...` and its 99% coverage gate do not pick them up, while they still
+`go test ./...` and its coverage gate do not pick them up, while they still
 build against the code next door rather than a published copy.
 
 | example | what it is | command |
 |---|---|---|
-| [mathx](mathx/) | the direct ABI mode on one small C++17 class: constructor, destructor, `const` methods, a slice parameter, a static member — and the inline member the generator refuses on purpose | `cd examples/mathx && make` |
-| [stats](stats/) | arithmetic over a million-element `[]float64`: `(pointer, length)` in both directions, a pointer-identity check that proves nothing is copied, a status turned into a Go error, and a benchmark against pure Go | `cd examples/stats && make && make bench` |
+| [mathx](mathx/) | one small C++17 class: a constructor, a destructor, a `const` method defined inline, a slice parameter, a `noexcept` method the generator calls directly, a method that throws, a POD by value and a BLAS-shaped free function | `cd examples/mathx && make` |
+| [stats](stats/) | arithmetic over a million-element `[]float64`: `(pointer, length)` in both directions, a pointer-identity check that proves nothing is copied, an exception turned into a Go error, and a benchmark against pure Go | `cd examples/stats && make && make bench` |
+
+## What v4 means for these examples
+
+The C++ header and source are the source of truth. Nothing in either example
+carries a cppgo annotation: no `//cppgo:` directive, no `import "C"`, no
+hand-written declaration. The flow has three artefacts:
+
+1. **the user's library** — `include/…` and `src/…`, compiled by the example's
+   own Makefile with its own flags and a soname. cppgo never writes into it and
+   never asks it to include anything.
+2. **the cppgo shim** — `cppgo gen` reads the header through libclang and
+   writes `cppgo_shim/zz_cppgo_shim.{h,cpp}`. It compiles them itself into
+   `libcppgo_<package>.so`, linked against the user's library. A thunk exists
+   for every declaration the direct ABI cannot call, and it is where `try`,
+   `catch`, `std::string` and by-value records live.
+3. **the generated Go package** — `zz_cppgo.gen.go` and `zz_cppgo_amd64.s`:
+   the API a caller sees, plus one NOSPLIT trampoline per binding. It loads the
+   shim (which pulls in the user's library through its `DT_NEEDED` entry) with
+   `dlopen`, so there is no cgo at build time.
+
+The report `cppgo gen` prints names the **carrier** of every line. `direct`
+means the trampoline calls the mangled C++ symbol in the user's library; `thunk`
+means it calls a shim function, for a reason the report states.
 
 ## Prerequisites
 
 - Go 1.25 or newer.
 - A C++17 compiler (`g++` by default; `make CXX=clang++` works).
-- libclang, because `cppgo gen` parses the C++ headers with it:
+- libclang, because `cppgo gen` parses the headers with it:
   `sudo apt install clang libclang-dev`, `sudo pacman -S clang`, or the
   equivalent.
-- Linux/amd64, which is what the trampolines are for today.
+- Linux/amd64, which is what the trampolines target today.
 
-No `sudo`, no cgo, no `import "C"`: the examples compile with `CGO_ENABLED=0`
-and load the C++ at run time with `dlopen`.
-
-Each Makefile builds its own `cppgo` binary from `../../cmd/cppgo` into its
-`build/` directory, so what runs is the generator in this repository, not
-whatever happens to be on `PATH`.
+No `sudo`, no cgo, no `import "C"`. Each Makefile builds its own `cppgo` from
+`../../cmd/cppgo` into its `build/` directory, so what runs is the generator in
+this repository, not whatever happens to be on `PATH`.
 
 ## What to look at first
 
@@ -36,57 +60,51 @@ whatever happens to be on `PATH`.
 $ cd examples/mathx && make
 ```
 
-The interesting output is not the test result, it is the generator's report — one
-line per binding, with the mangled symbol it resolved and which tier answered:
+The interesting output is the generator's report, one line per binding:
 
 ```
-mathx::Vector::Vector              mangled _ZN5mathx6VectorC1Edd                          abi from compile_commands.json; note: the object is allocated in Go storage owned by this package (16 bytes, alignment 8) and released by //cppgo:dtor
-mathx::Vector::dot                 mangled _ZNK5mathx6Vector3dotEPKdm                     abi from compile_commands.json
-mathx::Vector::~Vector             mangled _ZN5mathx6VectorD1Ev                           abi from compile_commands.json
+mathx::Vector::scale(double) noexcept          direct _ZN5mathx6Vector5scaleEd   noexcept, not virtual, register class; the library exports the symbol
+mathx::Vector::x() const                       thunk  cppgo_thunk_000…           not noexcept: an exception would unwind into Go
+mathx::Vector::at(std::size_t) const           thunk  cppgo_thunk_79ae…          not noexcept: an exception would unwind into Go
+mathx::midpoint(Point, Point)                  thunk  cppgo_thunk_a666…          a record passed or returned by value: the thunk copies it
 ```
 
-Then open [`examples/mathx/zz_cppgo_amd64.s`](mathx/zz_cppgo_amd64.s): ten
-instructions per function — the arguments loaded into registers, the call, the
-result copied back. [Register
-assignment](https://manu343726.github.io/cppgo/manual/calling-convention/) says
-which register holds what.
+`scale` is the one member called directly: it is `noexcept` and defined out of
+line, so its mangled symbol is in the library and the Go signature has no
+`error`. `x` is defined inside the class body, `at` may throw and `midpoint`
+takes a record by value, so each of those is a shim call. Then open the
+generated API, `zz_cppgo.gen.go`, and compare it with the header: the shape of
+the Go package is derived from the C++ declarations, not declared beside them.
 
-## Measured numbers
+## The generated sources are committed
 
-`cd examples/stats && make bench` compares each function against the pure-Go
-equivalent over the same memory, at a pinned 964.8 MHz. The table, the
-run-to-run spread and the clock caveat are in
-[`examples/stats/README.md`](stats/README.md).
+`zz_cppgo.gen.go`, `zz_cppgo_amd64.s` and `cppgo_shim/` are checked in on
+purpose: an example is teaching material, and a reader should be able to see
+what the generator produces without running it first.
 
-What the table argues, in two numbers: **35 ns for the call itself** is ~80% of
-an 8-element `Mean` and 0.001% of a million-element one, and the million-element
-arms run at the same cycles per element in both languages. The crossing is a
-constant; the data is not. That is the argument for binding the loop and not the
-accessor. The one row where the languages differ is `CountAbove`, 1.45x faster on
-the C++ side because g++ 16 vectorises the loop at `-O2` and the Go compiler does
-not — a compiler difference, not a boundary one.
-
-## How they relate to the documentation site
-
-The site's [examples](https://manu343726.github.io/cppgo/examples/) pages are
-written against these directories, and the tutorials go deeper on the pieces:
-
-- [Your first binding](https://manu343726.github.io/cppgo/tutorials/first-binding/) — one free function, from header to running program.
-- [Stateful objects](https://manu343726.github.io/cppgo/tutorials/stateful-objects/) — handles, lifetimes, double close.
-- [Bulk data](https://manu343726.github.io/cppgo/tutorials/bulk-data/) — slices as `(pointer, length)`, and when not to loop.
-- [When the generator refuses](https://manu343726.github.io/cppgo/tutorials/when-generation-refuses/) — the inline member `mathx` demonstrates with `make inline-demo`.
+- `make gen` reproduces them;
+- `make check` runs `cppgo check` and fails if a committed file is stale;
+- the compiled objects — `build/` and `libcppgo_*.so` — are built, never
+  committed. `examples/.gitignore` names them.
 
 ## In CI
 
 `make examples` at the repository root runs `scripts/build-examples.sh`, which
-runs each example's `make` — so both are built, generated, tested and vetted on
-every CI run, without contributing a line to the coverage profile (they are
-separate modules).
+runs each example's default target — so both are built, generated, tested (with
+`CGO_ENABLED=0` and with the race detector) and vetted on every CI run, without
+contributing a line to the coverage profile (they are separate modules).
 
 ## Adding another example
 
-An example is a directory here with a `Makefile` whose default target builds the
-C++ shared library, runs `cppgo gen`, and runs `go test`. `scripts/build-examples.sh`
-picks it up by that Makefile alone. Keep the generated `zz_cppgo*` files checked
-in and give the reader a `make check` target: the point of a checked-in generated
-file is that it can be proved current.
+An example is a directory here with:
+
+- a `Makefile` whose targets build the user's library (`-Wl,-soname,lib….so`),
+  run `cppgo gen -header … -package … -library … -out .`, then test and vet;
+- a `.clangd` (or a `compile_commands.json`) naming the project's real flags,
+  so the header is not parsed under an assumption;
+- the generated sources committed, plus a `make check` target that proves they
+  are current.
+
+`scripts/build-examples.sh` picks the directory up by its Makefile alone. It
+never compiles C++ itself: the example's own build is what produces the user's
+library, and the generator's shim is what links against it.

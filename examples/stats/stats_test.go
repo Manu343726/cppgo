@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -8,12 +9,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Manu343726/cppgo"
 )
 
-// The bindings open the library named by //cppgo:library ("libstats"), which the
-// dynamic loader looks up on its search path, not in the current directory. The
-// test points them at the file the Makefile built; CppgoLibraryPath is read
-// once, on the first call, which is why this runs in init.
+// The generated package loads two objects: libcppgo_stats.so (the shim cppgo
+// compiled) and libstats.so (the user's library it was linked against). The
+// loader does not search the current directory, so the test names both.
 func init() {
 	path := os.Getenv("CPPGO_STATS_LIB")
 	if path == "" {
@@ -25,9 +27,24 @@ func init() {
 	CppgoLibraryPath = path
 }
 
+func shimPath() string {
+	path := os.Getenv("CPPGO_STATS_SHIM")
+	if path == "" {
+		path = "libcppgo_stats.so"
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return path
+}
+
 func TestMain(m *testing.M) {
 	if _, err := os.Stat(CppgoLibraryPath); err != nil {
 		fmt.Fprintf(os.Stderr, "libstats.so is missing: %v\nrun \"make\" in this directory first\n", err)
+		os.Exit(1)
+	}
+	if err := Open(shimPath()); err != nil {
+		fmt.Fprintf(os.Stderr, "opening the generated binding: %v\nrun \"make\" in this directory first\n", err)
 		os.Exit(1)
 	}
 	os.Exit(m.Run())
@@ -45,7 +62,8 @@ func close(got, want float64) bool {
 }
 
 // TestMean covers the scalar cases and then the case that matters: a slice
-// large enough that the (pointer, length) hand-off is the whole point.
+// large enough that the (pointer, length) hand-off is the whole point. mean is
+// noexcept and out of line, so it is a direct call and returns no error.
 func TestMean(t *testing.T) {
 	tests := []struct {
 		name string
@@ -97,6 +115,7 @@ func TestCountAbove(t *testing.T) {
 
 // TestHistogramWritesThroughTheSlice is the output half of the no-copy story:
 // the C++ side is handed the Go slice's backing array and fills it in place.
+// histogram is not noexcept, so it crosses through the shim.
 func TestHistogramWritesThroughTheSlice(t *testing.T) {
 	// Four buckets of width 2 over [0, 8]: 0,1 | 2,3 | 4,5 | 6,7,8.
 	xs := []float64{0, 1, 2, 3, 4, 5, 6, 7, 8}
@@ -121,21 +140,25 @@ func TestHistogramWritesThroughTheSlice(t *testing.T) {
 	}
 }
 
-// TestHistogramErrorPath is the one place where a direct C++ call reports
-// failure: an integer status, plus a message the wrapper reads back through
-// cppgo_last_error.
+// TestHistogramErrorPath is the failure path: the C++ function throws
+// std::invalid_argument, the shim catches it, and the generated binding returns
+// a *cppgo.CallError whose message is the exception's.
 func TestHistogramErrorPath(t *testing.T) {
 	err := Histogram([]float64{1, 2, 3}, make([]float64, 4), 8, 0)
 	if err == nil {
 		t.Fatal("Histogram with hi < lo returned no error")
 	}
 	if !strings.Contains(err.Error(), "hi must be greater than lo") {
-		t.Errorf("error = %q, want it to carry the message stored by the C++ side", err)
+		t.Errorf("error = %q, want it to carry the message the C++ exception raised", err)
 	}
-	// The wrapper prefixes the qualified C++ name, so the message says which
-	// binding failed.
-	if !strings.Contains(err.Error(), "stats::histogram") {
-		t.Errorf("error = %q, want it to name stats::histogram", err)
+	// The binding prefixes the C++ declaration, so the message says which call
+	// failed.
+	var call *cppgo.CallError
+	if !errors.As(err, &call) {
+		t.Fatalf("error is %T, want *cppgo.CallError", err)
+	}
+	if call.Symbol != "stats::histogram" {
+		t.Errorf("CallError.Symbol = %q, want stats::histogram", call.Symbol)
 	}
 
 	// An empty output slice is a different rejection, from the same convention.
@@ -165,8 +188,8 @@ func TestSliceIsNotCopied(t *testing.T) {
 		t.Fatalf("writing through the returned pointer left xs[0] = %v: not the same memory", xs[0])
 	}
 
-	// An empty slice has no first element: cppgo.Ptr returns nil rather than a
-	// pointer to nowhere.
+	// An empty slice has no first element: the wire helper passes nil rather
+	// than a pointer to nowhere.
 	if got := DataPointer(nil); got != nil {
 		t.Errorf("DataPointer(nil) = %p, want nil", got)
 	}
@@ -237,8 +260,8 @@ func goStddev(xs []float64) float64 {
 	return math.Sqrt(sum / float64(len(xs)))
 }
 
-func goCountAbove(xs []float64, threshold float64) int {
-	count := 0
+func goCountAbove(xs []float64, threshold float64) uint64 {
+	var count uint64
 	for _, x := range xs {
 		if x > threshold {
 			count++
