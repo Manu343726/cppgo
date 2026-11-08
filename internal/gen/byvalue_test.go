@@ -73,7 +73,7 @@ func TestByValueRecordShimCompiles(t *testing.T) {
 			// The fixture headers are relative to this package's directory,
 			// which is how a user names them on the command line.
 			output, err := exec.Command(gxx, "-std=c++17", "-fsyntax-only", "-I.",
-				filepath.Join(dir, ShimSourceFileName)).CombinedOutput()
+				ShimPath(dir, ShimSourceFileName)).CombinedOutput()
 			require.NoErrorf(t, err, "g++ rejected the shim:\n%s", output)
 			_, err = os.Stat(filepath.Join(dir, GenFileName))
 			require.NoError(t, err)

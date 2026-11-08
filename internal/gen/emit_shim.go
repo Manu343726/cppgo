@@ -18,14 +18,6 @@ func (m *packageModel) emitShim() ([]byte, []byte, []thunkSpan, error) {
 	return m.renderShim(nil)
 }
 
-// thunkSpan is one thunk's line range in the generated translation unit. It is
-// how a compiler diagnostic is turned back into the binding that produced it.
-type thunkSpan struct {
-	start  int
-	end    int
-	symbol string
-}
-
 // renderShim renders both shim files and the line range of every thunk. When
 // only is non-nil, the source contains just that binding's thunk, which is how
 // the self-check isolates the culprit of a compiler diagnostic.
@@ -83,7 +75,7 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 
 	var spans []thunkSpan
 	for _, binding := range m.bindings {
-		if binding.Carrier != thunk || (only != nil && binding != only) {
+		if !binding.Carrier.shimCarried() || (only != nil && binding != only) {
 			continue
 		}
 		h.WriteString("\n")
@@ -223,6 +215,12 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 		if arg.label == "this" || arg.label == "out" || arg.isOut || arg.stdRole == stdRoleExtra {
 			continue
 		}
+		if arg.callable != nil && !arg.callable.Std {
+			// A plain function pointer: the address the callback table handed
+			// out, cast to the declaration's own type.
+			args = append(args, "reinterpret_cast<"+arg.callable.Cxx+">("+arg.cName+")")
+			continue
+		}
 		if arg.stdRole == stdRolePrimary {
 			if arg.stdMove {
 				args = append(args, "std::move("+arg.stdLocal+")")
@@ -307,6 +305,11 @@ func (m *packageModel) stdLocals(binding *binding) string {
 		}
 		elem := arg.stdElem
 		switch arg.stdKind {
+		case stdFunction:
+			// The std::function is constructed here, from the plain function
+			// pointer the callback table handed out: Go never builds one.
+			fmt.Fprintf(&b, "\t\t%s %s = reinterpret_cast<%s>(%s);\n",
+				arg.callable.StdCxx, arg.stdLocal, arg.callable.Cxx, arg.stdArgs[0])
 		case stdString:
 			fmt.Fprintf(&b, "\t\tstd::string %s(%s, %s);\n", arg.stdLocal, arg.stdArgs[0], arg.stdArgs[1])
 		case stdStringView:

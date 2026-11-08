@@ -127,11 +127,19 @@ func TestGenWritesFiles(t *testing.T) {
 	// flags are an assumption. A warning is not a failure.
 	assert.NotContains(t, stderr, "cppgo gen:")
 
-	for _, name := range []string{gen.GenFileName, gen.AsmFileName, gen.ShimHeaderFileName, gen.ShimSourceFileName} {
+	for _, name := range []string{gen.GenFileName, gen.AsmFileName} {
 		data, err := os.ReadFile(filepath.Join(out, name))
 		require.NoError(t, err, name)
 		assert.NotEmpty(t, data, name)
 	}
+	// The shim's sources live one directory down (a Go package directory may
+	// not hold C++), and the shim cppgo compiled sits beside the package.
+	for _, name := range []string{gen.ShimHeaderFileName, gen.ShimSourceFileName} {
+		data, err := os.ReadFile(gen.ShimPath(out, name))
+		require.NoError(t, err, name)
+		assert.NotEmpty(t, data, name)
+	}
+	require.FileExists(t, filepath.Join(out, gen.ShimLibraryName("mathx")))
 }
 
 func TestGenQuiet(t *testing.T) {
@@ -197,7 +205,7 @@ func TestGenManifestErrors(t *testing.T) {
 		want string
 	}{
 		{"missing package", []string{"gen", "-header", header, "-library", "l"}, "not a valid Go package name"},
-		{"missing library", []string{"gen", "-header", header, "-package", "p"}, "-library is required"},
+		{"a direct binding needs the library", []string{"gen", "-header", header, "-package", "p"}, "a direct binding needs -library"},
 		{"missing header file", []string{"gen", "-header", "nope.hpp", "-package", "p", "-library", "l"}, "nope.hpp"},
 		{"unmatched bind", []string{"gen", "-header", header, "-package", "p", "-library", "l", "-bind", "mathx::Nope"}, "names nothing"},
 	}

@@ -21,6 +21,7 @@ const (
 	goString
 	goArray
 	goOptional
+	goFunc
 )
 
 // stdKind is the standard-library shape a type crosses as.
@@ -36,6 +37,7 @@ const (
 	stdOptional
 	stdUniquePtr
 	stdSharedPtr
+	stdFunction
 )
 
 // goType is one C++ type on both sides of the boundary.
@@ -64,6 +66,33 @@ type goType struct {
 	Const bool
 	// Param is the model type this was mapped from.
 	Param cxx.Param
+	// Callback is the signature of a function-pointer or std::function
+	// parameter, nil for everything else.
+	Callback *callbackType
+}
+
+// callbackType is the signature of a Go function handed to C++. The carrier
+// reads its arguments from the register file and writes one result register,
+// so only scalars are carried: six INTEGER and eight SSE arguments, one
+// register result.
+type callbackType struct {
+	// Params are the callback's arguments, in declaration order.
+	Params []*goType
+	// Result is the callback's result, nil for void.
+	Result *goType
+	// Go is the Go function type: "func(int32, int32) int32".
+	Go string
+	// Cxx is the C++ function-pointer type the shim casts the address to.
+	Cxx string
+	// StdCxx is the std::function spelling when the parameter is one, empty
+	// for a plain function pointer.
+	StdCxx string
+	// Std is true when the C++ parameter is a std::function: the shim builds
+	// the object from the plain function pointer.
+	Std bool
+	// Reason is the generation-time explanation when the signature is not
+	// carried, empty when it is.
+	Reason string
 }
 
 // mapper maps C++ types onto Go, using the package's record model to tell a
@@ -82,6 +111,12 @@ type mapper struct {
 // class template alias can be wrong (std::string & resolves to int & on some
 // versions), so the spelling is the reliable half exactly as it is for streams.
 func (m *mapper) mapType(p cxx.Param) (*goType, error) {
+	// A function pointer is decided before anything else: its spelling starts
+	// with its return type, so "std::int32_t (*)(int)" would otherwise be read
+	// as a standard-library type named std::int32_t (*)(int).
+	if callable, ok := functionPointer(p); ok {
+		return m.mapFunction(p, callable, false)
+	}
 	if name, ok := stdTypeName(p); ok {
 		return m.mapStd(p, name)
 	}
@@ -166,6 +201,12 @@ func (m *mapper) mapStd(p cxx.Param, name string) (*goType, error) {
 			return nil, err
 		}
 		return &goType{Kind: goPointer, Go: "*" + elem.Go, Elem: elem, Record: elem.Record, Std: stdSharedPtr, Param: p}, nil
+	case strings.HasPrefix(name, "std::function<"):
+		signature, err := functionSignature(name, "std::function")
+		if err != nil {
+			return nil, err
+		}
+		return m.mapFunction(p, signature, true)
 	default:
 		return nil, pending(fmt.Sprintf("%q is a standard-library type outside the emitted table", name),
 			"cross it as a scalar, T*/length or POD, or bind a C++ wrapper with a supported signature")
@@ -514,4 +555,166 @@ func missingRecord(p cxx.Param) error {
 		fix = "name it with -instantiate '" + p.RecordName + "'"
 	}
 	return pending(fmt.Sprintf("%q is not part of the generated API", p.Spelling), fix)
+}
+
+// signature is a C++ return type and parameter list, split out of a spelling.
+type signature struct {
+	result string
+	params []string
+}
+
+// functionSignature splits "R(A, B)" out of a std::function spelling.
+func functionSignature(name, prefix string) (signature, error) {
+	args, err := templateArguments(name, prefix)
+	if err != nil {
+		return signature{}, err
+	}
+	if len(args) != 1 {
+		return signature{}, pending(fmt.Sprintf("%q has %d template arguments", name, len(args)),
+			"write a one-argument "+prefix+"<R(A...)> at the C++ boundary")
+	}
+	return splitSignature(args[0])
+}
+
+// splitSignature splits a "R(A, B)" spelling at its top-level parentheses.
+func splitSignature(text string) (signature, error) {
+	text = strings.TrimSpace(text)
+	open := strings.IndexByte(text, '(')
+	if open < 0 || !strings.HasSuffix(text, ")") {
+		return signature{}, pending(fmt.Sprintf("%q is not a function type", text),
+			"write the signature as R(A...) at the C++ boundary")
+	}
+	result := strings.TrimSpace(text[:open])
+	inner := strings.TrimSpace(text[open+1 : len(text)-1])
+	var params []string
+	if inner != "" && inner != "void" {
+		params = splitTemplateArgs(inner)
+	}
+	return signature{result: result, params: params}, nil
+}
+
+// functionPointer recognises a pointer to a function and returns its signature
+// from the declaration spelling: libclang reports the pointee as a function
+// prototype with no argument list of its own in the model.
+func functionPointer(p cxx.Param) (signature, bool) {
+	if p.Kind != cxx.TypePointer || p.Pointee == nil || p.Pointee.ClangKind != "FunctionProto" {
+		return signature{}, false
+	}
+	callable, err := splitSignature(p.Pointee.Spelling)
+	if err != nil {
+		return signature{}, false
+	}
+	return callable, true
+}
+
+// mapFunction maps a function-pointer or std::function parameter: the Go value
+// is a func, the C++ value is built by the shim from the callback table's
+// address, and only scalars are carried.
+func (m *mapper) mapFunction(p cxx.Param, callable signature, std bool) (*goType, error) {
+	mapped := &callbackType{Std: std}
+	for _, spelling := range callable.params {
+		element, err := m.callbackElement(spelling)
+		if err != nil {
+			return nil, err
+		}
+		mapped.Params = append(mapped.Params, element)
+	}
+	if result := strings.TrimSpace(callable.result); result != "" && result != "void" {
+		element, err := m.callbackElement(result)
+		if err != nil {
+			return nil, err
+		}
+		mapped.Result = element
+	}
+	// The ABI carries the register file only: six INTEGER and eight SSE
+	// arguments, and one register result.
+	ints, floats := 0, 0
+	for _, param := range mapped.Params {
+		if param.Kind == goFloat {
+			floats++
+		} else {
+			ints++
+		}
+	}
+	switch {
+	case ints > maxIntRegs:
+		return nil, pending(fmt.Sprintf("%q takes more than %d INTEGER arguments", p.Spelling, maxIntRegs),
+			"take a pointer to a struct instead")
+	case floats > maxFloatRegs:
+		return nil, pending(fmt.Sprintf("%q takes more than %d SSE arguments", p.Spelling, maxFloatRegs),
+			"take a pointer to a struct instead")
+	}
+	mapped.Go = goFunctionType(mapped)
+	mapped.Cxx = cxxFunctionType(mapped)
+	if std {
+		mapped.StdCxx = stdFunctionType(mapped)
+	}
+	return &goType{Kind: goFunc, Go: mapped.Go, Callback: mapped, Std: stdKindFor(std), Param: p}, nil
+}
+
+// stdKindFor is the goType's standard-library tag of a callable, so that a
+// std::function parameter routes through mapStd's machinery as well.
+func stdKindFor(std bool) stdKind {
+	if std {
+		return stdFunction
+	}
+	return stdNone
+}
+
+// callbackElement maps one callback argument or its result.
+func (m *mapper) callbackElement(spelling string) (*goType, error) {
+	element, err := m.mapElement(spelling)
+	if err != nil {
+		return nil, err
+	}
+	if element.Kind == goFloat && element.Go == "float32" {
+		return nil, pending(fmt.Sprintf("the callback argument %q is a float", spelling),
+			"take a double instead: a float argument is not carried by this build yet")
+	}
+	if element.Kind == goRecord || element.Kind == goString || element.Kind == goSlice || element.Kind == goArray {
+		return nil, pending(fmt.Sprintf("the callback argument %q is not a scalar", spelling),
+			"take an integer, a double or a pointer instead")
+	}
+	return element, nil
+}
+
+// goFunctionType renders the Go func type of a callback.
+func goFunctionType(callback *callbackType) string {
+	params := make([]string, len(callback.Params))
+	for i, param := range callback.Params {
+		params[i] = param.Go
+	}
+	out := "func(" + strings.Join(params, ", ") + ")"
+	if callback.Result != nil {
+		out += " " + callback.Result.Go
+	}
+	return out
+}
+
+// cxxFunctionType renders the C++ function-pointer type the shim casts the
+// callback address to, in the C spellings the Go types already carry.
+func cxxFunctionType(callback *callbackType) string {
+	params := make([]string, len(callback.Params))
+	for i, param := range callback.Params {
+		params[i] = param.C
+	}
+	result := "void"
+	if callback.Result != nil {
+		result = callback.Result.C
+	}
+	return result + " (*)(" + strings.Join(params, ", ") + ")"
+}
+
+// stdFunctionType renders the std::function the shim builds from a plain
+// function pointer when the C++ parameter is one.
+func stdFunctionType(callback *callbackType) string {
+	params := make([]string, len(callback.Params))
+	for i, param := range callback.Params {
+		params[i] = param.C
+	}
+	result := "void"
+	if callback.Result != nil {
+		result = callback.Result.C
+	}
+	return "std::function<" + result + "(" + strings.Join(params, ", ") + ")>"
 }

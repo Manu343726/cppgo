@@ -16,17 +16,28 @@ type carrier uint8
 const (
 	// direct calls the mangled C++ symbol from the assembly trampoline.
 	direct carrier = iota
-	// thunk calls a generated extern "C" function compiled into the library.
+	// thunk calls a generated extern "C" function compiled into the shim.
 	thunk
+	// reentrant calls a generated thunk through runtime.cgocall, because the
+	// callee may call back into Go and only that state accepts a callback.
+	reentrant
 )
 
 // String implements fmt.Stringer.
 func (c carrier) String() string {
-	if c == direct {
+	switch c {
+	case direct:
 		return "direct"
+	case reentrant:
+		return "reentrant"
+	default:
+		return "thunk"
 	}
-	return "thunk"
 }
+
+// shimCarried reports whether the binding's symbol is a thunk cppgo emits and
+// compiles, as opposed to a mangled symbol of the user's library.
+func (c carrier) shimCarried() bool { return c != direct }
 
 // class is a SysV argument register class.
 type class uint8
@@ -147,6 +158,11 @@ type wireArg struct {
 	stdMove  bool
 	// isOut marks a standard-library result's out-parameter.
 	isOut bool
+	// callable is set for a function-pointer or std::function parameter: the
+	// wire word is the callback table's address.
+	callable *callbackType
+	// callbackParam is the Go name of the function value the closure calls.
+	callbackParam string
 }
 
 // binding is one callable C++ declaration bound to Go.
@@ -201,6 +217,14 @@ type binding struct {
 	// hasByValue is true when a mirrored record is passed or returned by value,
 	// which is a shim binding whatever the register class says.
 	hasByValue bool
+	// hasCallback is true when the signature takes a Go function: the call must
+	// reach C through runtime.cgocall, so C++ may call back into Go.
+	hasCallback bool
+	// outPointer is true when the result travels through a heap allocation
+	// instead of a stack local, which a call that may run a callback requires:
+	// the callback may grow the goroutine stack, and a stack address handed to
+	// C++ would move with it.
+	outPointer bool
 	// StdResult is true when the result is a standard-library value, which the
 	// thunk copies out through out-parameters.
 	StdResult bool
@@ -235,6 +259,11 @@ type packageModel struct {
 	usesFree bool
 	// usesSpan is true when the generated shim needs <span> (C++20).
 	usesSpan bool
+	// spans is the line range of every thunk in the generated translation unit,
+	// which is how a compiler diagnostic names the binding it belongs to.
+	spans []thunkSpan
+	// build is the shim compile Generate ran, nil in check mode.
+	build *shimBuild
 }
 
 // builder carries the state of one model build.
@@ -277,9 +306,6 @@ func build(cfg Config) (*packageModel, error) {
 	}
 	if !validGoPackage(cfg.Package) {
 		return nil, fmt.Errorf("cppgo: -package %q is not a valid Go package name", cfg.Package)
-	}
-	if cfg.Library == "" {
-		return nil, fmt.Errorf("cppgo: -library is required: name the shared object Open loads")
 	}
 	b := &builder{cfg: cfg, records: map[string]*recordModel{}, instantiateMatched: make([]bool, len(cfg.Instantiate))}
 	if err := b.load(); err != nil {
@@ -694,6 +720,10 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 			return nil, fmt.Errorf("result: %w", err)
 		}
 		if result.Kind != goVoid {
+			if result.Kind == goFunc {
+				return nil, pending(fmt.Sprintf("%q is a function or std::function result", sym.Result.Spelling),
+					"take it as a callback parameter, or expose a C++ wrapper that owns it")
+			}
 			if result.Std == stdUniquePtr || result.Std == stdSharedPtr {
 				return nil, pending(fmt.Sprintf("%q is a smart-pointer result", sym.Result.Spelling), "return the object by value or through a reference at the C++ boundary")
 			}
@@ -716,14 +746,17 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	if err := b.checkRegisters(binding); err != nil {
 		return nil, err
 	}
-	if binding.Carrier == thunk && binding.Result != nil {
+	if err := b.checkReentrant(binding); err != nil {
+		return nil, err
+	}
+	if binding.Carrier.shimCarried() && binding.Result != nil {
 		switch {
 		case binding.StdResult:
 			b.addStdResult(binding)
 		case binding.Status || binding.Result.Kind == goRecord:
 			binding.Out = binding.Result
 			binding.OutLocal = outLocalType(binding.Result)
-			binding.Wire = append(binding.Wire, &wireArg{
+			out := &wireArg{
 				label:    "out",
 				slotType: "unsafe.Pointer",
 				class:    classInt,
@@ -732,13 +765,21 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				keep:     "&cppgoResult",
 				cType:    outParamType(binding.Result),
 				cName:    "cppgo_result",
-			})
+			}
+			if binding.Carrier == reentrant {
+				// A callback may grow the goroutine stack, so the block the
+				// thunk writes into is a heap allocation, never a stack local.
+				binding.outPointer = true
+				out.expr = "unsafe.Pointer(cppgoResult)"
+				out.keep = "cppgoResult"
+			}
+			binding.Wire = append(binding.Wire, out)
 		}
 	}
 	binding.ID = shortHash(displaySignature(sym))
 	binding.SymbolVar = "cppgoSym_" + binding.ID
 	binding.Trampoline = "cppgoCall_" + binding.ID
-	if binding.Carrier == thunk {
+	if binding.Carrier.shimCarried() {
 		binding.Thunk = "cppgo_thunk_" + binding.ID
 		binding.Symbol = binding.Thunk
 	} else {
@@ -801,6 +842,10 @@ func (b *builder) lowerParams(binding *binding) error {
 			name := uniqueName(paramName(p.Name, visible), taken)
 			visible++
 			binding.Params = append(binding.Params, &goParam{Name: name, Type: mapped})
+			if mapped.Kind == goFunc {
+				b.callbackWire(binding, name, mapped, p, addWire)
+				continue
+			}
 			b.stdParamWire(binding, p, mapped, name, addWire)
 			continue
 		}
@@ -862,6 +907,10 @@ func (b *builder) lowerParams(binding *binding) error {
 		name := uniqueName(paramName(p.Name, visible), taken)
 		visible++
 		binding.Params = append(binding.Params, &goParam{Name: name, Type: mapped})
+		if mapped.Kind == goFunc {
+			b.callbackWire(binding, name, mapped, p, addWire)
+			continue
+		}
 		if mapped.Kind == goRecord {
 			// A mirrored record is a Go value with the C layout: the thunk
 			// takes its address and copies it into the call, which is the one
@@ -894,6 +943,39 @@ func (b *builder) byValueParam(binding *binding, name string, mapped *goType, p 
 	}
 	add(arg)
 	binding.hasByValue = true
+}
+
+// callbackWire lowers a function-pointer or std::function parameter: the wire
+// word is the address the callback table hands out, and the Go wrapper
+// registers the function before the call and releases it after.
+func (b *builder) callbackWire(binding *binding, name string, mapped *goType, p cxx.Param, add func(*wireArg)) {
+	index := 0
+	for _, arg := range binding.Wire {
+		if arg.callable != nil {
+			index++
+		}
+	}
+	arg := &wireArg{
+		label:         "a" + itoa(len(binding.Wire)),
+		slotType:      "uintptr",
+		class:         classInt,
+		size:          8,
+		expr:          fmt.Sprintf("cppgoCallback%d", index),
+		cType:         "void *",
+		cName:         p.Name,
+		param:         p,
+		callable:      mapped.Callback,
+		callbackParam: name,
+	}
+	if mapped.Callback.Std {
+		// The shim builds the std::function from the plain function pointer.
+		arg.stdRole = stdRolePrimary
+		arg.stdKind = stdFunction
+		arg.stdLocal = "cppgo_" + cIdent(p.Name)
+		arg.stdArgs = []string{arg.cName}
+	}
+	add(arg)
+	binding.hasCallback = true
 }
 
 // stdParamWire lowers one standard-library parameter. The Go value is the
@@ -1085,6 +1167,9 @@ func isLengthParam(p cxx.Param) bool {
 func (b *builder) chooseCarrier(binding *binding) {
 	sym := binding.sym
 	switch {
+	case binding.hasCallback:
+		binding.Carrier = reentrant
+		binding.Reason = "callback: the call enters C through runtime.cgocall, so C++ may call back into Go"
 	case binding.hasStd:
 		binding.Carrier = thunk
 		binding.Reason = "standard-library type: the thunk constructs, copies and destroys it"
@@ -1118,7 +1203,7 @@ func (b *builder) chooseCarrier(binding *binding) {
 			binding.Reason = "noexcept, not virtual, register class; the library exports the symbol"
 		}
 	}
-	if binding.Carrier == thunk {
+	if binding.Carrier.shimCarried() {
 		// A standard-library argument is marshalled inside the thunk, and that
 		// marshalling allocates, so such a call can fail even when the C++
 		// declaration is noexcept.
@@ -1127,8 +1212,30 @@ func (b *builder) chooseCarrier(binding *binding) {
 	if binding.IsConstructor || binding.IsDestructor {
 		binding.ErrorResult = true
 	} else {
-		binding.ErrorResult = binding.Carrier == thunk && binding.Status
+		binding.ErrorResult = binding.Carrier.shimCarried() && binding.Status
 	}
+}
+
+// checkReentrant refuses the combinations the reentrant carrier cannot carry
+// yet: a call that runs a callback must receive no pointer into Go memory (the
+// callback may grow the goroutine stack and move it), and a standard-library
+// result would be copied out through locals the same growth invalidates.
+func (b *builder) checkReentrant(binding *binding) error {
+	if binding.Carrier != reentrant {
+		return nil
+	}
+	if binding.StdResult {
+		return pending(fmt.Sprintf("%q returns a standard-library value and takes a callback", displaySignature(binding.sym)),
+			"return the value through an out parameter the callee fills, or drop the callback from this declaration")
+	}
+	for _, param := range binding.Params {
+		switch param.Type.Kind {
+		case goString, goSlice, goArray, goPointer, goOptional:
+			return pending(fmt.Sprintf("the parameter %q of a callback binding is a %s", param.Name, param.Type.Go),
+				"pass a scalar: a pointer into Go memory would move when the callback grows the stack")
+		}
+	}
+	return nil
 }
 
 // checkRegisters rejects a signature the generated trampoline cannot pass. An
@@ -1251,6 +1358,15 @@ func (b *builder) outOfLine(sym cxx.Symbol) bool {
 // emitted into the shim the generator compiles, so it is not checked here.
 func (b *builder) crossCheck() error {
 	if b.exported == nil {
+		// A bare loader name cannot be inspected here, and a header-only
+		// library has no object at all; a direct binding needs the latter.
+		if b.cfg.Library == "" {
+			for _, binding := range b.bindings {
+				if binding.Carrier == direct {
+					return fmt.Errorf("cppgo: %s: a direct binding needs -library: name the shared object its symbol is exported by", displaySignature(binding.sym))
+				}
+			}
+		}
 		return nil
 	}
 	for _, binding := range b.bindings {
@@ -1272,7 +1388,7 @@ func (b *builder) layout() {
 		for _, arg := range binding.Wire {
 			slots = append(slots, &slot{label: arg.label, goType: arg.slotType, class: arg.class, size: arg.size})
 		}
-		if binding.Carrier == thunk && binding.Status {
+		if binding.Carrier.shimCarried() && binding.Status {
 			// The status is the only result register use; a value, if any,
 			// travels through the out-pointer already in the wire.
 			slots = append(slots, &slot{label: "ret", goType: "int32", class: classInt, size: 4})

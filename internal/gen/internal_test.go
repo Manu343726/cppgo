@@ -259,15 +259,26 @@ func TestGenerateFailurePaths(t *testing.T) {
 	})
 }
 
-// TestShimSelfValidation is the proof that an uncompilable thunk never reaches
-// disk: the instantiation's member body does not compile for int, and the
-// generator must say so, naming the binding and the compiler line.
-func TestShimSelfValidation(t *testing.T) {
+// TestShimCompileIsTheGate is the proof that an uncompilable thunk never
+// reaches disk: the instantiation's member body does not compile for int, and
+// the generator says so, naming the binding and the compiler's own line. The
+// gate is the C++ compiler, not a re-parse: v4 compiles the shim itself, so a
+// diagnostic is the compiler's and a thunk that would fail at the first call
+// cannot be written.
+func TestShimCompileIsTheGate(t *testing.T) {
+	if _, err := exec.LookPath("g++"); err != nil {
+		t.Skip("g++ is not in PATH")
+	}
+	out := filepath.Join(t.TempDir(), "out")
 	cfg := fixtureConfig("badshim", "badshim.hpp")
 	cfg.Instantiate = []string{"bad::Bad<int>"}
-	_, err := Render(cfg)
+	cfg.Out = out
+	cfg.Library = ""
+	err := Generate(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "badshim.hpp:")
 	assert.Contains(t, err.Error(), "the generated shim does not compile")
 	assert.Contains(t, err.Error(), "bad::Bad<int>::get")
+	_, statErr := os.Stat(out)
+	assert.True(t, os.IsNotExist(statErr), "a failed generation must not create the output directory")
 }

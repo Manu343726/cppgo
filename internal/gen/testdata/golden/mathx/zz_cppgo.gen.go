@@ -12,17 +12,32 @@ import (
 	"github.com/Manu343726/cppgo"
 )
 
-// Open loads the shared library and resolves every symbol this package binds.
-// A path of "" uses the -library name the package was generated with. It is
-// safe to call Open more than once; the first successful call wins.
+// Open loads the cppgo-built shim and the user's library it was linked against,
+// then resolves every symbol this package binds.
+//
+// path names the shim cppgo compiled beside this package. A path of "" uses the
+// name the package was generated with. It is safe to call Open more than once;
+// the first successful call wins.
 func Open(path string) error { return cppgoOpen(path) }
 
-// cppgoLibraryName is the library named by -library.
-const cppgoLibraryName = "libmathx"
+const (
+	// cppgoShimName is the shim cppgo compiled beside this package.
+	cppgoShimName = "libcppgo_mathx.so"
+	// cppgoUserLibrary is the library the shim was linked against, empty for a
+	// header-only library whose shim is the whole binary.
+	cppgoUserLibrary = "libmathx"
+)
+
+// cppgoLibraries are the two objects a generated call reaches: the shim cppgo
+// built, and the user's library it was linked against.
+type cppgoLibraries struct {
+	user *cppgo.Library
+	shim *cppgo.Library
+}
 
 var (
 	cppgoMu      sync.Mutex
-	cppgoLibrary *cppgo.Library
+	cppgoLoaded  *cppgoLibraries
 	cppgoOpenErr error
 )
 
@@ -48,64 +63,97 @@ var (
 	cppgoSym_edd159695f62 uintptr
 )
 
-// cppgoOpen loads the shared library and resolves every symbol the generated
-// bindings need. A missing thunk means the generated shim was not compiled into
-// the library, which is a build error the message names.
+// cppgoOpen loads the two objects and resolves every symbol the generated
+// bindings need. A missing thunk means the shim cppgo compiled is not the one
+// this package was generated from, and the message says how to rebuild it.
 func cppgoOpen(path string) error {
 	cppgoMu.Lock()
 	defer cppgoMu.Unlock()
-	if cppgoLibrary != nil {
+	if cppgoLoaded != nil {
 		return nil
 	}
 	if path == "" && cppgoOpenErr != nil {
 		return cppgoOpenErr
 	}
 	if path == "" {
-		path = cppgoLibraryName
+		path = cppgoShimName
 	}
-	lib, err := cppgo.Open(path)
+	loaded, err := cppgoLoad(path)
 	if err != nil {
 		cppgoOpenErr = err
 		return err
 	}
+	cppgoLoaded = loaded
+	cppgoOpenErr = nil
+	return nil
+}
+
+// cppgoLoad opens the user's library, then the shim, then resolves every
+// symbol from the object that carries it.
+func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
+	loaded := &cppgoLibraries{}
+	if cppgoUserLibrary != "" {
+		user, err := cppgo.Open(cppgoUserLibrary)
+		if err != nil {
+			return nil, err
+		}
+		loaded.user = user
+	}
+	shim, err := cppgo.Open(shimPath)
+	if err != nil {
+		cppgoUnload(loaded)
+		return nil, fmt.Errorf("cppgo: open the shim %s: %w", shimPath, err)
+	}
+	loaded.shim = shim
 	for _, symbol := range []struct {
-		name  string
-		addr  *uintptr
-		thunk bool
+		name string
+		addr *uintptr
+		shim bool
 	}{
-		{name: "cppgo_thunk_1af92e8a16a6", addr: &cppgoSym_1af92e8a16a6, thunk: true},
-		{name: "cppgo_thunk_7d8c482bce3e", addr: &cppgoSym_7d8c482bce3e, thunk: true},
-		{name: "cppgo_thunk_f4eaab93874e", addr: &cppgoSym_f4eaab93874e, thunk: true},
-		{name: "cppgo_thunk_9e4411d8977c", addr: &cppgoSym_9e4411d8977c, thunk: true},
-		{name: "cppgo_thunk_49993cda6560", addr: &cppgoSym_49993cda6560, thunk: true},
-		{name: "_ZN5mathx6Vector5scaleEd", addr: &cppgoSym_5e3a9d471306, thunk: false},
-		{name: "cppgo_thunk_00064a4bc112", addr: &cppgoSym_00064a4bc112, thunk: true},
-		{name: "cppgo_thunk_06a8bef46cac", addr: &cppgoSym_06a8bef46cac, thunk: true},
-		{name: "cppgo_thunk_edd159695f62", addr: &cppgoSym_edd159695f62, thunk: true},
+		{name: "cppgo_thunk_1af92e8a16a6", addr: &cppgoSym_1af92e8a16a6, shim: true},
+		{name: "cppgo_thunk_7d8c482bce3e", addr: &cppgoSym_7d8c482bce3e, shim: true},
+		{name: "cppgo_thunk_f4eaab93874e", addr: &cppgoSym_f4eaab93874e, shim: true},
+		{name: "cppgo_thunk_9e4411d8977c", addr: &cppgoSym_9e4411d8977c, shim: true},
+		{name: "cppgo_thunk_49993cda6560", addr: &cppgoSym_49993cda6560, shim: true},
+		{name: "_ZN5mathx6Vector5scaleEd", addr: &cppgoSym_5e3a9d471306, shim: false},
+		{name: "cppgo_thunk_00064a4bc112", addr: &cppgoSym_00064a4bc112, shim: true},
+		{name: "cppgo_thunk_06a8bef46cac", addr: &cppgoSym_06a8bef46cac, shim: true},
+		{name: "cppgo_thunk_edd159695f62", addr: &cppgoSym_edd159695f62, shim: true},
 	} {
+		lib := loaded.user
+		if symbol.shim || lib == nil {
+			lib = loaded.shim
+		}
 		addr, err := lib.Symbol(symbol.name)
 		if err != nil {
-			_ = lib.Close()
-			if symbol.thunk {
-				err = fmt.Errorf("cppgo: %w: compile zz_cppgo_shim.cpp into %s", err, path)
+			cppgoUnload(loaded)
+			if symbol.shim {
+				err = fmt.Errorf("cppgo: %w: the shim cppgo compiled is stale; run cppgo gen again", err)
 			}
-			cppgoOpenErr = err
-			return err
+			return nil, err
 		}
 		*symbol.addr = addr
 	}
-	cppgoLibrary = lib
-	cppgoOpenErr = nil
-	return nil
+	return loaded, nil
+}
+
+// cppgoUnload closes whatever a failed load opened.
+func cppgoUnload(loaded *cppgoLibraries) {
+	if loaded.user != nil {
+		_ = loaded.user.Close()
+	}
+	if loaded.shim != nil {
+		_ = loaded.shim.Close()
+	}
 }
 
 // cppgoCallError reads the message a thunk stored and wraps it in the error the
 // binding returns.
 func cppgoCallError(symbol string) error {
 	cppgoMu.Lock()
-	lib := cppgoLibrary
+	shim := cppgoLoaded.shim
 	cppgoMu.Unlock()
-	err := cppgo.LastError(lib)
+	err := cppgo.LastError(shim)
 	if err == nil {
 		err = fmt.Errorf("the call failed without a message")
 	}
@@ -116,9 +164,9 @@ func cppgoCallError(symbol string) error {
 // message, a CallError when it did.
 func cppgoCloseError(symbol string) error {
 	cppgoMu.Lock()
-	lib := cppgoLibrary
+	shim := cppgoLoaded.shim
 	cppgoMu.Unlock()
-	if err := cppgo.LastError(lib); err != nil {
+	if err := cppgo.LastError(shim); err != nil {
 		return &cppgo.CallError{Symbol: symbol, Err: err}
 	}
 	return nil

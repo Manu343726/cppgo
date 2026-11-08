@@ -36,6 +36,19 @@ const (
 	ShimSourceFileName = "zz_cppgo_shim.cpp"
 )
 
+// ShimDirName is the subdirectory of the output directory that holds the
+// shim's two sources.
+//
+// A Go package directory cannot contain C++ sources: the go tool refuses a
+// directory with a .cpp in it unless the package uses cgo, which cppgo's
+// packages never do. The shim is cppgo's own translation unit anyway, so it
+// lives one level down, where the go tool ignores it, and only the compiled
+// libcppgo_<pkg>.so sits beside the generated Go.
+const ShimDirName = "cppgo_shim"
+
+// ShimPath is where one of the shim's sources is written under outDir.
+func ShimPath(outDir, name string) string { return filepath.Join(outDir, ShimDirName, name) }
+
 // CppgoImportPath is the import path of the runtime package in generated code.
 const CppgoImportPath = "github.com/Manu343726/cppgo"
 
@@ -66,16 +79,22 @@ type Config struct {
 	Instantiate []string
 	// Rename maps a qualified name or signature to a Go name.
 	Rename []string
+	// CXX is the C++ compiler the shim is built with, from -cxx. Empty means
+	// g++, then clang++.
+	CXX string
 	// Report receives one line per binding. Nil discards it.
 	Report io.Writer
 	// Warnings receives package-level warnings. Nil discards them.
 	Warnings io.Writer
 }
 
-// Output is one generated file.
+// Output is one generated file. Subdir is the directory under the output
+// directory it belongs in: empty for the package's own files, ShimDirName for
+// the shim's sources.
 type Output struct {
-	Name string
-	Data []byte
+	Name   string
+	Subdir string
+	Data   []byte
 }
 
 // Result is everything one generator run produced.
@@ -120,14 +139,12 @@ func renderModel(model *packageModel) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := model.validateShim(shimHeader, shimSource, spans); err != nil {
-		return nil, err
-	}
+	model.spans = spans
 	outs := []Output{
 		{Name: GenFileName, Data: goFile},
 		{Name: AsmFileName, Data: asmFile},
-		{Name: ShimHeaderFileName, Data: shimHeader},
-		{Name: ShimSourceFileName, Data: shimSource},
+		{Name: ShimHeaderFileName, Subdir: ShimDirName, Data: shimHeader},
+		{Name: ShimSourceFileName, Subdir: ShimDirName, Data: shimSource},
 	}
 	sort.Slice(outs, func(i, j int) bool { return outs[i].Name < outs[j].Name })
 	return &Result{
@@ -137,9 +154,15 @@ func renderModel(model *packageModel) (*Result, error) {
 	}, nil
 }
 
-// Generate writes the generated files, or verifies them in check mode.
+// Generate writes the generated files and compiles the shim, or verifies the
+// files in check mode. Check mode writes nothing and builds nothing: the shim
+// is a build artefact, and what a stale check measures is the sources.
 func Generate(cfg Config) error {
-	result, err := RenderResult(cfg)
+	model, err := build(cfg)
+	if err != nil {
+		return err
+	}
+	result, err := renderModel(model)
 	if err != nil {
 		return err
 	}
@@ -152,32 +175,73 @@ func Generate(cfg Config) error {
 			fmt.Fprintf(cfg.Warnings, "cppgo: warning: %s\n", warning)
 		}
 	}
+	if cfg.Check {
+		return checkOutputs(outDir, result.Outputs)
+	}
+	// The shim is compiled in a scratch directory first. A generation that
+	// cannot build its own shim writes nothing: the output directory is only
+	// touched once the artefact exists.
+	scratch, err := os.MkdirTemp("", "cppgo-shim-")
+	if err != nil {
+		return fmt.Errorf("cppgo: creating the shim build directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+	if err := writeOutputs(scratch, result.Outputs); err != nil {
+		return err
+	}
+	shim, err := model.buildShim(scratch)
+	if err != nil {
+		return err
+	}
+	model.build = shim
+	if err := writeOutputs(outDir, result.Outputs); err != nil {
+		return err
+	}
+	built, err := os.ReadFile(shim.Path)
+	if err != nil {
+		return fmt.Errorf("cppgo: reading the compiled shim %s: %w", shim.Path, err)
+	}
+	shim.Path = filepath.Join(outDir, filepath.Base(shim.Path))
+	if err := os.WriteFile(shim.Path, built, 0o755); err != nil {
+		return fmt.Errorf("cppgo: writing %s: %w", shim.Path, err)
+	}
 	if cfg.Report != nil {
 		for _, line := range result.Report {
 			fmt.Fprintln(cfg.Report, line)
 		}
+		fmt.Fprintf(cfg.Report, "cppgo: built %s with %s\n", shim.Path, shim.Compiler)
 	}
-	if cfg.Check {
-		var stale []string
-		for _, o := range result.Outputs {
-			old, err := os.ReadFile(filepath.Join(outDir, o.Name))
-			if err != nil || !bytes.Equal(old, o.Data) {
-				stale = append(stale, o.Name)
-			}
-		}
-		if len(stale) > 0 {
-			return fmt.Errorf("%s is out of date (run \"cppgo gen\"): %s", outDir, strings.Join(stale, ", "))
-		}
-		return nil
-	}
+	return nil
+}
+
+// writeOutputs writes every generated file.
+func writeOutputs(outDir string, outputs []Output) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("creating output directory %s: %w", outDir, err)
 	}
-	for _, o := range result.Outputs {
-		path := filepath.Join(outDir, o.Name)
+	for _, o := range outputs {
+		path := filepath.Join(outDir, o.Subdir, o.Name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+		}
 		if err := os.WriteFile(path, o.Data, 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", path, err)
 		}
+	}
+	return nil
+}
+
+// checkOutputs reports every generated file that is missing or stale.
+func checkOutputs(outDir string, outputs []Output) error {
+	var stale []string
+	for _, o := range outputs {
+		old, err := os.ReadFile(filepath.Join(outDir, o.Subdir, o.Name))
+		if err != nil || !bytes.Equal(old, o.Data) {
+			stale = append(stale, o.Name)
+		}
+	}
+	if len(stale) > 0 {
+		return fmt.Errorf("%s is out of date (run \"cppgo gen\"): %s", outDir, strings.Join(stale, ", "))
 	}
 	return nil
 }

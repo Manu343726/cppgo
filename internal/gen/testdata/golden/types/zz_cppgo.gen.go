@@ -12,17 +12,32 @@ import (
 	"github.com/Manu343726/cppgo"
 )
 
-// Open loads the shared library and resolves every symbol this package binds.
-// A path of "" uses the -library name the package was generated with. It is
-// safe to call Open more than once; the first successful call wins.
+// Open loads the cppgo-built shim and the user's library it was linked against,
+// then resolves every symbol this package binds.
+//
+// path names the shim cppgo compiled beside this package. A path of "" uses the
+// name the package was generated with. It is safe to call Open more than once;
+// the first successful call wins.
 func Open(path string) error { return cppgoOpen(path) }
 
-// cppgoLibraryName is the library named by -library.
-const cppgoLibraryName = "libtypes"
+const (
+	// cppgoShimName is the shim cppgo compiled beside this package.
+	cppgoShimName = "libcppgo_types.so"
+	// cppgoUserLibrary is the library the shim was linked against, empty for a
+	// header-only library whose shim is the whole binary.
+	cppgoUserLibrary = "libtypes"
+)
+
+// cppgoLibraries are the two objects a generated call reaches: the shim cppgo
+// built, and the user's library it was linked against.
+type cppgoLibraries struct {
+	user *cppgo.Library
+	shim *cppgo.Library
+}
 
 var (
 	cppgoMu      sync.Mutex
-	cppgoLibrary *cppgo.Library
+	cppgoLoaded  *cppgoLibraries
 	cppgoOpenErr error
 )
 
@@ -150,115 +165,148 @@ var (
 	cppgoSym_25eff4810e44 uintptr
 )
 
-// cppgoOpen loads the shared library and resolves every symbol the generated
-// bindings need. A missing thunk means the generated shim was not compiled into
-// the library, which is a build error the message names.
+// cppgoOpen loads the two objects and resolves every symbol the generated
+// bindings need. A missing thunk means the shim cppgo compiled is not the one
+// this package was generated from, and the message says how to rebuild it.
 func cppgoOpen(path string) error {
 	cppgoMu.Lock()
 	defer cppgoMu.Unlock()
-	if cppgoLibrary != nil {
+	if cppgoLoaded != nil {
 		return nil
 	}
 	if path == "" && cppgoOpenErr != nil {
 		return cppgoOpenErr
 	}
 	if path == "" {
-		path = cppgoLibraryName
+		path = cppgoShimName
 	}
-	lib, err := cppgo.Open(path)
+	loaded, err := cppgoLoad(path)
 	if err != nil {
 		cppgoOpenErr = err
 		return err
 	}
+	cppgoLoaded = loaded
+	cppgoOpenErr = nil
+	return nil
+}
+
+// cppgoLoad opens the user's library, then the shim, then resolves every
+// symbol from the object that carries it.
+func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
+	loaded := &cppgoLibraries{}
+	if cppgoUserLibrary != "" {
+		user, err := cppgo.Open(cppgoUserLibrary)
+		if err != nil {
+			return nil, err
+		}
+		loaded.user = user
+	}
+	shim, err := cppgo.Open(shimPath)
+	if err != nil {
+		cppgoUnload(loaded)
+		return nil, fmt.Errorf("cppgo: open the shim %s: %w", shimPath, err)
+	}
+	loaded.shim = shim
 	for _, symbol := range []struct {
-		name  string
-		addr  *uintptr
-		thunk bool
+		name string
+		addr *uintptr
+		shim bool
 	}{
-		{name: "cppgo_thunk_976b38b1935d", addr: &cppgoSym_976b38b1935d, thunk: true},
-		{name: "cppgo_thunk_de54d681a563", addr: &cppgoSym_de54d681a563, thunk: true},
-		{name: "cppgo_thunk_20db0258db63", addr: &cppgoSym_20db0258db63, thunk: true},
-		{name: "cppgo_thunk_33108cf0dae7", addr: &cppgoSym_33108cf0dae7, thunk: true},
-		{name: "cppgo_thunk_5854863ace38", addr: &cppgoSym_5854863ace38, thunk: true},
-		{name: "cppgo_thunk_0cb07da5c338", addr: &cppgoSym_0cb07da5c338, thunk: true},
-		{name: "cppgo_thunk_0e1b169cc8ca", addr: &cppgoSym_0e1b169cc8ca, thunk: true},
-		{name: "cppgo_thunk_04d8127bf59e", addr: &cppgoSym_04d8127bf59e, thunk: true},
-		{name: "cppgo_thunk_8f523f17c5eb", addr: &cppgoSym_8f523f17c5eb, thunk: true},
-		{name: "cppgo_thunk_29071307072d", addr: &cppgoSym_29071307072d, thunk: true},
-		{name: "cppgo_thunk_9f444eded588", addr: &cppgoSym_9f444eded588, thunk: true},
-		{name: "cppgo_thunk_657a700f2da3", addr: &cppgoSym_657a700f2da3, thunk: true},
-		{name: "cppgo_thunk_e44d3b0e54c0", addr: &cppgoSym_e44d3b0e54c0, thunk: true},
-		{name: "cppgo_thunk_e2e7564576e5", addr: &cppgoSym_e2e7564576e5, thunk: true},
-		{name: "cppgo_thunk_3e54d1a60f90", addr: &cppgoSym_3e54d1a60f90, thunk: true},
-		{name: "cppgo_thunk_d990b1b9a516", addr: &cppgoSym_d990b1b9a516, thunk: true},
-		{name: "cppgo_thunk_71fbbe48ae39", addr: &cppgoSym_71fbbe48ae39, thunk: true},
-		{name: "cppgo_thunk_b2f108d5bc82", addr: &cppgoSym_b2f108d5bc82, thunk: true},
-		{name: "cppgo_thunk_43f02a8d67b0", addr: &cppgoSym_43f02a8d67b0, thunk: true},
-		{name: "cppgo_thunk_ef407d73533f", addr: &cppgoSym_ef407d73533f, thunk: true},
-		{name: "cppgo_thunk_c750e38edc23", addr: &cppgoSym_c750e38edc23, thunk: true},
-		{name: "_ZN5types6NoDtorC1Ei", addr: &cppgoSym_014fd224d3b4, thunk: false},
-		{name: "_ZNK5types6NoDtor5valueEv", addr: &cppgoSym_0a6635ffaa89, thunk: false},
-		{name: "_ZN5types11NoThrowCopyC1ERKS0_", addr: &cppgoSym_193683a32eea, thunk: false},
-		{name: "cppgo_thunk_ab26401ffc98", addr: &cppgoSym_ab26401ffc98, thunk: true},
-		{name: "cppgo_thunk_4b5153bd9feb", addr: &cppgoSym_4b5153bd9feb, thunk: true},
-		{name: "cppgo_thunk_b83dc4b1010f", addr: &cppgoSym_b83dc4b1010f, thunk: true},
-		{name: "cppgo_thunk_0d1ecec7b989", addr: &cppgoSym_0d1ecec7b989, thunk: true},
-		{name: "cppgo_thunk_c945736d6c28", addr: &cppgoSym_c945736d6c28, thunk: true},
-		{name: "cppgo_thunk_f4a86fa0982f", addr: &cppgoSym_f4a86fa0982f, thunk: true},
-		{name: "cppgo_thunk_eeff5262de33", addr: &cppgoSym_eeff5262de33, thunk: true},
-		{name: "cppgo_thunk_bb5c4c30a45d", addr: &cppgoSym_bb5c4c30a45d, thunk: true},
-		{name: "_ZNK5types3Pod3sumEv", addr: &cppgoSym_beae32a188a2, thunk: false},
-		{name: "cppgo_thunk_31588c7c9045", addr: &cppgoSym_31588c7c9045, thunk: true},
-		{name: "cppgo_thunk_f0cbe8a01b8f", addr: &cppgoSym_f0cbe8a01b8f, thunk: true},
-		{name: "cppgo_thunk_d4ecb4a32c4b", addr: &cppgoSym_d4ecb4a32c4b, thunk: true},
-		{name: "_ZN5types7add_f32Eff", addr: &cppgoSym_0200b0ae0190, thunk: false},
-		{name: "_ZN5types7add_f64Edd", addr: &cppgoSym_5a2eee432911, thunk: false},
-		{name: "_ZN5types7add_i16Ess", addr: &cppgoSym_4be3d860697f, thunk: false},
-		{name: "_ZN5types7add_i32Eii", addr: &cppgoSym_360e42774235, thunk: false},
-		{name: "_ZN5types7add_i64Ell", addr: &cppgoSym_13afccaf7ee2, thunk: false},
-		{name: "_ZN5types6add_i8Eaa", addr: &cppgoSym_ee84d0d798ce, thunk: false},
-		{name: "_ZN5types8add_intoEPKiPim", addr: &cppgoSym_1536e7c80af5, thunk: false},
-		{name: "_ZN5types7add_u16Ett", addr: &cppgoSym_da74aa368601, thunk: false},
-		{name: "_ZN5types7add_u32Ejj", addr: &cppgoSym_3a7e0e90acd7, thunk: false},
-		{name: "_ZN5types7add_u64Emm", addr: &cppgoSym_a86932d9a796, thunk: false},
-		{name: "_ZN5types6add_u8Ehh", addr: &cppgoSym_56ac7e571c54, thunk: false},
-		{name: "cppgo_thunk_15bf25653aff", addr: &cppgoSym_15bf25653aff, thunk: true},
-		{name: "cppgo_thunk_e72b4efa6be8", addr: &cppgoSym_e72b4efa6be8, thunk: true},
-		{name: "_ZN5types5countEPKim", addr: &cppgoSym_03a62b0a31e1, thunk: false},
-		{name: "cppgo_thunk_32875be50a88", addr: &cppgoSym_32875be50a88, thunk: true},
-		{name: "cppgo_thunk_14dd8f43176a", addr: &cppgoSym_14dd8f43176a, thunk: true},
-		{name: "cppgo_thunk_f0ef254c6b7e", addr: &cppgoSym_f0ef254c6b7e, thunk: true},
-		{name: "_ZN5types6negateEb", addr: &cppgoSym_ba503c233dab, thunk: false},
-		{name: "cppgo_thunk_5b3ba8c73334", addr: &cppgoSym_5b3ba8c73334, thunk: true},
-		{name: "cppgo_thunk_b47ae3b9ba31", addr: &cppgoSym_b47ae3b9ba31, thunk: true},
-		{name: "_ZN5types16pointer_identityEPi", addr: &cppgoSym_f028d5ebd0a4, thunk: false},
-		{name: "_ZN5types4readERKNS_6OpaqueE", addr: &cppgoSym_921d169a8459, thunk: false},
-		{name: "_ZN5types7sum_podERKNS_3PodE", addr: &cppgoSym_26fafb60fd18, thunk: false},
-		{name: "_ZN5types11take_matrixEPPim", addr: &cppgoSym_25eff4810e44, thunk: false},
+		{name: "cppgo_thunk_976b38b1935d", addr: &cppgoSym_976b38b1935d, shim: true},
+		{name: "cppgo_thunk_de54d681a563", addr: &cppgoSym_de54d681a563, shim: true},
+		{name: "cppgo_thunk_20db0258db63", addr: &cppgoSym_20db0258db63, shim: true},
+		{name: "cppgo_thunk_33108cf0dae7", addr: &cppgoSym_33108cf0dae7, shim: true},
+		{name: "cppgo_thunk_5854863ace38", addr: &cppgoSym_5854863ace38, shim: true},
+		{name: "cppgo_thunk_0cb07da5c338", addr: &cppgoSym_0cb07da5c338, shim: true},
+		{name: "cppgo_thunk_0e1b169cc8ca", addr: &cppgoSym_0e1b169cc8ca, shim: true},
+		{name: "cppgo_thunk_04d8127bf59e", addr: &cppgoSym_04d8127bf59e, shim: true},
+		{name: "cppgo_thunk_8f523f17c5eb", addr: &cppgoSym_8f523f17c5eb, shim: true},
+		{name: "cppgo_thunk_29071307072d", addr: &cppgoSym_29071307072d, shim: true},
+		{name: "cppgo_thunk_9f444eded588", addr: &cppgoSym_9f444eded588, shim: true},
+		{name: "cppgo_thunk_657a700f2da3", addr: &cppgoSym_657a700f2da3, shim: true},
+		{name: "cppgo_thunk_e44d3b0e54c0", addr: &cppgoSym_e44d3b0e54c0, shim: true},
+		{name: "cppgo_thunk_e2e7564576e5", addr: &cppgoSym_e2e7564576e5, shim: true},
+		{name: "cppgo_thunk_3e54d1a60f90", addr: &cppgoSym_3e54d1a60f90, shim: true},
+		{name: "cppgo_thunk_d990b1b9a516", addr: &cppgoSym_d990b1b9a516, shim: true},
+		{name: "cppgo_thunk_71fbbe48ae39", addr: &cppgoSym_71fbbe48ae39, shim: true},
+		{name: "cppgo_thunk_b2f108d5bc82", addr: &cppgoSym_b2f108d5bc82, shim: true},
+		{name: "cppgo_thunk_43f02a8d67b0", addr: &cppgoSym_43f02a8d67b0, shim: true},
+		{name: "cppgo_thunk_ef407d73533f", addr: &cppgoSym_ef407d73533f, shim: true},
+		{name: "cppgo_thunk_c750e38edc23", addr: &cppgoSym_c750e38edc23, shim: true},
+		{name: "_ZN5types6NoDtorC1Ei", addr: &cppgoSym_014fd224d3b4, shim: false},
+		{name: "_ZNK5types6NoDtor5valueEv", addr: &cppgoSym_0a6635ffaa89, shim: false},
+		{name: "_ZN5types11NoThrowCopyC1ERKS0_", addr: &cppgoSym_193683a32eea, shim: false},
+		{name: "cppgo_thunk_ab26401ffc98", addr: &cppgoSym_ab26401ffc98, shim: true},
+		{name: "cppgo_thunk_4b5153bd9feb", addr: &cppgoSym_4b5153bd9feb, shim: true},
+		{name: "cppgo_thunk_b83dc4b1010f", addr: &cppgoSym_b83dc4b1010f, shim: true},
+		{name: "cppgo_thunk_0d1ecec7b989", addr: &cppgoSym_0d1ecec7b989, shim: true},
+		{name: "cppgo_thunk_c945736d6c28", addr: &cppgoSym_c945736d6c28, shim: true},
+		{name: "cppgo_thunk_f4a86fa0982f", addr: &cppgoSym_f4a86fa0982f, shim: true},
+		{name: "cppgo_thunk_eeff5262de33", addr: &cppgoSym_eeff5262de33, shim: true},
+		{name: "cppgo_thunk_bb5c4c30a45d", addr: &cppgoSym_bb5c4c30a45d, shim: true},
+		{name: "_ZNK5types3Pod3sumEv", addr: &cppgoSym_beae32a188a2, shim: false},
+		{name: "cppgo_thunk_31588c7c9045", addr: &cppgoSym_31588c7c9045, shim: true},
+		{name: "cppgo_thunk_f0cbe8a01b8f", addr: &cppgoSym_f0cbe8a01b8f, shim: true},
+		{name: "cppgo_thunk_d4ecb4a32c4b", addr: &cppgoSym_d4ecb4a32c4b, shim: true},
+		{name: "_ZN5types7add_f32Eff", addr: &cppgoSym_0200b0ae0190, shim: false},
+		{name: "_ZN5types7add_f64Edd", addr: &cppgoSym_5a2eee432911, shim: false},
+		{name: "_ZN5types7add_i16Ess", addr: &cppgoSym_4be3d860697f, shim: false},
+		{name: "_ZN5types7add_i32Eii", addr: &cppgoSym_360e42774235, shim: false},
+		{name: "_ZN5types7add_i64Ell", addr: &cppgoSym_13afccaf7ee2, shim: false},
+		{name: "_ZN5types6add_i8Eaa", addr: &cppgoSym_ee84d0d798ce, shim: false},
+		{name: "_ZN5types8add_intoEPKiPim", addr: &cppgoSym_1536e7c80af5, shim: false},
+		{name: "_ZN5types7add_u16Ett", addr: &cppgoSym_da74aa368601, shim: false},
+		{name: "_ZN5types7add_u32Ejj", addr: &cppgoSym_3a7e0e90acd7, shim: false},
+		{name: "_ZN5types7add_u64Emm", addr: &cppgoSym_a86932d9a796, shim: false},
+		{name: "_ZN5types6add_u8Ehh", addr: &cppgoSym_56ac7e571c54, shim: false},
+		{name: "cppgo_thunk_15bf25653aff", addr: &cppgoSym_15bf25653aff, shim: true},
+		{name: "cppgo_thunk_e72b4efa6be8", addr: &cppgoSym_e72b4efa6be8, shim: true},
+		{name: "_ZN5types5countEPKim", addr: &cppgoSym_03a62b0a31e1, shim: false},
+		{name: "cppgo_thunk_32875be50a88", addr: &cppgoSym_32875be50a88, shim: true},
+		{name: "cppgo_thunk_14dd8f43176a", addr: &cppgoSym_14dd8f43176a, shim: true},
+		{name: "cppgo_thunk_f0ef254c6b7e", addr: &cppgoSym_f0ef254c6b7e, shim: true},
+		{name: "_ZN5types6negateEb", addr: &cppgoSym_ba503c233dab, shim: false},
+		{name: "cppgo_thunk_5b3ba8c73334", addr: &cppgoSym_5b3ba8c73334, shim: true},
+		{name: "cppgo_thunk_b47ae3b9ba31", addr: &cppgoSym_b47ae3b9ba31, shim: true},
+		{name: "_ZN5types16pointer_identityEPi", addr: &cppgoSym_f028d5ebd0a4, shim: false},
+		{name: "_ZN5types4readERKNS_6OpaqueE", addr: &cppgoSym_921d169a8459, shim: false},
+		{name: "_ZN5types7sum_podERKNS_3PodE", addr: &cppgoSym_26fafb60fd18, shim: false},
+		{name: "_ZN5types11take_matrixEPPim", addr: &cppgoSym_25eff4810e44, shim: false},
 	} {
+		lib := loaded.user
+		if symbol.shim || lib == nil {
+			lib = loaded.shim
+		}
 		addr, err := lib.Symbol(symbol.name)
 		if err != nil {
-			_ = lib.Close()
-			if symbol.thunk {
-				err = fmt.Errorf("cppgo: %w: compile zz_cppgo_shim.cpp into %s", err, path)
+			cppgoUnload(loaded)
+			if symbol.shim {
+				err = fmt.Errorf("cppgo: %w: the shim cppgo compiled is stale; run cppgo gen again", err)
 			}
-			cppgoOpenErr = err
-			return err
+			return nil, err
 		}
 		*symbol.addr = addr
 	}
-	cppgoLibrary = lib
-	cppgoOpenErr = nil
-	return nil
+	return loaded, nil
+}
+
+// cppgoUnload closes whatever a failed load opened.
+func cppgoUnload(loaded *cppgoLibraries) {
+	if loaded.user != nil {
+		_ = loaded.user.Close()
+	}
+	if loaded.shim != nil {
+		_ = loaded.shim.Close()
+	}
 }
 
 // cppgoCallError reads the message a thunk stored and wraps it in the error the
 // binding returns.
 func cppgoCallError(symbol string) error {
 	cppgoMu.Lock()
-	lib := cppgoLibrary
+	shim := cppgoLoaded.shim
 	cppgoMu.Unlock()
-	err := cppgo.LastError(lib)
+	err := cppgo.LastError(shim)
 	if err == nil {
 		err = fmt.Errorf("the call failed without a message")
 	}
@@ -269,9 +317,9 @@ func cppgoCallError(symbol string) error {
 // message, a CallError when it did.
 func cppgoCloseError(symbol string) error {
 	cppgoMu.Lock()
-	lib := cppgoLibrary
+	shim := cppgoLoaded.shim
 	cppgoMu.Unlock()
-	if err := cppgo.LastError(lib); err != nil {
+	if err := cppgo.LastError(shim); err != nil {
 		return &cppgo.CallError{Symbol: symbol, Err: err}
 	}
 	return nil

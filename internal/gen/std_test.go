@@ -64,37 +64,53 @@ func TestStdFixtureEndToEnd(t *testing.T) {
 	tmp := t.TempDir()
 	cxxDir := filepath.Join(tmp, "cxx")
 	require.NoError(t, copyTree(fixture, cxxDir))
-	lib := filepath.Join(tmp, "libstdx.so")
+	library := filepath.Join(tmp, "libstdx.so")
 	moduleDir := filepath.Join(tmp, "module")
 	out := filepath.Join(moduleDir, "genpkg")
-
 	header := filepath.Join(cxxDir, "std.hpp")
+
+	// 1. The user's library, built by its own command, with no cppgo file in it.
+	buildUserLibrary(t, gxx, "-std=c++20", cxxDir, library, filepath.Join(cxxDir, "std.cpp"))
+
+	// 2. cppgo generates the package and compiles its own shim against it.
 	require.NoError(t, Generate(Config{
 		Headers: []string{header},
 		Package: "stdx",
-		Library: lib,
+		Library: library,
 		Out:     out,
 	}))
-	var args = []string{"-std=c++20", "-O1", "-fPIC", "-shared", "-I" + cxxDir,
-		filepath.Join(cxxDir, "std.cpp"), filepath.Join(out, ShimSourceFileName), "-o", lib}
-	output, err := exec.Command(gxx, args...).CombinedOutput()
-	require.NoErrorf(t, err, "g++ failed:\n%s", output)
+	shim := filepath.Join(out, ShimLibraryName("stdx"))
+	require.FileExists(t, shim)
 
+	// 3. The shim is legal C++ for both compilers, not merely for the one that
+	// built it.
 	for _, compiler := range []string{"g++", "clang++"} {
 		path, err := exec.LookPath(compiler)
 		if err != nil {
 			continue
 		}
-		cmd := exec.Command(path, "-std=c++20", "-fsyntax-only", "-I"+cxxDir, filepath.Join(out, ShimSourceFileName))
+		cmd := exec.Command(path, "-std=c++20", "-fsyntax-only", "-I"+cxxDir, ShimPath(out, ShimSourceFileName))
 		output, err := cmd.CombinedOutput()
 		require.NoErrorf(t, err, "%s rejected the std shim:\n%s", compiler, output)
 	}
 
 	require.NoError(t, writeModule(t, moduleDir, repo))
 	require.NoError(t, os.WriteFile(filepath.Join(out, "std_test.go"), []byte(stdTestSource), 0o644))
-	runGo(t, goBin, moduleDir, "vet", "./genpkg")
-	ran := runGoEnv(t, goBin, moduleDir, []string{"CPPGO_STD_LIB=" + lib}, "test", "-count=1", "-v", "./genpkg")
+	runGoEnv(t, goBin, moduleDir, nil, "vet", "./genpkg")
+	ran := runGoEnv(t, goBin, moduleDir, []string{"CGO_ENABLED=0", "CPPGO_STD_SHIM=" + shim},
+		"test", "-count=1", "-v", "./genpkg")
 	assert.Contains(t, ran, "--- PASS: TestStd")
+}
+
+// buildUserLibrary runs the fixture's own build command: its sources, its
+// flags, its object. It is the step cppgo never does for the user.
+func buildUserLibrary(t *testing.T, gxx, standard, dir, out string, sources ...string) {
+	t.Helper()
+	args := []string{standard, "-O1", "-fPIC", "-shared", "-I" + dir}
+	args = append(args, sources...)
+	args = append(args, "-o", out)
+	output, err := exec.Command(gxx, args...).CombinedOutput()
+	require.NoErrorf(t, err, "g++ failed:\n%s", output)
 }
 
 // stdTestSource is the test the generated std package runs.
@@ -107,7 +123,7 @@ import (
 )
 
 func TestStd(t *testing.T) {
-	if err := Open(os.Getenv("CPPGO_STD_LIB")); err != nil {
+	if err := Open(os.Getenv("CPPGO_STD_SHIM")); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
