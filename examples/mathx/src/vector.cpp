@@ -1,26 +1,19 @@
-// Spelled "vector.hpp" with include/mathx on the include path (see the
-// Makefile) rather than <mathx/vector.hpp>. cppgo discovers the translation
-// units that carry the out-of-line bodies by looking for a source that includes
-// the header by its file name, so the bare form is what makes the definitions
-// in this file visible to the generator instead of every member looking inline.
-#include "vector.hpp"
+// The definitions of mathx. Together with the header this is the user's
+// library: the Makefile compiles it into build/libmathx.so with the project's
+// own flags and its own soname. No cppgo-generated file is part of this build;
+// cppgo's shim links *against* this library from the outside.
+#include <mathx/vector.hpp>
 
 #include <cmath>
+#include <stdexcept>
 
 namespace mathx {
 
-// Every definition in this file is out of line on purpose: it is what gives
-// each member a symbol in the shared object, and the symbol is what cppgo
-// binds. `norm_squared` is not here — it lives in the header, inline, and that
-// is precisely why it cannot be bound.
-
 Vector::Vector(double x, double y) : x_(x), y_(y) {}
 
-// Spelled `{}` rather than `= default`: an explicitly defaulted definition is
-// still fine out of line, but `= default` inside the class would be inline.
-Vector::~Vector() {}
+Vector::Vector(const Vector &other) : x_(other.x_), y_(other.y_) {}
 
-double Vector::x() const { return x_; }
+Vector::~Vector() {}
 
 double Vector::y() const { return y_; }
 
@@ -28,24 +21,41 @@ double Vector::norm() const { return std::sqrt(x_ * x_ + y_ * y_); }
 
 double Vector::dot(const double *ys, std::size_t n) const {
     // A slice is a borrowed pointer plus a length. Nothing here checks a Go
-    // bound: n is whatever the caller passed, so this is the function that has
-    // to be honest about it.
+    // bound: n is whatever the caller passed, so this function is the one that
+    // has to be honest about it.
     const double components[2] = {x_, y_};
-    double sum = 0.0;
     if (n > 2) {
         n = 2;
     }
+    double sum = 0.0;
     for (std::size_t i = 0; i < n; ++i) {
         sum += components[i] * ys[i];
     }
     return sum;
 }
 
-void Vector::scale(double k) {
+double Vector::at(std::size_t index) const {
+    if (index >= 2) {
+        throw std::out_of_range("Vector::at: index out of range");
+    }
+    return index == 0 ? x_ : y_;
+}
+
+void Vector::scale(double k) noexcept {
     x_ *= k;
     y_ *= k;
 }
 
 int Vector::dims() { return 2; }
+
+Point midpoint(Point a, Point b) {
+    return Point{(a.x + b.x) / 2.0, (a.y + b.y) / 2.0};
+}
+
+void saxpy(double a, const double *x, double *y, std::size_t n) {
+    for (std::size_t i = 0; i < n; ++i) {
+        y[i] = a * x[i] + y[i];
+    }
+}
 
 } // namespace mathx

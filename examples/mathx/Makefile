@@ -1,14 +1,18 @@
-# mathx — the direct C++ ABI mode on one small class.
+# mathx — the v4 header-first flow on one small C++17 class.
 #
-#   make              build libmathx.so, generate the bindings, test and vet
-#   make check        prove the committed generated files are up to date
-#   make inline-demo  show cppgo refusing a member defined inside its class
+#   make        build the user's library, generate the binding, test and vet
+#   make lib    build build/libmathx.so with the project's own command
+#   make gen    run cppgo gen: the Go API, the assembly, the shim sources and
+#               the shim libcppgo_mathx.so
+#   make test   go test, once with CGO_ENABLED=0 and once with the race detector
+#   make check  prove the committed generated sources are up to date
 #   make clean
 #
-# Everything is built under build/, which is git-ignored: the shared library, the
-# cppgo binary and the compilation database. The binary is built from the
-# repository this example lives in (../../cmd/cppgo), so there is no install
-# step and no chance of testing a different cppgo than the one next door.
+# Everything is built under build/, which is git-ignored: the user's shared
+# object and the locally built cppgo. The shim binary cppgo writes beside the
+# package (libcppgo_mathx.so) is ignored too. The generated *sources* are
+# committed, because the example is teaching material: `make gen` reproduces
+# them and `make check` proves they are current.
 
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -18,51 +22,54 @@ GO       ?= go
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -fPIC -Wall -Wextra
 
-BUILD := build
-ROOT  := ../..
-LIB   := $(BUILD)/libmathx.so
-CPPGO := $(BUILD)/cppgo
-CDB   := $(BUILD)/compile_commands.json
+BUILD  := build
+ROOT   := ../..
+LIB    := $(BUILD)/libmathx.so
+CPPGO  := $(BUILD)/cppgo
+SHIM   := libcppgo_mathx.so
 
-SOURCES := src/vector.cpp
-HEADERS := include/mathx/vector.hpp
-INCLUDES := -Iinclude -Iinclude/mathx
+HEADER   := include/mathx/vector.hpp
+SOURCE   := src/vector.cpp
+INCLUDES := -Iinclude
 
-# The generator is given the same compilation database the compiler gets, so the
-# header is parsed with this project's real flags and the report says
-# "abi from compile_commands.json" instead of warning that the flags are a guess.
-CPPGO_ARGS := -dir . -compile-commands $(CURDIR)/$(CDB)
+# The exact generation command, with paths relative to this directory, so the
+# command in the generated file's banner is one a reader can copy. The .clangd
+# beside this Makefile is the project's compilation configuration: -std=c++17
+# and -Iinclude, which is what tells the parser how the header is built.
+GEN_ARGS := -header $(HEADER) -package mathx -library $(LIB) -out .
 
-.PHONY: all lib gen test vet check inline-demo clean
+TEST_ENV := CPPGO_MATHX_LIB=$(CURDIR)/$(LIB) CPPGO_MATHX_SHIM=$(CURDIR)/$(SHIM)
 
-all: test vet
+.PHONY: all lib gen test vet check clean
 
-## --- the C++ side ----------------------------------------------------------
+all: gen test vet
+
+## --- the user's library ----------------------------------------------------
+#
+# This is the whole of the C++ build: the user's compiler, the user's flags and
+# a soname. cppgo is not involved, and no generated file is compiled here.
 
 lib: $(LIB)
 
-$(LIB): $(SOURCES) $(HEADERS) | $(BUILD)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -shared -o $(LIB) $(SOURCES)
+$(LIB): $(SOURCE) $(HEADER) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -shared -Wl,-soname,libmathx.so -o $@ $(SOURCE)
 
-# What a CMake build writes with CMAKE_EXPORT_COMPILE_COMMANDS=ON. Written by
-# hand only because this example does not need a whole build system.
-$(CDB): $(SOURCES) $(HEADERS) | $(BUILD)
-	@printf '[{"directory": "%s", "arguments": ["%s", "-std=c++17", "-fPIC", "-I%s/include", "-I%s/include/mathx", "-c", "%s/src/vector.cpp"], "file": "%s/src/vector.cpp"}]\n' \
-		"$(CURDIR)" "$(CXX)" "$(CURDIR)" "$(CURDIR)" "$(CURDIR)" "$(CURDIR)" > $(CDB)
+## --- the generated binding -------------------------------------------------
 
-## --- the Go side -----------------------------------------------------------
+gen: $(CPPGO) $(LIB)
+	$(CPPGO) gen $(GEN_ARGS)
 
-gen: $(CPPGO) $(CDB)
-	$(CPPGO) gen $(CPPGO_ARGS)
-
-test: lib gen
-	CPPGO_MATHX_LIB=$(CURDIR)/$(LIB) $(GO) test -count=1 -v .
+test: gen
+	CGO_ENABLED=0 $(TEST_ENV) $(GO) test -count=1 -v .
+	CGO_ENABLED=1 $(TEST_ENV) $(GO) test -race -count=1 .
 
 vet: gen
-	$(GO) vet .
+	CGO_ENABLED=0 $(GO) vet .
 
-check: $(CPPGO) $(CDB)
-	$(CPPGO) check $(CPPGO_ARGS)
+check: $(CPPGO) $(LIB)
+	$(CPPGO) check $(GEN_ARGS)
+
+## --- tools and housekeeping ------------------------------------------------
 
 $(CPPGO): | $(BUILD)
 	cd $(ROOT) && CGO_ENABLED=0 $(GO) build -trimpath -o $(CURDIR)/$(CPPGO) ./cmd/cppgo
@@ -70,25 +77,5 @@ $(CPPGO): | $(BUILD)
 $(BUILD):
 	@mkdir -p $(BUILD)
 
-## --- the limitation, on demand ---------------------------------------------
-
-# The header defines norm_squared() inside the class body, so it is implicitly
-# inline and the library exports no symbol for it. Bind it and the generator
-# must fail the build, with a message that says why — this is the target that
-# proves it, on a scratch copy so the real package is untouched.
-inline-demo: $(CPPGO) $(CDB)
-	@rm -rf $(BUILD)/inline-demo
-	@mkdir -p $(BUILD)/inline-demo
-	@cp -r include mathx.go $(BUILD)/inline-demo/
-	@printf '\n// NormSquared binds the member the header defines inline.\n//cppgo:method norm_squared\nfunc (v Vector) NormSquared() float64\n' \
-		>> $(BUILD)/inline-demo/mathx.go
-	@if out=$$($(CPPGO) gen -dir $(BUILD)/inline-demo -compile-commands $(CURDIR)/$(CDB) 2>&1); then \
-		printf 'FAILED: cppgo gen accepted an inline member:\n%s\n' "$$out"; exit 1; \
-	fi; \
-	printf 'cppgo gen refused it, as it must:\n'; \
-	printf '%s\n' "$$out" | sed 's/^/  /'; \
-	printf '%s\n' "$$out" | grep -q 'no symbol' || { \
-		printf 'FAILED: it failed for another reason (the message above does not mention "no symbol")\n'; exit 1; }
-
 clean:
-	rm -rf $(BUILD)
+	rm -rf $(BUILD) $(SHIM)
