@@ -322,8 +322,10 @@ Rules that the API shape follows:
   layouts, private members, non-POD members, and a layout libclang could not complete all take this
   path; **nothing is left unreachable** and nothing is refused.
 - **Members are modelled by kind.** A record carries its public data fields (`Field`: type, access,
-  byte offset); its constructors, destructor, methods and static member functions (`Record.Members`
-  for a specialisation, the project's symbols otherwise); **operators** (`Symbol.IsOperator`,
+  byte offset); its constructors, destructor, methods and static member functions — in
+  `Record.Members` for a synthesised specialisation, in the project's symbols for a full explicit
+  body and for non-template records (`Record.Synthesized` is the discriminator); **operators**
+  (`Symbol.IsOperator`,
   `Symbol.Operator`) and **conversion operators** (`Symbol.IsConversion`, target type in
   `Symbol.Result`); **static data members** (`Record.StaticFields`: type, access, `IsConst`, and the
   definition's mangled name when libclang names the instantiation's definition — empty for a

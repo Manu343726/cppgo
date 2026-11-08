@@ -90,8 +90,9 @@ The costs, stated rather than hidden:
   (`-rename`). That is input, not refusal: the construct itself is supported.
 - **A template specialisation is read from the most specific body there is**: a full explicit
   specialisation's own definition, else the best matching partial specialisation, else the primary.
-  Only an implicit instantiation, for which libclang emits no definition cursor, is synthesised, and
-  a layout is reported only when libclang completes the type (`Record.LayoutKnown`). The
+  An instantiation with no body of its own — an implicit instantiation, or an explicit
+  instantiation such as `template struct Box<int>;` — is synthesised (`Record.Synthesized`), and a
+  layout is reported only when libclang completes the type (`Record.LayoutKnown`). The
   specialisation is a member-bearing record either way; when the layout is unknown its Go value is
   opaque with field accessors instead of a mirrored struct. The same reading covers conversion
   operators, operators, static data members and nested types — records and enums alike; a member
