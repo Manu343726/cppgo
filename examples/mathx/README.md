@@ -1,4 +1,4 @@
-# mathx — one small class, header-first
+# mathx, one small class, header-first
 
 `mathx::Vector` is a C++17 class with a constructor, a destructor, an inline
 `const` accessor, ordinary `const` methods, a method that takes a slice, a method
@@ -6,7 +6,7 @@ that throws, a `noexcept` mutator and a static member. Beside it, `Point` is a
 16-byte POD passed by value and `saxpy` is the BLAS-shaped free function.
 
 None of that is annotated. The header and the source are an ordinary C++
-library; one `cppgo gen` reads the header and writes the Go API, the assembly
+library. One `cppgo gen` reads the header and writes the Go API, the assembly
 trampolines and the C++ shim, then compiles the shim itself. Go calls the C++
 with no `import "C"` and no cgo at build time.
 
@@ -16,12 +16,12 @@ $ make
 ```
 
 That builds `build/libmathx.so` with the project's own command, generates the
-binding, and runs the tests twice — with `CGO_ENABLED=0` and with
-`CGO_ENABLED=1` under the race detector — then `go vet`.
+binding, and runs the tests twice, with  `CGO_ENABLED=0` and with
+`CGO_ENABLED=1` under the race detector, then  `go vet`.
 
 ## The three artefacts
 
-The generated files are committed, so you can read what the generator produced
+The generated files are committed. You can read what the generator produced
 before running anything:
 
 | artefact | file | who builds it |
@@ -57,7 +57,7 @@ cppgo: built libcppgo_mathx.so with /usr/bin/g++
 Two carriers, one reason each:
 
 - **`direct`** calls `_ZN5mathx6Vector5scaleEd` in `libmathx.so` from a NOSPLIT
-  trampoline. Only `scale` qualifies: it is `noexcept`, defined out of line (so
+  trampoline. Only `scale` qualifies. It is `noexcept`, defined out of line (so
   the symbol exists), not virtual, and its arguments fit the System V registers.
 - **`thunk`** calls `cppgo_thunk_…` in `libcppgo_mathx.so`, which calls the
   declaration as C++ and converts what C++ cannot hand across the ABI. An
@@ -65,7 +65,7 @@ Two carriers, one reason each:
   (`midpoint`) and a destructor are all shim work.
 
 `x()` is the one that would have been impossible before v4: its body lives
-inside the class, so the library exports no symbol for it, but the shim includes
+inside the class, and the library exports no symbol for it. The shim includes
 the header and compiles the body into itself.
 
 ## The generated API
@@ -107,14 +107,14 @@ func Saxpy(a float64, x []float64, y []float64) error
 
 Three rules are visible in that list:
 
-- **no error is invented for a call that cannot fail.** `Scale` is `noexcept`,
-  so its Go signature is `func(k float64)` — not `(error)`, and no `error` that
-  is always nil.
+- **no error is invented for a call that cannot fail.** `Scale` is `noexcept`.
+  Its Go signature is `func(k float64)`, and there is no `error` that is always
+  nil.
 - **a call that can fail returns the value first and an `error` last.** `At` is
-  declared without `noexcept`, so the shim wraps it in `try`/`catch` and the
+  declared without `noexcept`. The shim wraps it in `try`/`catch` and the
   message the C++ exception carries arrives as a `*cppgo.CallError`.
-- **ownership is explicit.** `NewVector` returns an owning `*Vector`; `Close`
-  runs the destructor; a nil or closed value returns `cppgo.ErrClosed`, and the
+- **ownership is explicit.** `NewVector` returns an owning `*Vector`. `Close`
+  runs the destructor. A nil or closed value returns `cppgo.ErrClosed`, and the
   direct method, which has no error result, panics with the declaration's name.
 
 There is no `cppgo.Handle` in any signature. The object pointer is unexported
@@ -146,7 +146,7 @@ returns a non-zero status. The generated binding reads that status, copies the
 message out and returns `*cppgo.CallError` wrapping it. `TestThrowingMethod`
 asserts both the text and the symbol.
 
-`validate()` is the same mechanism with no value: it throws `std::runtime_error`
+`validate()` is the same mechanism with no value. It throws `std::runtime_error`
 for the zero vector, so its Go signature is only `error`. That makes the pair
 `Scale` (void, `noexcept`, no error) and `Validate` (void, throws, only an
 error) the clearest reading of the rule that a call which cannot fail gets no
@@ -154,7 +154,7 @@ error result.
 
 ### A POD by value
 
-`Point` is a 16-byte POD, so it is *mirrorable*: the generated Go struct has the
+`Point` is a 16-byte POD. It is *mirrorable*: the generated Go struct has the
 same fields, at the same offsets, and `zz_cppgo.gen.go` proves the size,
 alignment and offsets at compile time with `unsafe.Sizeof` assertions.
 
@@ -162,13 +162,13 @@ alignment and offsets at compile time with `unsafe.Sizeof` assertions.
 mid, err := Midpoint(Point{X: 0, Y: 0}, Point{X: 4, Y: 8}) // Point{X: 2, Y: 4}
 ```
 
-The shim copies the value into the call and the result back into Go storage;
+The shim copies the value into the call and the result back into Go storage.
 `TestPointByValue` checks the arithmetic.
 
 ### Slices are (pointer, length)
 
 `Vector::dot(const double *ys, std::size_t n)` becomes `Dot(ys []float64)`. The
-slice crosses as two arguments and is borrowed for the call; nothing is copied.
+slice crosses as two arguments and is borrowed for the call. Nothing is copied.
 `Saxpy(a, x, y)` does the same for two slices and refuses a length mismatch in
 Go before the call.
 
@@ -185,7 +185,7 @@ errors.Is(err, cppgo.ErrClosed) // true
 _, err = v.X()                  // ErrClosed: the object is gone
 ```
 
-`Close` is not idempotent-by-silence: a second call reports `cppgo.ErrClosed`
+`Close` is not idempotent-by-silence. A second call reports `cppgo.ErrClosed`
 instead of running the destructor twice. `TestCloseLifetime` checks the second
 close, a method on the closed value, and the panic of the direct method (the one
 binding with no error result to return).
@@ -194,9 +194,9 @@ binding with no error result to return).
 
 The generated package loads two objects:
 
-1. `libmathx.so`, the user's library;
+1. `libmathx.so`, the user's library.
 2. `libcppgo_mathx.so`, the shim, which names the first in its `DT_NEEDED`
-   entry by its **soname** — that is why the Makefile links with
+   entry by its **soname**, that is why the Makefile links with
    `-Wl,-soname,libmathx.so`.
 
 The loader does not search the current directory. The test sets both paths
@@ -210,8 +210,8 @@ mathx.Open("/opt/mathx/lib/libcppgo_mathx.so")
 `CPPGO_LIBRARY_PATH` overrides the first from the environment, and
 `CPPGO_MATHX_LIB` / `CPPGO_MATHX_SHIM` are what the Makefile passes the test.
 Opening the library before the shim is what makes the shim's `DT_NEEDED` name
-resolve to the object this process already holds; the shim also carries
-`-Wl,-rpath,$ORIGIN`, so the default deployment — both files in one directory —
+resolve to the object this process already holds. The shim also carries
+`-Wl,-rpath,$ORIGIN`. The default deployment, both files in one directory,
 needs no environment at all.
 
 ## Layout
@@ -231,7 +231,7 @@ examples/mathx/
 └── build/                      ignored: libmathx.so and the locally built cppgo
 ```
 
-The generated **sources** are committed on purpose: they are the teaching
+The generated **sources** are committed on purpose. They are the teaching
 material. `make gen` reproduces them and `make check` proves they are current:
 
 ```console
@@ -252,7 +252,7 @@ CompileFlags:
 
 Without it the generator falls back to `-std=c++17 -I<directory of the header>`
 and says the flags were an assumption. A project with a
-`compile_commands.json` can pass `-compile-commands` instead; the example uses
+`compile_commands.json` can pass `-compile-commands` instead. The example uses
 `.clangd` because it is one file and it is the same configuration an editor
 reads.
 
@@ -260,11 +260,11 @@ reads.
 
 - Go 1.25 or newer.
 - A C++17 compiler (`make CXX=clang++` works too).
-- libclang, because `cppgo gen` parses the header with it: on Debian/Ubuntu
+- libclang, because `cppgo gen` parses the header with it. On Debian/Ubuntu
   `sudo apt install clang libclang-dev`, on Arch `sudo pacman -S clang`.
 
-The Makefile builds its own `cppgo` from `../../cmd/cppgo` into `build/cppgo`, so
-no global install is needed.
+The Makefile builds its own `cppgo` from `../../cmd/cppgo` into `build/cppgo`.
+No global install is needed.
 
 ## Other targets
 

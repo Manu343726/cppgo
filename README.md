@@ -196,7 +196,7 @@ numbers, with the command and the clock caveat, are on
 | runtime root (`*.go`) | `cppgo.Open`, `OpenFS`, `Library`, `Object`, `CallReentrant`, the wire helpers and the error types |
 | [`docs/adr/`](docs/adr/) | the decisions that shaped the design, one per file |
 | [`site/`](site/) | the Hugo documentation site published at <https://manu343726.github.io/cppgo/> |
-| [`examples/`](examples/) | runnable bindings; being regenerated against the v4 emitter in issue #4 |
+| [`examples/`](examples/) | two complete v4 bindings, `mathx` and `stats`, each with its own `Makefile` |
 
 ## Build and test
 
