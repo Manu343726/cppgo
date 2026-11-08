@@ -20,7 +20,7 @@ Measured on **2026-11-03** with Go 1.27, on an 8-core x86-64 CPU **pinned to
 <span class="callout-title">Read the cycles</span>
 <p>
 Every nanosecond figure on this page was measured with the CPU deliberately
-pinned to 964&nbsp.MHz. The absolute times are inflated by roughly 4.5x by the
+pinned to 964 MHz. The absolute times are inflated by roughly 4.5x by the
 clock. <strong>cycles and ratios are the honest numbers</strong>. On a CPU
 running at its normal clocks the same code is several times faster in
 nanoseconds, with the same cycle counts.
