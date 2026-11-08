@@ -1,0 +1,12 @@
+# The error configuration of the prototype package.
+#
+# Only the conventions a signature cannot state need an entry. ns::parse_point
+# returns bool and reports its value and its failure through parameters, so this
+# is where the generator is told which is which; every other declaration in
+# testdata/errlib.hpp is inferred from its return type.
+errors:
+  "ns::parse_point":
+    kind: out_param
+    value: 1            # ns::Point *out
+    error: 2            # std::int32_t *status
+    type: ns::ParseStatus

@@ -147,7 +147,7 @@ func Discover(opts DiscoverOptions) (*Flags, error) {
 			if err != nil {
 				return nil, err
 			}
-			base = sanitizeArgs(argv, file)
+			base = sanitizeArgs(rebaseArgs(argv, entry.Directory), file)
 			flags.CompileDatabase = database
 			flags.Source = SourceCompileDatabase
 			flags.Detail = databaseDetail
@@ -195,6 +195,86 @@ var flagsTakingValue = map[string]bool{
 	"-include": true, "-imacros": true, "-isystem": true, "-iquote": true,
 	"-idirafter": true, "-I": true, "-D": true, "-U": true, "-x": true,
 	"-MF": true, "-MT": true, "-MQ": true, "-o": true,
+}
+
+// pathFlags are the arguments whose value is a path the compiler resolves
+// against its working directory.
+//
+// The include search paths are directories; -include and -imacros name files.
+// Both are rebased against the database entry's directory, which is the
+// directory the build ran in and therefore the directory the paths were written
+// for.
+var pathFlags = map[string]bool{
+	"-I": true, "-isystem": true, "-iquote": true, "-idirafter": true,
+	"-include": true, "-imacros": true,
+}
+
+// rebaseArgs makes a database entry's relative paths absolute against dir.
+//
+// A compile_commands.json is written for a build that runs in its entry's
+// `directory`: "-Iinclude" means "<directory>/include". clangd rebases every
+// such path when it reads the database; libclang does not, and a path resolved
+// against cppgo's own working directory points at a different tree. That does
+// not fail loudly — the parse simply cannot see the header's declarations, and
+// a declaration that resolves some other way is what gets bound. v3 shipped
+// that defect: a database entry with a relative -I produced a binding for
+// dyn::offset(int&, double, double) while the real ns::offset(Point&, ...) was
+// never seen.
+//
+// An absolute path, and a value that starts with "-" (as in gcc's "-I-"), are
+// left alone. Both the "-Ipath" and "-I path" spellings are handled, and every
+// other argument is copied unchanged.
+func rebaseArgs(args []string, dir string) []string {
+	if dir == "" {
+		return args
+	}
+
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// "-Ipath": the flag and its value in one word.
+		if flag, value, ok := splitPathFlag(arg); ok {
+			out = append(out, flag+rebasePath(value, dir))
+			continue
+		}
+
+		// "-I path": the value is the next word.
+		if pathFlags[arg] && i+1 < len(args) {
+			out = append(out, arg, rebasePath(args[i+1], dir))
+			i++
+			continue
+		}
+
+		out = append(out, arg)
+	}
+
+	return out
+}
+
+// splitPathFlag splits a joined path flag from its value: "-Iinclude" is
+// ("-I", "include", true) and "-isystem/usr/include" is
+// ("-isystem", "/usr/include", true). The longest flag wins, so "-isystem/x" is
+// not read as "-I" followed by "system/x".
+func splitPathFlag(arg string) (flag, value string, ok bool) {
+	for candidate := range pathFlags {
+		if len(arg) <= len(candidate) || !strings.HasPrefix(arg, candidate) {
+			continue
+		}
+		if !ok || len(candidate) > len(flag) {
+			flag, value, ok = candidate, arg[len(candidate):], true
+		}
+	}
+	return flag, value, ok
+}
+
+// rebasePath makes value absolute against dir, leaving absolute paths, paths
+// that begin with "-" (gcc's "-I-"), and empty values alone.
+func rebasePath(value, dir string) string {
+	if value == "" || strings.HasPrefix(value, "-") || filepath.IsAbs(value) {
+		return value
+	}
+	return filepath.Clean(filepath.Join(dir, value))
 }
 
 // sanitizeArgs drops the arguments that make sense for a compiler invocation
