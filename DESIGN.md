@@ -328,7 +328,7 @@ Rules that the API shape follows:
   `Symbol.Result`); **static data members** (`Record.StaticFields`: type, access, `IsConst`, and the
   definition's mangled name when libclang names the instantiation's definition — empty for a
   specialisation's static member, whose pattern mangling is not the instantiation's); **nested types**
-  as records of their own (`Outer::Inner`); and **member
+  as records of their own (`Outer::Inner`, plus nested enums); and **member
   function templates** as patterns (`Record.MemberTemplates`) plus the concrete instantiations the
   manifest names (`Project.InstantiateMember`). A member function template without an instantiation
   is not bindable, and the error names the `-instantiate` entry to add.
@@ -346,10 +346,12 @@ Rules that the API shape follows:
   user-declared constructor and every field trivially constructible: a scalar, pointer, enum, a
   fixed-size array of those, or a record the model classified as trivially copyable and POD or
   default-constructible. `IsCopyConstructible` is true for a non-deleted copy constructor, or no
-  user-declared copy/move constructor and every field trivially copyable by the same rule.
-  `Fixed<double,4>` (an array of doubles) qualifies; an array of a non-trivial record does not.
-  When they are false no `New`/`Clone` is generated, and the generated shim's compile is the final
-  check that a promise made is a promise kept.
+  user-declared copy/move constructor and every field trivially copyable by the same rule. The
+  field record's own layout need not be known: a record the model classified as trivially copyable
+  and POD or default-constructible qualifies even when `LayoutKnown` is false (a deferred
+  specialisation), and the generated shim's compile is the final check. `Fixed<double,4>` (an array
+  of doubles) qualifies; an array of a non-trivial record does not. When they are false no
+  `New`/`Clone` is generated.
 - **Class → Go struct with methods.** Methods call the thunk that performs real C++ dispatch, so a
   virtual method on a `*Shape` runs the most-derived override.
 - **Ownership and views.** An owning value carries the destructor of the type it was **constructed
@@ -569,7 +571,11 @@ reached through a one-line C++ wrapper with a representable signature.
   too. A destructor is never a collision: it *is* `Close`.
 - A **nested type** is the outer Go name followed by its own: `mathx::Operators::Entry` →
   `OperatorsEntry`, `mathx::Box<int>::Inner` → `BoxIntInner`; deeper nesting concatenates in order.
-  A collision needs `-rename`.
+  A nested **enum** is a type too: `mathx::Box<int>::Kind` → `BoxIntKind`, with constants
+  `<EnumName><Enumerator>` (`BoxIntKindA`, `BoxIntKindB`). Its underlying type and initializers are
+  taken from the instantiation; when an initializer is neither a literal nor a template parameter
+  the model reports `Enum.ConstantsKnown == false` and the generated enum carries no constants (an
+  explicit specialisation supplies them). A collision needs `-rename`.
 - A **conversion operator** is named after its target Go type: `operator int` → `Int()`,
   `operator double` → `Float64()`, `operator std::string` → `String()`, `operator bool` → `Bool()`;
   a record or pointer target is `As<RecordName>` (`operator mathx::Vector` → `AsVector`). A collision
@@ -590,9 +596,14 @@ reached through a one-line C++ wrapper with a representable signature.
   | `operator&` / `|` / `^` / `~` | `BitAnd` / `BitOr` / `BitXor` / `BitNot` | `operator&&` / `||` / `!` | `And` / `Or` / `Not` |
   | `operator+=`, `-=`, `*=`, … | `AddAssign`, `SubAssign`, `MulAssign`, … | `operator<<` / `>>` on a stream | `WriteTo` / `ReadFrom` |
 
-  `operator<<` and `operator>>` are `ShiftLeft`/`ShiftRight` when neither operand is a stream type.
-  `operator new`/`operator delete` are allocation hooks; the Go side allocates, so they are not bound
-  as ordinary members and need `-rename` if a caller really needs the C++ hook.
+  A **stream type** is `std::ostream`, `std::istream`, `std::wostream`, `std::wistream`, or a
+  `std::basic_ostream<C,T>` / `std::basic_istream<C,T>` specialisation, recognised by its **declaration
+  spelling** (libclang's canonical form of the `ostream` alias can resolve to `int`, so the spelling
+  is the reliable half; the model exposes `Param.IsStream()`). When either operand is a stream,
+  `operator<<`/`>>` are `WriteTo`/`ReadFrom`; otherwise `ShiftLeft`/`ShiftRight`.
+  `operator new`/`operator delete` are absent from the table on purpose — the Go side allocates — so
+  they follow the same single rule as any unlisted operator: a generation error unless `-rename`
+  names the binding.
 - A **static data member** is a package function `<Type><Field>()` returning the value (the getter
   copies for `std::string`/containers, per the type map; a non-mirrorable record is copied into a new
   owning Go value, and a `static T *` is borrowed by the pointer rule), and `<Type>Set<Field>(v)` only
