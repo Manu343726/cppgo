@@ -108,7 +108,7 @@ func init() {
 
 ## A pipeline skeleton
 
-```yaml
+```text
 # The five steps, whatever the CI system is:
 # 1. install or pull the pinned image (libclang >= 20, a C++17 compiler, Go)
 # 2. build the C++ library with the project's own build

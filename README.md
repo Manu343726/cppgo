@@ -55,7 +55,9 @@ and has no libclang dependency; a test enforces that split.
 
 ## Quick start
 
-Build the generator and run the example, which is a small C++17 class:
+Build the generator and run the example, which is a small C++17 class. The
+example builds its own `cppgo`, so `bin/cppgo` is the one you use on your own
+project:
 
 ```console
 $ make build                     # bin/cppgo, with CGO_ENABLED=0
