@@ -35,7 +35,24 @@ vendored. The cross-references to the sibling skills `golang-naming` and
 same collection and are only reachable where that whole collection is
 installed.
 
-Nothing was edited. Any divergence from upstream is a defect in this copy.
+Nothing was edited, with one local exception described below. Any other
+divergence from upstream is a defect in this copy.
+
+## Local addition
+
+The repository adds a pointer to its own documentation rules near the top of
+`SKILL.md`, between the frontmatter and the persona paragraph:
+
+```markdown
+> **Read first:** [`../extra/documentation-rules.md`](../extra/documentation-rules.md).
+> Those rules extend this skill and win over its text wherever the two disagree.
+```
+
+That line is the whole local difference, so `git hash-object` on
+`.agents/skills/golang-documentation/SKILL.md` no longer reproduces the upstream
+blob id in the table above; the other vendored files are untouched.
+[`../extra/documentation-rules.md`](../extra/documentation-rules.md) is written in
+this repository, not vendored.
 
 ## Using it
 
@@ -47,6 +64,7 @@ follow-up workstream, not here.
 ## Updating
 
 Re-copy the files from a newer upstream commit, check every `git hash-object`
-against the ids the upstream tree reports, and update the table. An update that
+against the ids the upstream tree reports — comparing `SKILL.md` with the local
+pointer line removed — update the table, and re-add the pointer. An update that
 changes what a doc comment may look like belongs in its own commit, separate
 from any comment rewrite it triggers.

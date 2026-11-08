@@ -4,15 +4,11 @@ description: "The two-phase flow: cppgo gen writes the generic API, cppgo build 
 weight: 20
 ---
 
-A C++ template does not exist until it is instantiated. `std::vector<int>` and
-`std::vector<double>` are two different types with two different pieces of
-machine code, and which ones your program needs is a property of the *Go*
-program, not of the header.
-
-That is why templates take two phases. Phase one writes the generic Go API,
-which compiles without any concrete type. Phase two reads the program, collects
-the instantiations it actually uses, and emits the matching C++ specialisations
-into the shim.
+A C++ template only exists where it is instantiated, so a template library takes
+two commands: one writes the generic Go API, and one reads your program and
+provides the concrete types it uses. The reason for the split is
+[in Architecture]({{< ref "explanation/architecture.md" >}}#templates-why-two-phases);
+this page is the procedure.
 
 ## Phase one: generate the generic API
 
@@ -21,9 +17,7 @@ $ cppgo gen -header include/box.hpp -package box -out ./box
 ```
 
 For a class template the generated package declares a Go generic type; for a
-function template, a generic function. This is from the generator's golden file
-for `testdata/box/box.hpp`
-([`internal/gen/testdata/golden/box/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/golden/box/zz_cppgo.gen.go)):
+function template, a generic function:
 
 ```go
 // Box is box::Box<T>: the generic API. The concrete specializations are the ones
@@ -37,15 +31,14 @@ type Box[T any] struct {
 // C++: box::Box::Box<T>(T), two-phase template
 func NewBox[T any](value T) (*Box[T], error)
 
-// Get calls box::Box<T>::get.
+// Get calls box::Box::get.
 func (b *Box[T]) Get() (T, error)
 
-// Set calls box::Box<T>::set.
+// Set calls box::Box::set.
 func (b *Box[T]) Set(value T) error
 ```
 
-This package compiles and `go vet` passes with no instantiation at all. At this
-point the shim has no thunks for any `Box<T>`.
+This package compiles and `go vet` passes with no instantiation at all.
 
 A non-type template parameter has no Go equivalent, so a fixed dimension is a
 *phantom type*: `D1` through `D8` name the C++ values 1 to 8, and `Dynamic`
@@ -58,19 +51,12 @@ names a runtime dimension. `Eigen::Matrix<double, 4, 4>` is
 $ cppgo build -header include/box.hpp -package box -out ./box -scan ./cmd/mytool
 ```
 
-`cppgo build` loads the package named by `-scan` with `go/packages`, reads the
-type arguments at every use of the generic API, and for each specialisation
-writes the explicit instantiation into the shim's source:
-
-```cpp
-template struct ::box::Box<int>;
-```
-
-plus one thunk per member the program uses, then compiles the shim. `-scan` is
+`cppgo build` reads the Go package named by `-scan`, finds every use of the
+generic API, and provides each concrete type to the C++ side. `-scan` is
 repeatable and `-scan-dir` sets the directory the patterns resolve against.
 
-A Go instantiation with no C++ counterpart does not reach a nil call. It fails
-when it is used, and the error names the line to add:
+If your program uses a type that the C++ side does not have, the failure names
+the line to add:
 
 ```
 cppgo: box::Box[int32] has no C++ instantiation in the shim: add
@@ -78,13 +64,13 @@ cppgo: box::Box[int32] has no C++ instantiation in the shim: add
 `cppgo build -scan <package>`: cppgo: symbol "cppgo_tmpl_...": not found
 ```
 
-Add the line to the header, or pass it as `-instantiate 'box::Box<int32>'` and
-make the header declare it; the two are the same input, and the flag exists for
-a header you would rather not edit.
+Add that line to the header, or pass the same specialisation as
+`-instantiate 'box::Box<int32>'` and make the header declare it; the two are the
+same input, and the flag exists for a header you would rather not edit.
 
 ## Checking in CI
 
-`cppgo check` accepts the same `-scan` patterns, because the shim's source
+`cppgo check` accepts the same `-scan` patterns, because the generated C++ side
 depends on the program's instantiations. Compare like with like:
 
 ```console
@@ -103,9 +89,8 @@ $ cppgo check -header include/box.hpp -package box -out ./box -scan ./cmd/mytool
 
 Those are the generics/operators/inheritance items of the wider generator work,
 not a configuration you have missed. The
-[limits page]({{< ref "explanation/limits.md" >}}) lists each one with the test
-that pins it, and the Eigen target slice, which the two-phase flow exists for, is
-designed and not shipped: see [Design decisions]({{< ref "explanation/decisions.md" >}}).
+[limits page]({{< ref "explanation/limits.md" >}}) lists each one, and the Eigen
+target slice, which the two-phase flow exists for, is designed and not shipped.
 
 ## Related
 
