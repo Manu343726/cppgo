@@ -6,8 +6,8 @@ import (
 )
 
 // ExceptionSpec is the C++ exception specification a declaration carries. It
-// is what decides whether a binding can take the direct path: a direct call has
-// no handler, so only a declaration that promises not to throw may use it.
+// decides whether a binding can take the direct path. A direct call has no
+// handler, and only a declaration that promises not to throw may use it.
 type ExceptionSpec uint8
 
 const (
@@ -85,8 +85,8 @@ func TemplateArgumentKindFromLibclang(kind int32) TemplateArgumentKind {
 	}
 }
 
-// TemplateArgumentKind is what one template argument is: a type, an integral
-// value, a template, an expression, or a pack.
+// TemplateArgumentKind is what one template argument is. It is a type, an
+// integral value, a template, an expression, or a pack.
 type TemplateArgumentKind uint8
 
 const (

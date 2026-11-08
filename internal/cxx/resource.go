@@ -66,9 +66,9 @@ func resourceDir(libPath string) string {
 // ResourceDir is the clang resource directory this handle's installation uses,
 // or "" when it cannot be found. A caller that has to resolve builtin headers
 // (the generated shim's self-check, and any translation unit that includes
-// them) prepends "-resource-dir <dir>" to its parse arguments: unlike a
-// clang driver invocation, libclang loaded as a shared object does not add it
-// by itself.
+// them) prepends "-resource-dir <dir>" to its parse arguments. A clang driver
+// invocation adds that flag itself, while libclang loaded as a shared object
+// leaves it to the caller.
 func (l *Libclang) ResourceDir() string { return resourceDir(l.path) }
 
 // withResourceDir adds -resource-dir when the arguments do not already name one
