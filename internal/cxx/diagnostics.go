@@ -63,7 +63,7 @@ type Diagnostic struct {
 
 // Diagnostics returns the messages of the translation unit, in the order the
 // compiler produced them. It is what lets the generator prove that a shim it is
-// about to write compiles: an Error or Fatal diagnostic is a generation error.
+// about to write compiles. An Error or Fatal diagnostic is a generation error.
 func (tu *TU) Diagnostics() []Diagnostic {
 	if tu.isClosed() {
 		return nil

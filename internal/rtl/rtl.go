@@ -1,16 +1,16 @@
 // Package rtl is the dynamic-loader shim cppgo is built on.
 //
 // It wraps dlopen/dlsym/dlclose as exposed by github.com/ebitengine/purego and
-// adds two things cppgo needs: errors that say which library and which symbol
-// failed, and a documented way to turn a symbol address into an
-// unsafe.Pointer without tripping go vet's unsafeptr check.
+// adds two things cppgo needs. One is errors that say which library and which
+// symbol failed, and the other is a documented way to turn a symbol address
+// into an unsafe.Pointer without tripping go vet's unsafeptr check.
 //
 // Only purego's dynamic-loader entry points are used. Its calling convention
-// (RegisterFunc, SyscallN and friends) is explicitly *not* used: cppgo enters
-// the C ABI from its own assembly trampolines.
+// (RegisterFunc, SyscallN and friends) goes unused, because cppgo enters the C
+// ABI from its own assembly trampolines.
 //
-// A Library is not safe for concurrent use on its own; the cppgo package wraps
-// it in a RWMutex. dlopen/dlsym themselves are thread-safe in glibc.
+// A Library carries no lock of its own. The cppgo package wraps it in an
+// RWMutex. dlopen/dlsym themselves are thread-safe in glibc.
 package rtl
 
 import (
@@ -35,8 +35,7 @@ var (
 )
 
 // The loader entry points, kept in variables so tests can exercise the failure
-// branches of a system call that will not fail on demand. Nothing outside this
-// package can reach them.
+// branches of a system call that will not fail on demand. They are unexported.
 var (
 	dlopen  = purego.Dlopen
 	dlsym   = purego.Dlsym
@@ -82,8 +81,8 @@ type Library struct {
 
 // Open loads the shared object at path.
 //
-// An empty path is rejected: dlopen("") would silently return the main
-// program's handle, which is never what a caller of Open means.
+// An empty path is rejected. dlopen("") would silently return the main
+// program's handle, and that is never what a caller of Open means.
 func Open(path string) (*Library, error) {
 	if path == "" {
 		return nil, &Error{Op: "dlopen", Err: errEmptyPath}
@@ -102,7 +101,7 @@ func (l *Library) Path() string { return l.path }
 
 // Symbol resolves name to its address in the library.
 //
-// The error is always an *Error; when the library has been closed it wraps
+// The error is always an *Error. When the library has been closed it wraps
 // ErrClosed.
 func (l *Library) Symbol(name string) (uintptr, error) {
 	if l.closed {
@@ -120,8 +119,8 @@ func (l *Library) Symbol(name string) (uintptr, error) {
 	return addr, nil
 }
 
-// Close unloads the library. Closing twice is an error wrapping ErrClosed, so
-// a double Close is never silently ignored.
+// Close unloads the library. Closing twice is an error wrapping ErrClosed. A
+// double Close is therefore always reported.
 func (l *Library) Close() error {
 	if l.closed {
 		return &Error{Op: "dlclose", Path: l.path, Err: ErrClosed}
@@ -142,17 +141,17 @@ func (l *Library) Close() error {
 // foreign library, never into Go memory. Converting them with
 // unsafe.Pointer(uintptr) is exactly what is meant, but go vet's unsafeptr
 // check cannot know that and rejects the conversion. Reading the bits through
-// a *uintptr performs the same conversion and states the intent: this is not a
-// Go pointer that the garbage collector should track.
+// a *uintptr performs the same conversion and states the intent. The result
+// points outside the Go heap, and the garbage collector tracks only Go memory.
 func Pointer(addr uintptr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&addr))
 }
 
 // GoString copies the NUL-terminated C string at addr into a Go string. A zero
-// address is the empty string, so a library that returns NULL from its error
-// accessor reports no error.
+// address is the empty string. A library that returns NULL from its error
+// accessor therefore reports no error.
 //
-// The copy happens immediately: the C string itself is typically only valid
+// The copy happens immediately. The C string itself is typically only valid
 // until the next call into the library.
 func GoString(addr uintptr) string {
 	p := Pointer(addr)

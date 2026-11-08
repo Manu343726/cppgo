@@ -62,9 +62,11 @@ func TestGenerateWritesAndCheckAccepts(t *testing.T) {
 	cfg.Report = io.Discard
 	require.NoError(t, Generate(cfg))
 	for _, name := range []string{GenFileName, AsmFileName, ShimHeaderFileName, ShimSourceFileName} {
-		_, err := os.Stat(filepath.Join(dir, name))
+		_, err := os.Stat(outputPath(dir, name))
 		require.NoError(t, err, name)
 	}
+	_, err := os.Stat(filepath.Join(dir, ShimLibraryName("mathx")))
+	require.NoError(t, err, "the shim cppgo compiled is written beside the package")
 	check := cfg
 	check.Check = true
 	require.NoError(t, Generate(check))
@@ -86,7 +88,7 @@ func TestCheckReportsStaleFiles(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), GenFileName)
 
-	require.NoError(t, os.Remove(filepath.Join(dir, ShimHeaderFileName)))
+	require.NoError(t, os.Remove(outputPath(dir, ShimHeaderFileName)))
 	err = Generate(check)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), ShimHeaderFileName)
@@ -124,7 +126,7 @@ func TestRenderErrors(t *testing.T) {
 	}{
 		{"no header", Config{Package: "p", Library: "l"}, "-header is required"},
 		{"bad package", Config{Headers: []string{"testdata/mathx/vector.hpp"}, Package: "9bad", Library: "l"}, "not a valid Go package name"},
-		{"no library", Config{Headers: []string{"testdata/mathx/vector.hpp"}, Package: "p"}, "-library is required"},
+		{"no library for a direct binding", Config{Headers: []string{"testdata/mathx/vector.hpp"}, Package: "p"}, "a direct binding needs -library"},
 		{"missing header", Config{Headers: []string{"testdata/nope.hpp"}, Package: "p", Library: "l"}, "nope.hpp"},
 	}
 	for _, tc := range cases {
@@ -191,4 +193,13 @@ func TestReportAndWarnings(t *testing.T) {
 	assert.True(t, hasThunk, "the report must name the thunk carrier")
 	require.NotEmpty(t, result.Warnings)
 	assert.Contains(t, strings.Join(result.Warnings, "\n"), "assumption")
+}
+
+// outputPath is where a generated file lands under dir: the shim's sources live
+// one level down, because a Go package directory may not contain C++.
+func outputPath(dir, name string) string {
+	if name == ShimHeaderFileName || name == ShimSourceFileName {
+		return ShimPath(dir, name)
+	}
+	return filepath.Join(dir, name)
 }

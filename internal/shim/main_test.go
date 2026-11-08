@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The two artefacts are built once per test binary: compiling them is the point
+// The two artifacts are built once per test binary: compiling them is the point
 // of the fixture, not something each test should pay for.
 var (
 	buildOnce sync.Once
@@ -46,7 +46,7 @@ func buildFixture() (string, error) {
 	return dir, nil
 }
 
-// TestMain removes the built artefacts once the suite is done.
+// TestMain removes the built artifacts once the suite is done.
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if buildDir != "" {

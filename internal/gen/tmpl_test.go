@@ -106,7 +106,7 @@ func TestInstantiateShimCompiles(t *testing.T) {
 	library := filepath.Join(out, "libtmpl.so")
 	args := []string{"-std=c++17", "-O1", "-fPIC", "-shared", "-I" + cwd,
 		filepath.Join(cwd, "testdata", "tmpl", "cell.cpp"),
-		filepath.Join(out, ShimSourceFileName), "-o", library}
+		ShimPath(out, ShimSourceFileName), "-o", library}
 	output, err := exec.Command(gxx, args...).CombinedOutput()
 	require.NoErrorf(t, err, "g++ rejected the template shim:\n%s", output)
 

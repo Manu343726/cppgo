@@ -1,251 +1,198 @@
 +++
-title = "When the generator refuses"
-description = "Read the error, find the cause in the C++ declaration, and choose between moving a definition out of line, changing the signature, or falling back to shim mode. Three worked refusals."
+title = "When generation refuses"
+description = "Read the error, decide whether it is a construct this build does not emit, a manifest entry that names nothing, or a shim the compiler rejected — and what to do about each."
 weight = 40
 +++
 
-The direct ABI mode is a validator before it is a code generator. When it
-refuses a binding, the refusal is the feature: the alternative is a trampoline
-that fails at load time or, worse, calls the wrong address. The skill is reading
-the message and picking the cheapest real fix.
+The generator refuses rather than emitting a call it cannot explain. Every
+refusal writes no output, names the file, the line and the declaration, and ends
+with the thing to supply. The skill is reading which of three kinds it is.
 
-There are only three fixes:
+**Audience:** a `cppgo gen` run that failed.
 
-1. **Move the definition out of line** — the binding was possible, the symbol was
-   not exported.
-2. **Change the signature** — the Go declaration described something the C++ side
-   does not say.
-3. **Use shim mode** — the construct is outside what the direct ABI can express
-   (virtual dispatch, a by-value class, a `std::` type, a throw).
+## The three kinds
 
-Everything below is one of those three.
+1. **A construct this build omits today.** Enums, inheritance, operators,
+   variadic functions, nested types, templates without `-instantiate`. The fix
+   is in the C++ surface (move it, wrap it, name it) or the construct's turn in
+   the emitter.
+2. **A manifest entry that names no declaration.** `-bind`, `-exclude`,
+   `-instantiate`, `-rename` and `-status` are checked against what the parse
+   saw. An unmatched entry is an error.
+3. **A shim the compiler rejected.** The C++ generated for the thunks did not
+   compile, because the flags or the compiler do not match the header.
 
-## Case 1: the accessor defined in the class
+There is no fourth kind and no override. v4 has no `-force` and no mode to opt
+into. A construct is emitted or it is refused.
+
+## Case 1: an enum
 
 ```cpp
-class Vector {
-public:
-    double norm() const;              // declared
-    double x() const { return x_; }   // defined inline
-private:
-    double x_, y_;
-};
+enum class Unit { Metre, Foot };
 ```
+
+```
+cppgo gen: cppgo: include/mathx/add.hpp:5: mathx::Unit: enums are not emitted
+by this build yet; pass the value as its underlying integer at the C++ boundary
+```
+
+**What it means.** Enums have no Go type yet. The refusal is checked before
+selection. An enum anywhere in the parsed headers fails the run even if you did not bind it. Splitting the header is the workaround that keeps the rest
+bindable.
+
+**The fix today.** Pass the value as an integer at the C++ boundary. Change the
+signature to take the underlying type, or wrap the call in a named function that
+does.
+
+## Case 2: inheritance
+
+```cpp
+class Base { public: virtual ~Base(); };
+class Derived : public Base { public: ~Derived() override; };
+```
+
+```
+cppgo gen: cppgo: include/inherit.hpp:4: refuse::Derived: inherited members and
+base views are not emitted by this build yet; bind the base class directly, or
+expose the derived members through a C++ wrapper
+```
+
+**What it means.** `As<Base>()`, virtual dispatch across the hierarchy and
+`this` adjustment are designed, not emitted. The direct carrier cannot dispatch
+a virtual call, and the generated API has no way to express the base view yet.
+
+**The fix today.** Bind the base class directly (its methods are signatures on
+their own), or expose the derived members through a named free function that
+takes the concrete type. A wrapper function is one line of C++ and keeps the
+generated package honest.
+
+## Case 3: a class template
+
+```
+cppgo gen: cppgo: cell.hpp:9: tmpl::Cell: a class template is not a type until
+it is instantiated; name a concrete instantiation with -instantiate 'tmpl::Cell<...>'
+```
+
+**What it means.** A C++ template has no layout and no symbol until it is
+instantiated. Name the specialisation, and make it visible to the parse (an
+explicit instantiation such as `template class Cell<int>;`):
+
+```console
+$ cppgo gen -header include/tmpl/cell.hpp -package tmpl \
+      -library build/libcell.so -out ./tmpl \
+      -instantiate 'tmpl::Cell<int>' -instantiate 'tmpl::Cell<double>'
+```
+
+The generated API is concrete:
 
 ```go
-//cppgo:method x
-func (v Vector) X() float64
+func NewCellInt(value int32) (*CellInt, error)
+func (c *CellInt) Get() (int32, error)
+func (c *CellInt) Set(value int32) error
+func (c *CellInt) Close() error
 ```
 
+The generic Go API (`Cell[T]`) and the collection of instantiations a Go program
+uses are the next phase. The concrete package above is what this build emits.
+
+## Case 4: an operator
+
 ```
-mathx.go:31: mathx::Vector::x: it is defined inside its class definition or has
-internal linkage, so it is implicitly inline and the library exports no symbol
-for it: move the definition out into a source file and rebuild, or bind it
-through the shim mode
+cppgo gen: cppgo: operators.hpp:4: refuse::operator+(const Num &, const Num &):
+operators and conversion operators are not emitted by this build yet; give it a
+named member function or a named free function
 ```
 
-**What it means.** A member defined inside its class definition is implicitly
-inline. The compiler is not required to emit an out-of-line body, and in practice
-does not, so the library's dynamic symbol table has no entry for it. `dlsym`
-would fail at run time.
-
-**Option A — move it out of line.** This is the fix, and it costs one line in
-each file:
+**What it means.** `operator+` has a symbol, but the Go name it should take is a
+design decision this build has not made. The fix is to name it:
 
 ```cpp
-// header
-double x() const;
-
-// source
-double Vector::x() const { return x_; }
+Num add(const Num &a, const Num &b);
 ```
 
-Rebuild the `.so`, regenerate, and the report now shows
-`mathx::Vector::x mangled _ZNK5mathx6Vector1xEv`.
-
-**Option B — an out-of-line factory.** If the header is a third-party SDK you
-cannot edit, wrap it:
-
-```cpp
-// your header
-double vector_x(const mathx::Vector &v);
-// your source
-double vector_x(const mathx::Vector &v) { return v.x(); }
-```
-
-Bind the factory with `//cppgo:function vector_x`. The inline call happens
-inside your translation unit, where the definition is visible.
-
-**Option C — shim mode.** The same idea with an `extern "C"` entry point:
-`extern "C" double mathx_vector_x(void *v) { return static_cast<Vector*>(v)->x(); }`.
-Choose this only if you are already in shim mode for other reasons; a factory is
-less machinery.
-
-**Do not `-force` this one.** The parse is right: there is no symbol. `-force`
-would emit a trampoline that panics on the first call.
-
-## Case 2: a virtual function
-
-```cpp
-class Shape {
-public:
-    virtual ~Shape();
-    virtual double area() const = 0;
-    int id() const;
-};
-```
-
-```go
-//cppgo:method area
-func (s Shape) Area() float64
-```
+## Case 5: a variadic function
 
 ```
-mathx.go:44: mathx::Shape::area: it is virtual: the call has to go through the
-vtable to reach an override, so a fixed symbol cannot be called directly; use
-the shim mode, or bind a non-virtual member
+cppgo gen: cppgo: variadic.hpp:3: refuse::sum(int): a variadic function has no
+fixed argument list to lay out; replace the ellipsis with a fixed parameter list
+or a span
 ```
 
-**What it means.** A mangled symbol names one function body. A virtual call reads
-the object's vtable and dispatches to the override for the dynamic type. Calling
-the base's symbol directly would silently ignore the override.
+**What it means.** `...` has no fixed register layout. There is no call to
+emit. Take a slice (`const double *values, std::size_t n`) or a `std::span`.
 
-**The fix is shim mode.** There is no signature change that makes a virtual call
-non-virtual, and the definition is already out of line. The shim calls
-`s->area()` normally; the C++ compiler emits the dispatch:
-
-```cpp
-extern "C" int32_t mathx_shape_area(void *obj, double *out) {
-    *out = static_cast<mathx::Shape *>(obj)->area();
-    return 0;
-}
-```
-
-If you only need the base implementation, a non-virtual member or a free
-function that calls `Base::area()` explicitly is also correct — but it is a
-different function, and the Go name should say so.
-
-## Case 3: a `std::` type by value
-
-```cpp
-std::string Vector::describe() const;
-```
-
-```go
-//cppgo:method describe
-func (v Vector) Describe() string
-```
+## Case 6: a nested type
 
 ```
-mathx.go:52: mathx::Vector::describe: it returns "std::string" by value: a
-standard-library type: use the shim mode
+cppgo gen: cppgo: nested.hpp:3: refuse::Outer::Inner: a type nested inside a
+record is not emitted by this build yet; move the nested type to namespace
+scope, or bind the outer type through a C++ wrapper
 ```
 
-**What it means.** `std::string` is not one pointer. It is an object with its own
-layout and lifetime, and the direct mode has no shim to construct or destroy it.
-A Go `string` also cannot be returned: the C++ side cannot allocate Go memory.
+**What it means.** The Go name of `Outer::Inner` and its relationship to
+`Outer` are part of the same unmade design decision as inheritance. Move it to
+namespace scope in the header, or expose what you need through a function.
 
-**Option A — change the signature.** Return the two things that cross cleanly:
+## Case 7: the shim does not compile
 
-```cpp
-std::size_t Vector::describe(char *out, std::size_t cap) const;
-```
-
-```go
-//cppgo:method describe
-func (v Vector) Describe(out []byte) int64
-```
-
-The caller allocates, the callee writes at most `cap` bytes and returns the
-length. That is the same caller-owned-buffer shape as [bulk
-data]({{< ref "tutorials/bulk-data.md" >}}), and it avoids the allocation
-entirely.
-
-**Option B — shim mode.** The shim owns the `std::string`, copies it into a
-caller buffer (or returns a `malloc`'d buffer and a free function), and converts
-the failure. This is the honest choice when the C++ API is `std::string` all the
-way down and you cannot change it.
-
-**What not to do:** declare the Go result as `string` and `-force` it. The
-generated trampoline would read a `std::string` object as the two words of a Go
-string header, which is not a pointer/length pair at all.
-
-## Case 4: a class returned by value
-
-```cpp
-Vector Vector::scaled(double k) const;   // returns Vector by value
-```
+A real one, from a header that declares `cppgo_last_error` itself for its own
+status convention:
 
 ```
-mathx.go:60: mathx::Vector::scaled: it returns Vector by value: the Itanium ABI
-brings a class back through a hidden sret pointer, which the direct ABI mode
-does not emit in v1 (the trampoline layout reserves the slot ...) — use the shim
-mode for this binding
+cppgo gen: cppgo: zz_cppgo_shim.cpp:35: cppgo_last_error: the generated shim
+does not compile; invalid conversion from 'const char*' to 'const int8_t*'
+{aka 'const signed char*'} [-fpermissive]
+(compiler: g++ -std=c++17 … -shared -o …)
 ```
 
-**What it means.** A class result is built in caller-provided storage and passed
-back through a hidden first pointer. Direct-ABI v1 reserves the slot in the
-layout so `this` still lands where the ABI expects, but it does not emit the
-call. This is a v1 limitation, not a mistake in your declaration (see
-[limitations]({{< ref "project/limitations.md" >}})).
+**What it means.** The header declares the accessor the shim itself defines, and
+the generator tried to bind it as an ordinary function. The diagnostic is the
+compiler's, and cppgo re-compiled the thunks one at a time to name the binding.
 
-**The fixes:**
+**The fix.** Exclude the infrastructure symbol:
 
-- **Change the signature** so nothing is returned by value: write into storage
-  the caller already owns. A member declared
-  `void scaled_into(double k, void *out) const` can be bound as
-  `func (v Vector) ScaledInto(k float64, out cppgo.Handle)`, with `out` coming
-  from a constructor. The C++ side placement-constructs into it.
-- **Shim mode**, where the shim owns the destination and the generated wrapper
-  hands it the storage Go allocated.
+```console
+$ cppgo gen -header include/stats/stats.hpp -package stats \
+      -library build/libstats.so -out ./stats \
+      -status stats::histogram -exclude cppgo_last_error
+```
+
+More generally, a shim compile error means the flags or the compiler do not
+match the header. Pass `-compile-commands`, choose the library's compiler with
+`-cxx`, and check that the header is self-contained. See
+[troubleshooting]({{< ref "manual/troubleshooting.md" >}}).
+
+## Manifest mistakes
+
+| symptom | cause | fix |
+|---|---|---|
+| *`-bind X: it names nothing this header declares`* | typo, namespace alias, or a declaration in a system header | check the qualified name; move the include |
+| *`-instantiate X: it names no instantiation this header declares`* | the explicit instantiation is not visible to the parse | add `template class X<...>;` to the header |
+| *`-rename X: it must be <qualified signature>=<GoName>`* | the entry has no `=` or an empty side | write both sides |
+| *`-rename X: it names 2 declarations; use the full signature`* | the name is an overload set | name the full signature |
+| *`A and B both map to Go name X; rename one`* | a collision the overload suffix did not separate | `-rename` one of them |
+| *`-status X: the return type is double, and a status is a 32-bit integer`* | the function does not return `int32_t` | name the function that does |
 
 ## The decision procedure
 
-When the generator refuses, ask in this order:
+When a run fails, ask in this order:
 
-1. **Does the message say "no symbol" / "inline"?** Move the definition out of
-   line. If you cannot edit the header, add a factory. If neither, shim.
-2. **Does it say "virtual", "std::", "by value", or "template"?** The construct is
-   outside the mode. Shim mode, unless you can change the C++ signature to
-   something that crosses (pointer + length, out-parameter, integer status).
-3. **Does it say "width", "register class", "arity" or "register"?** The Go
-   declaration is wrong. Fix it: match the width, match the register class,
-   expand slices into pointer + length, group arguments.
-4. **Does it say "not declared"?** The header/libclang did not see it. Check the
-   compilation flags first — a fallback parse is the usual cause — then the
-   namespace and the linkage.
-5. **Does it say "-force"?** It does not; that is your decision, and it is only
-   right when the *parse* is wrong, never when the code is.
+1. **Does the message name a construct from [the refusal
+   list]({{< ref "manual/validation.md" >}})?** The second half of the message
+   is the fix. An integer at the boundary, a named function, a concrete
+   `-instantiate`, a slice instead of `...`.
+2. **Does it name a flag entry?** The entry fails to match the parse. Fix the
+   name, or make the declaration visible (flags, include, explicit
+   instantiation).
+3. **Does it say the generated shim fails to compile?** The parse and the
+   compile disagree about flags, compiler or a self-contained header. Fix those
+   first. Do not change the C++ API to satisfy a guessed flag set.
+4. **Does it name a file and line in a header you do not own?** The construct is
+   in a third-party header. Wrap the part you need in a small header of your
+   own, a named function, a concrete type, and bind that.
 
-| message contains | cause | answer |
-|---|---|---|
-| inline / internal linkage / no symbol | no dynamic symbol | out of line, factory, or shim |
-| virtual | vtable dispatch | shim |
-| `std::` | non-POD by value | change signature or shim |
-| struct/class by value (param or result) | aggregate ABI | pointer/out-param, or shim |
-| no mangled name | template, never instantiated | explicit instantiation, or shim |
-| width / register class | Go type is wrong | change the Go type |
-| arity | slice/string expansion miscounted | one slice = pointer + length |
-| register exhaustion | more than 6 integer / 8 XMM | group into a struct pointer |
-| not declared | flags, namespace, linkage | fix `compile_commands.json` |
-
-## Reading the error's shape
-
-Every refusal is prefixed with `file:line:` and the qualified C++ name:
-
-```
-./bindings/mathx/mathx.go:44: mathx::Shape::area: it is virtual: ...
-```
-
-- The **file and line** point at the Go directive, not at C++.
-- The **qualified name** is what the generator resolved *to*; if it is not the
-  entity you meant, the directive is naming the wrong thing.
-- The **rest** is one sentence of cause and one of remedy. The remedy is written
-  to be actionable, not to be exhaustive.
-
-If the message names a type whose spelling surprises you (`"long"` where you
-expected `"int"`), the parse may have used the wrong flags. Regenerate with
-`-compile-commands` before changing any code.
+The run prints no report, because it emitted no files. The
+error is the whole answer.
 
 Back to the [manual]({{< ref "manual/_index.md" >}}), or read the same failures
 by symptom in [troubleshooting]({{< ref "manual/troubleshooting.md" >}}).

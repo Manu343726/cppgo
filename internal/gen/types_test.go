@@ -283,7 +283,7 @@ func TestStdTypeName(t *testing.T) {
 	assert.Equal(t, "std::vector<double>", name)
 }
 
-// TestMissingRecordFix checks that a specialisation error names -instantiate.
+// TestMissingRecordFix checks that a specialization error names -instantiate.
 func TestMissingRecordFix(t *testing.T) {
 	specialization := missingRecord(cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Box<int>", RecordName: "mathx::Box<int>"})
 	assert.Contains(t, specialization.Error(), "-instantiate 'mathx::Box<int>'")

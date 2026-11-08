@@ -2,12 +2,12 @@
 
 #include "textflag.h"
 
-// func cppgo__ZN5stats11count_aboveEPKdmd(fn uintptr, a0 unsafe.Pointer, a0_len uintptr, a1 float64) (ret int64)
-TEXT ·cppgo__ZN5stats11count_aboveEPKdmd(SB), NOSPLIT, $0-40
+// func cppgoCall_9d180ac7d919(fn uintptr, a0 unsafe.Pointer, a1 uint64, a2 float64) uint64
+TEXT ·cppgoCall_9d180ac7d919(SB), NOSPLIT, $0-40
 	MOVQ	fn+0(FP), R12
 	MOVQ	a0+8(FP), DI
-	MOVQ	a0_len+16(FP), SI
-	MOVSD	a1+24(FP), X0
+	MOVQ	a1+16(FP), SI
+	MOVSD	a2+24(FP), X0
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12
@@ -15,11 +15,11 @@ TEXT ·cppgo__ZN5stats11count_aboveEPKdmd(SB), NOSPLIT, $0-40
 	MOVQ	AX, ret+32(FP)
 	RET
 
-// func cppgo__ZN5stats12data_pointerEPKdm(fn uintptr, a0 unsafe.Pointer, a0_len uintptr) (ret unsafe.Pointer)
-TEXT ·cppgo__ZN5stats12data_pointerEPKdm(SB), NOSPLIT, $0-32
+// func cppgoCall_2886d89d7fd9(fn uintptr, a0 unsafe.Pointer, a1 uint64) unsafe.Pointer
+TEXT ·cppgoCall_2886d89d7fd9(SB), NOSPLIT, $0-32
 	MOVQ	fn+0(FP), R12
 	MOVQ	a0+8(FP), DI
-	MOVQ	a0_len+16(FP), SI
+	MOVQ	a1+16(FP), SI
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12
@@ -27,15 +27,15 @@ TEXT ·cppgo__ZN5stats12data_pointerEPKdm(SB), NOSPLIT, $0-32
 	MOVQ	AX, ret+24(FP)
 	RET
 
-// func cppgo__ZN5stats9histogramEPKdmPdmdd(fn uintptr, a0 unsafe.Pointer, a0_len uintptr, a1 unsafe.Pointer, a1_len uintptr, a2 float64, a3 float64) (ret int32)
-TEXT ·cppgo__ZN5stats9histogramEPKdmPdmdd(SB), NOSPLIT, $0-60
+// func cppgoCall_2f7a0df214c2(fn uintptr, a0 unsafe.Pointer, a1 uint64, a2 unsafe.Pointer, a3 uint64, a4 float64, a5 float64) int32
+TEXT ·cppgoCall_2f7a0df214c2(SB), NOSPLIT, $0-60
 	MOVQ	fn+0(FP), R12
 	MOVQ	a0+8(FP), DI
-	MOVQ	a0_len+16(FP), SI
-	MOVQ	a1+24(FP), DX
-	MOVQ	a1_len+32(FP), CX
-	MOVSD	a2+40(FP), X0
-	MOVSD	a3+48(FP), X1
+	MOVQ	a1+16(FP), SI
+	MOVQ	a2+24(FP), DX
+	MOVQ	a3+32(FP), CX
+	MOVSD	a4+40(FP), X0
+	MOVSD	a5+48(FP), X1
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12
@@ -43,11 +43,11 @@ TEXT ·cppgo__ZN5stats9histogramEPKdmPdmdd(SB), NOSPLIT, $0-60
 	MOVL	AX, ret+56(FP)
 	RET
 
-// func cppgo__ZN5stats4meanEPKdm(fn uintptr, a0 unsafe.Pointer, a0_len uintptr) (ret float64)
-TEXT ·cppgo__ZN5stats4meanEPKdm(SB), NOSPLIT, $0-32
+// func cppgoCall_cb89870fbfcc(fn uintptr, a0 unsafe.Pointer, a1 uint64) float64
+TEXT ·cppgoCall_cb89870fbfcc(SB), NOSPLIT, $0-32
 	MOVQ	fn+0(FP), R12
 	MOVQ	a0+8(FP), DI
-	MOVQ	a0_len+16(FP), SI
+	MOVQ	a1+16(FP), SI
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12
@@ -55,11 +55,11 @@ TEXT ·cppgo__ZN5stats4meanEPKdm(SB), NOSPLIT, $0-32
 	MOVSD	X0, ret+24(FP)
 	RET
 
-// func cppgo__ZN5stats6stddevEPKdm(fn uintptr, a0 unsafe.Pointer, a0_len uintptr) (ret float64)
-TEXT ·cppgo__ZN5stats6stddevEPKdm(SB), NOSPLIT, $0-32
+// func cppgoCall_1580c9c6465f(fn uintptr, a0 unsafe.Pointer, a1 uint64) float64
+TEXT ·cppgoCall_1580c9c6465f(SB), NOSPLIT, $0-32
 	MOVQ	fn+0(FP), R12
 	MOVQ	a0+8(FP), DI
-	MOVQ	a0_len+16(FP), SI
+	MOVQ	a1+16(FP), SI
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12

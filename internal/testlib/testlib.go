@@ -1,9 +1,9 @@
 // Package testlib builds a small C++ shared object used by the cppgo tests.
 //
 // The fixture is compiled on demand with the system g++ into a temporary
-// directory, so the tests need no checked-in binaries and no cgo: the only
-// thing this package does is run the compiler and hand back the path of the
-// resulting .so, which the tests then load with internal/rtl.
+// directory. The tests therefore need no checked-in binaries and no cgo. This
+// package only runs the compiler and hands back the path of the resulting .so,
+// which the tests then load with internal/rtl.
 //
 // It is internal to cppgo and only intended for tests and benchmarks.
 package testlib
@@ -148,6 +148,16 @@ CPPGO_EXPORT std::int64_t cppgo_fixture_deep_stack(std::int64_t bytes) {
     return sum;
 }
 
+// Calls a function pointer the Go side produced: the fixture of the reentrant
+// carrier. It is only safe when the caller entered C through runtime.cgocall,
+// which is what cppgo.CallReentrant does.
+typedef std::int64_t (*cppgo_fixture_binary)(std::int64_t, std::int64_t);
+
+CPPGO_EXPORT std::int64_t cppgo_fixture_apply(cppgo_fixture_binary fn, std::int64_t a,
+                                              std::int64_t b) {
+    return fn(a, b);
+}
+
 // The cppgo error convention: non-zero return means "call cppgo_last_error".
 CPPGO_EXPORT std::int64_t cppgo_fixture_fail(const char *msg) {
 #ifndef CPPGO_FIXTURE_NO_LAST_ERROR
@@ -167,11 +177,11 @@ var (
 )
 
 // Build compiles the fixture and returns the absolute path of the shared
-// object. The result is cached for the lifetime of the test process; call
+// object. The result is cached for the lifetime of the test process. Call
 // Cleanup to remove it.
 //
-// The test is skipped when no g++ is available: the library under test needs
-// no C++ compiler, only this fixture does.
+// The test is skipped when no g++ is available. The library under test needs
+// no C++ compiler, and only this fixture does.
 func Build(t testing.TB, v Variant) string {
 	t.Helper()
 
@@ -219,7 +229,7 @@ func Build(t testing.TB, v Variant) string {
 }
 
 // Cleanup removes the temporary directory holding the built fixtures. It is a
-// no-op when nothing was built.
+// no-op when no fixture was built.
 func Cleanup() {
 	mu.Lock()
 	defer mu.Unlock()

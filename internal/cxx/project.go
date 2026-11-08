@@ -27,8 +27,8 @@ type Options struct {
 // Project is a C++ header plus the translation units needed to answer, for each
 // declaration in it, whether a symbol exists in the compiled library.
 //
-// A header alone is not enough: it declares `Vector(double,double);` and the
-// definition lives in a .cpp. So Open parses the header (for the API surface
+// A header on its own declares the API (`Vector(double,double);`) while the
+// definition lives in a .cpp. Open parses the header (for the API surface
 // and the mangled names) and every source that includes it (for the bodies),
 // then merges the sightings by mangled name. The merged Symbol answers both
 // questions at once.
@@ -62,7 +62,7 @@ const maxSources = 8
 // Open loads libclang, discovers the compilation flags and parses the
 // translation units needed to resolve the header's symbols.
 //
-// The returned Project holds a reference to libclang; Close releases it.
+// The returned Project holds a reference to libclang. Close releases it.
 func Open(opts Options) (*Project, error) {
 	if opts.Header == "" {
 		return nil, errors.New("cxx: no header to introspect")
@@ -258,8 +258,8 @@ func sourcesFor(header string, explicit []string, flags *Flags) []string {
 	return out
 }
 
-// Symbols returns every symbol the project knows about, in parse order:
-// the header's declarations first, then anything only the sources revealed.
+// Symbols returns every symbol the project knows about, in parse order. The
+// header's declarations come first, then anything only the sources revealed.
 func (p *Project) Symbols() []Symbol {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -267,7 +267,7 @@ func (p *Project) Symbols() []Symbol {
 }
 
 // Lookup finds the first symbol with the given qualified C++ name, e.g.
-// "mathx::Vector::norm". Overloads share a name; see Lookups.
+// "mathx::Vector::norm". Overloads share a name. See Lookups.
 func (p *Project) Lookup(name string) (Symbol, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -290,7 +290,7 @@ func (p *Project) Lookups(name string) []Symbol {
 	return out
 }
 
-// LookupMangled finds a symbol by its mangled name, which is how an overload is
+// LookupMangled finds a symbol by its mangled name. That is how an overload is
 // selected unambiguously.
 func (p *Project) LookupMangled(mangled string) (Symbol, bool) {
 	p.mu.Lock()
@@ -305,9 +305,9 @@ func (p *Project) LookupMangled(mangled string) (Symbol, bool) {
 // Members returns every constructor, destructor, method and static member
 // whose semantic parent is the given qualified name, e.g. "mathx::Vector".
 //
-// The result is in parse order; overloads of one name appear together, in the
+// The result is in parse order. Overloads of one name appear together, in the
 // order the header declared them. Access control is reported on each symbol and
-// not filtered here: the generator decides which members a binding wants.
+// left unfiltered. The generator decides which members a binding wants.
 func (p *Project) Members(parent string) []Symbol {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -317,7 +317,7 @@ func (p *Project) Members(parent string) []Symbol {
 			out = append(out, sym)
 		}
 	}
-	// A template specialisation's members are synthesised from its pattern:
+	// A template specialization's members are synthesized from its pattern:
 	// libclang exposes no cursor for the instantiated definition. They live on
 	// the record, not in the symbol list, so the two are joined here.
 	for _, record := range p.records {
@@ -329,10 +329,10 @@ func (p *Project) Members(parent string) []Symbol {
 }
 
 // InstantiateMember returns the concrete instantiation of a member function
-// template of a record: the pattern's signature with the class and member
-// arguments substituted. It is the model half of the manifest's
-// `-instantiate` entry; a member template with no instantiation is not
-// bindable, and the emitter reports the entry to add.
+// template of a record. It carries the pattern's signature with the class and
+// member arguments substituted. It is the model half of the manifest's
+// `-instantiate` entry. A member template with no instantiation cannot be
+// bound, and the emitter reports the entry to add.
 func (p *Project) InstantiateMember(record, member string, args []TemplateArgument) (Symbol, bool) {
 	p.mu.Lock()
 	tus := append([]*TU(nil), p.tus...)
@@ -383,10 +383,10 @@ func (p *Project) Enum(name string) (Enum, bool) {
 }
 
 // MissingBodies returns the symbols that are declared but export no symbol of
-// their own: inline members, pure virtuals, static functions with internal
-// linkage, and template patterns. They are not refused — the generator carries
-// them through a thunk — but a direct call to one would fail at load time, so
-// the list is what a report uses to explain a carrier choice.
+// their own. Those are inline members, pure virtuals, static functions with
+// internal linkage, and template patterns. The generator carries them through a
+// thunk. A direct call to one would fail at load time. The list is what a
+// report uses to explain a carrier choice.
 func (p *Project) MissingBodies() []Symbol {
 	var out []Symbol
 	for _, sym := range p.Symbols() {

@@ -18,7 +18,7 @@ cleanDestinationDir = true
 disableKinds = ["taxonomy", "term"]
 
 [params]
-  description = "Call C++ from Go without cgo, without import \"C\", and without paying the cgo tax on every call."
+  description = "Generate an idiomatic Go API from C++ headers: no cgo, no import \"C\", no hand-written bindings, and a shim cppgo compiles itself."
   tagline = "Call C++ from Go with no cgo."
   github = "https://github.com/Manu343726/cppgo"
   releases = "https://github.com/Manu343726/cppgo/releases"
@@ -26,7 +26,7 @@ disableKinds = ["taxonomy", "term"]
   license = "MIT"
   author = "Manu Sánchez"
   goVersion = "1.25"
-  abi = "System V AMD64 ABI"
+  abi = "Itanium C++ ABI on System V AMD64"
   platform = "Linux/amd64"
 
 [markup]

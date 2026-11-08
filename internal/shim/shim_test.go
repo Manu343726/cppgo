@@ -112,7 +112,7 @@ func TestInlineHeaderOnlyIsReachableOnlyThroughTheShim(t *testing.T) {
 }
 
 // TestStdStringAndVector measures row 3: std::string and std::vector cross as
-// Go strings and slices, marshalled by the shim into real C++ objects.
+// Go strings and slices, marshaled by the shim into real C++ objects.
 func TestStdStringAndVector(t *testing.T) {
 	f := build(t)
 	asm.Probe()

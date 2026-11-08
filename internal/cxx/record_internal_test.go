@@ -43,14 +43,14 @@ func TestAddRecordPrecedence(t *testing.T) {
 	e.addRecord(synthetic)
 	require.Len(t, e.records, 1)
 
-	// A real definition replaces a synthesised sighting.
+	// A real definition replaces a synthesized sighting.
 	real := Record{QualifiedName: "spec::Q<int>", SizeBytes: 4, AlignBytes: 4, LayoutKnown: true, Fields: []Field{{Name: "special"}}}
 	e.addRecord(real)
 	require.Len(t, e.records, 1)
 	assert.False(t, e.records[0].Synthesized)
 	assert.Equal(t, "special", e.records[0].Fields[0].Name)
 
-	// A synthesised sighting does not replace a real one.
+	// A synthesized sighting does not replace a real one.
 	e.addRecord(Record{QualifiedName: "spec::Q<int>", Synthesized: true, Fields: []Field{{Name: "value"}}})
 	assert.Equal(t, "special", e.records[0].Fields[0].Name)
 	assert.Equal(t, int64(4), e.records[0].SizeBytes)

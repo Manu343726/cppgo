@@ -137,7 +137,7 @@ func TestSimpleName(t *testing.T) {
 	assert.Equal(t, "norm", simpleName("a::b::norm"))
 }
 
-// TestGoRecordName checks the template-specialisation naming rule from
+// TestGoRecordName checks the template-specialization naming rule from
 // DESIGN.md.
 func TestGoRecordName(t *testing.T) {
 	cases := map[string]string{
@@ -165,7 +165,7 @@ func TestSplitTemplateArgs(t *testing.T) {
 	assert.Empty(t, splitTemplateArgs(""))
 }
 
-// TestCPPArgGoName checks the argument names the specialisation type uses.
+// TestCPPArgGoName checks the argument names the specialization type uses.
 func TestCPPArgGoName(t *testing.T) {
 	cases := map[string]string{
 		"int":             "Int",

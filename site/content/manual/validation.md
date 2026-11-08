@@ -1,152 +1,138 @@
 +++
 title = "Validation and the report"
-description = "What cppgo gen checks before it emits a trampoline, where the compilation flags come from, how to read the per-binding report, and what -force does and does not downgrade."
+description = "What cppgo gen checks before it emits anything, where the compilation flags come from, every construct the build refuses today, how a shim compile error is tied back to its binding, and how to read the carrier report."
 weight = 80
 +++
 
+**Audience:** a run that failed, or a report you are reading before trusting the
+package.
+
 ## Why validation exists
 
-A generated trampoline is a promise that a symbol exists and that its arguments
-fit the registers. Both can be checked before the program runs, and in the
-direct ABI mode they are: `cppgo gen` fails the build rather than emit something
-that segfaults in production.
+A generated call is a promise that a symbol exists and that its arguments fit
+the carrier. `cppgo gen` establishes both before it emits anything. The header
+parse supplies types, sizes, `const`-ness, virtual-ness and the exception
+specification, and, when  `-library` is a readable file, the library's dynamic
+symbol table proves that a direct binding's name is really exported.
 
-The header is not enough on its own. It **declares** `Vector(double, double);`
-and the definition lives in a `.cpp`. So the generator parses the header for
-the API surface and the mangled names, and every translation unit that includes
-it for the bodies, then merges the sightings by mangled name. The merged symbol
-answers both questions: what the call looks like, and whether a symbol exists.
-
-Which sources are parsed:
-
-- the header itself, when it is a source file;
-- source files in the header's directory;
-- entries in the compilation database that include the header.
-
-At most eight including sources are parsed; any one that defines the out-of-line
-members answers the question. If your definitions live somewhere the discovery
-does not look, the generator sees a declaration with no body and refuses the
-binding as inline — even though the built library does export the symbol.
+The generator never leaves a declaration unbound by accident. Every binding gets
+a carrier, or the run fails. A silent third state is the bug this page exists to
+rule out.
 
 ## Where the compilation flags come from
 
-A translation unit is only meaningful with the flags it was compiled with:
-without them a header may not even find its own includes. cppgo takes them from
-clangd's configuration instead of inventing them:
+A header only means something with the flags it is compiled with. cppgo takes
+them from clangd's configuration instead of inventing them:
 
 1. `-compile-commands <path>` when given (a `compile_commands.json` or its
-   directory), else the `CompileFlags.CompilationDatabase` named by `.clangd`,
-   else the nearest `compile_commands.json` walking up from the header.
-2. `.clangd` files in the header's directory and its ancestors, merged as clangd
-   does: `CompileFlags.Compiler`, then `CompileFlags.Remove`, then
-   `CompileFlags.Add`.
-3. Otherwise `-std=c++17 -I<header dir>`, **reported as an assumption**.
+   directory), else the database `.clangd` names, else the nearest
+   `compile_commands.json` walking up from the header.
+2. `.clangd` files beside the header and in its ancestors, merged as clangd
+   does.
+3. otherwise `-std=c++17 -I<header dir>`, **reported as an assumption**.
 
-The language is always made explicit (`-x c++-header` for headers), because
-libclang would otherwise treat a `.h` as C and produce unmangled names. The
-input file, `-c` and `-o` are dropped from the discovered arguments.
-
-When the flags are the fallback, the report says
-`abi from fallback flags (assumed)` and a warning goes to stderr:
+When the flags are the fallback, a warning goes to stderr:
 
 ```
 cppgo: warning: the compilation flags for /src/mathx/vector.hpp are an
-assumption (assumed: -std=c++17 -I/src/mathx); a validation this misses comes
-from a parse without the header's real flags
+assumption (assumed: -std=c++17 -I/src/mathx); a parse without the project's
+real flags can misread the header
 ```
 
-That warning is serious for a header with its own includes: a failed include
-means libclang sees a partial declaration, and the validation is only as good
-as what it saw. Point `-compile-commands` at your build's database.
+That warning is serious for a header with its own includes. A failed include
+means libclang sees a partial declaration, and the validation is only as good as
+what it saw. Point `-compile-commands` at your build's database.
 
-## Reading the per-binding report
+## Reading the report
 
-One line per binding, on stdout, ordered by qualified C++ name so an overload
-set reads together:
+One line per binding on stdout, ordered by qualified signature, then the shim
+build:
 
 ```
-mathx::Vector::Vector       mangled _ZN5mathx6VectorC1Edd      abi from compile_commands.json; note: the object is allocated in Go storage owned by this package (16 bytes, alignment 8) and released by //cppgo:dtor
-mathx::Vector::dot          mangled _ZNK5mathx6Vector3dotEPKdm  abi from compile_commands.json; note: the trailing error is always nil: a direct C++ call has no status channel (return an int32 status and declare only error to get one)
-mathx::Vector::norm         mangled _ZNK5mathx6Vector4normEv    abi from compile_commands.json
-mathx::Vector::~Vector      mangled _ZN5mathx6VectorD1Ev       abi from compile_commands.json
+mathx::Vector::scale(double) noexcept        direct _ZN5mathx6Vector5scaleEd     noexcept, out of line, not virtual, register class
+mathx::Vector::norm() const                  thunk  cppgo_thunk_49993cda6560     not noexcept: an exception would unwind into Go
+cppgo: built mathx/libcppgo_mathx.so with /usr/bin/g++
 ```
 
-Read the third column first. It names the tier that answered:
+The columns are:
 
-| value | meaning |
-|---|---|
-| `abi from compile_commands.json` | flags came from a compilation database, with the entry it used in the detail |
-| `abi from .clangd` | flags came from `.clangd` files |
-| `abi from arguments` | flags were supplied by a caller of the generator API, not by the CLI |
-| `abi from fallback flags (assumed)` | flags were guessed; the parse may be incomplete |
+1. **the C++ signature**, with `const` and `noexcept` where the header has them.
+2. **the carrier**, one of `direct`, `thunk` or `reentrant`.
+3. **the symbol** the binding reaches. A mangled name of your library for a
+   direct binding, a generated `cppgo_thunk_<hash>` for a shim binding.
+4. **the reason** the carrier was chosen.
 
-Then the notes. Two of them are load-bearing:
+Read the carrier and the reason together. `direct` with
+`noexcept, out of line, not virtual, register class` is the fast path.
+`thunk` with `not noexcept: an exception would unwind into Go` is the safe one.
+The hash is stable for a given qualified signature. A diff in it means the signature changed.
 
-- **`the object is allocated in Go storage ... (N bytes, alignment A)`** — the
-  size the constructor allocates. If it looks wrong, the probe translation unit
-  did not see the real class (an `#ifdef` that was not set, a different header
-  with the same name).
-- **`the trailing error is always nil ...`** — the binding declared an `error`
-  that the C++ function cannot produce, because it does not return an integer
-  status. The code is correct; the error is always `nil`. If that is not what
-  you wanted, change the C++ function to return `int32_t`.
+When `-library` is a readable file, a direct binding's evidence comment ends
+`, verified against libname.so` in the generated file. That is the ELF
+cross-check, and it is why a header-only declaration whose symbol happens to be
+exported can still be direct.
 
-`-force` adds a third kind of note: `forced with -force, NOT validated: <why>`.
-It appears both in the report and as a `// NOT VALIDATED` comment in the
-generated file, so an accepted-but-unchecked binding is never invisible.
+## What this build refuses
 
-## The checks
+These are generation errors that write no output. The message names the file,
+the line, the declaration, what is wrong, and what to do, the shape is
+`cppgo: <file>:<line>: <declaration>: <what is wrong>; <fix>`. One case behaves
+differently, and it is stated after the table.
 
-Each of these is a build failure with a message that names the binding, the
-file and the line:
+| input | message (short form) | what to do |
+|---|---|---|
+| an **enum**, anywhere in the parsed headers | *enums are not emitted by this build yet; pass the value as its underlying integer at the C++ boundary* | use an integer at the boundary |
+| a **class template** with no `-instantiate` | *a class template is not a type until it is instantiated; name a concrete instantiation with `-instantiate 'Box<...>'`* | add `-instantiate` |
+| a **type nested** inside a record | *a type nested inside a record is not emitted by this build yet; move the nested type to namespace scope…* | move it to namespace scope |
+| **inheritance** (any base) | *inherited members and base views are not emitted by this build yet; bind the base class directly…* | bind the base, or wrap it |
+| a **static data member** | *the static data member X is not emitted by this build yet; expose it through a static member function or a free function* | expose a function |
+| a **member function template** | *the member function template X is not emitted by this build yet; expose the concrete instantiation as a non-template member* | expose a concrete member |
+| a **free function template** | *a function template has no symbol until it is instantiated; expose a concrete instantiation as a non-template function* | expose a concrete function |
+| an **operator** or **conversion operator** | *operators and conversion operators are not emitted by this build yet; give it a named member function or a named free function* | name it |
+| a **variadic** function | *a variadic function has no fixed argument list to lay out; replace the ellipsis with a fixed parameter list or a span* | take a slice or a fixed list |
+| `long double` / `__int128` | the parameter or result, and the fix | widen or narrow at the boundary |
+| a callback with more than six integer or eight floating-point arguments | the sixth argument | take a pointer to a struct |
+| `-bind` / `-exclude` that names nothing | *it names nothing this header declares* | fix the name |
+| `-instantiate` that names no visible instantiation | *it names no instantiation this header declares; add an explicit instantiation such as `template struct ...;` to the header* | make it visible |
+| `-rename` that matches nothing, or several declarations | both declarations | name the full signature |
+| `-status` on a non-32-bit, non-integer return | the type it found | name a function that returns `int32_t` |
 
-| check | message (short form) |
-|---|---|
-| declaration not found | *is not declared in \<header\> as a bindable function (a declaration in a system header, or one with internal linkage, is invisible)* |
-| no mangled name | *it has no mangled name, so it is a template ... only an explicit instantiation emits a symbol* |
-| inline / internal linkage | *defined inside its class definition or has internal linkage ... move the definition out into a source file* |
-| virtual | *it is virtual: the call has to go through the vtable ... use the shim mode* |
-| wrong arity | *the binding describes N arguments but the C++ signature takes M* |
-| width mismatch | *the Go type is int (8-byte) but the C++ type is "int" (4-byte)* |
-| register class mismatch | *the Go type is float64, a float (XMM), but the C++ type is "int", which travels in the other register class* |
-| struct by value | *a struct passed by value ... take it by const reference or use the shim mode* |
-| `std::` type | *a standard-library type: its ABI (and its lifetime) is the shim mode's business* |
-| by-value class result | *returns X by value ... use the shim mode for this binding* |
-| register exhaustion | *needs N integer argument registers, but the SysV ABI only provides 6 ...* |
-| duplicate symbol | *X and Y both bind \<mangled\>* |
-| ambiguous overload | *N overloads accept the Go argument types ... rename the Go function* |
+A **function-like macro that is the whole API** is not a generation error
+today. libclang sees the macro's expansion, not its declaration, so nothing is
+bound. `cppgo gen` exits 0, writes a package whose only exported function is
+`Open`, and builds the shim. No warning names the macro. The fix is a function.
+The owner is the v4 emitter, which should report the unbound macro.
 
-`-force` downgrades the non-fatal ones — inline, virtual, width/class mismatch,
-by-value struct parameter, arity, overload ambiguity, and a binding that names
-the wrong C++ entity — to warnings, for the case where you know better than the
-parse. It does **not** downgrade a missing mangled name (there is no address to
-call) or a class returned by value (the call cannot be emitted at all): those
-remain build errors, because no code could be generated.
+The current refusal set is deliberately broad. It is checked **before**
+selection. A header that declares any enum anywhere fails even if you did not bind it. That is a limitation of this phase, not a policy. The constructs are
+part of the design and their turn comes after the v4 epic.
 
-<div class="callout callout-danger">
-<span class="callout-title">-force does not fix the ABI</span>
-<p>
-It emits the binding exactly as your Go declaration describes it. If the Go
-declaration is wrong, the call is wrong: a width mismatch accepted with
-<code>-force</code> still passes a 4-byte value in an 8-byte slot, and the C++
-side reads whatever the upper bits happen to be. Use it when the <em>parse</em>
-is wrong, not when the code is.
-</p>
-</div>
+## A shim that does not compile
 
-## Warnings on stderr
+The shim is C++ that cppgo compiles itself. A compile error is a generation
+error carrying the compiler's diagnostic, the file and line, and the binding
+whose thunk is in it. The shape is:
 
-Two package-level warnings, printed as `cppgo: warning: ...`:
+```
+cppgo: <file>:<line>: <declaration>: the generated shim does not compile; <compiler diagnostic> (compiler: <the argv that ran>)
+```
 
-- the assumed-flags warning above;
-- a leftover `cppgo_shim.h` in the output directory from an earlier shim-mode
-  run. ABI mode does not write that file and does not delete it, because the
-  generator only owns the files it wrote. Leaving it behind invites the C++
-  side to keep implementing entries nothing calls.
+On that path only, cppgo compiles one thunk at a time to find which binding the
+diagnostic belongs to. A header that the shim cannot include still produces an error naming the declaration instead of a wall of compiler output.
 
-## Determinism
+## Determinism and `check`
 
-The generated bytes are a pure function of the Go sources, the header and the
-flags. Running `cppgo gen` twice on the same input produces the same output,
-which is what makes [`cppgo check`]({{< ref "manual/ci.md" >}}) a usable CI
-gate: it regenerates in memory and compares with what is on disk.
+The generated Go and C++ are byte-identical for the same inputs. Bindings are
+sorted by qualified name and thunk names come from a stable hash of the
+qualified signature. `cppgo check` is the gate:
+
+```console
+$ cppgo check -header include/mathx/vector.hpp -package mathx \
+      -library build/libmathx.so -out ./mathx
+mathx: generated files are up to date
+```
+
+It regenerates in memory and compares every source byte for byte. It leaves the shim alone, because the shim is a build artefact. The way to verify it is
+to build it, which `cppgo gen` does on every run.
+
+Next is [cppgo check in CI]({{< ref "manual/ci.md" >}}).

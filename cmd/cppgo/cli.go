@@ -126,16 +126,18 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		}
 		c.printGenUsage(c.stderr)
 	}
-	var headers, bind, exclude, instantiate, rename stringList
+	var headers, bind, exclude, instantiate, rename, status stringList
 	fs.Var(&headers, "header", "C++ header to bind; repeat for several")
 	packageName := fs.String("package", "", "Go package name")
-	library := fs.String("library", "", "shared object Open loads")
+	library := fs.String("library", "", "the user's shared object the shim links against")
+	cxx := fs.String("cxx", "", "C++ compiler for the shim (default g++, then clang++)")
 	out := fs.String("out", ".", "output directory")
 	compileCommands := fs.String("compile-commands", "", "compile_commands.json (or its directory) for the header's flags")
 	fs.Var(&bind, "bind", "add a root; repeatable")
 	fs.Var(&exclude, "exclude", "remove a root; repeatable")
-	fs.Var(&instantiate, "instantiate", "concrete template specialisation to emit; repeatable")
+	fs.Var(&instantiate, "instantiate", "concrete template specialization to emit; repeatable")
 	fs.Var(&rename, "rename", "<qualified signature>=<GoName>; repeatable")
+	fs.Var(&status, "status", "declaration whose int32 return is a status code; repeatable")
 	check := fs.Bool("check", checkMode, "report whether the generated files are up to date instead of writing them")
 	quiet := fs.Bool("q", false, "suppress the per-binding report and the confirmation message")
 	if err := fs.Parse(args); err != nil {
@@ -160,6 +162,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		Headers:         headers,
 		Package:         *packageName,
 		Library:         *library,
+		CXX:             *cxx,
 		Out:             *out,
 		Check:           *check,
 		CompileCommands: *compileCommands,
@@ -167,6 +170,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		Exclude:         exclude,
 		Instantiate:     instantiate,
 		Rename:          rename,
+		Status:          status,
 		Warnings:        c.stderr,
 	}
 	if !*quiet && !*check {
@@ -200,17 +204,18 @@ func wantsHelp(args []string) bool {
 // printUsage is the top-level help.
 func (c *cli) printUsage(w io.Writer) {
 	fmt.Fprintln(w, "cppgo generates a type-safe Go package from C++ headers and calls into")
-	fmt.Fprintln(w, "them through one assembly trampoline per binding, plus a generated shim")
-	fmt.Fprintln(w, "for everything the direct ABI cannot express. No cgo is involved.")
+	fmt.Fprintln(w, "them through one assembly trampoline per binding, plus a shim cppgo itself")
+	fmt.Fprintln(w, "generates and compiles for everything the direct ABI cannot express. The")
+	fmt.Fprintln(w, "user's build is never touched and no cgo is involved.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "usage:")
-	fmt.Fprintln(w, "  cppgo gen   -header <path> -package <name> -library <name> [-out <dir>]")
-	fmt.Fprintln(w, "  cppgo check -header <path> -package <name> -library <name> [-out <dir>]")
+	fmt.Fprintln(w, "  cppgo gen   -header <path> -package <name> [-library <file>] [-out <dir>]")
+	fmt.Fprintln(w, "  cppgo check -header <path> -package <name> [-library <file>] [-out <dir>]")
 	fmt.Fprintln(w, "  cppgo version")
 	fmt.Fprintln(w, "  cppgo help [command]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
-	fmt.Fprintf(w, "  %-8s %s\n", "gen", "write the Go package, the trampolines and the C++ shim")
+	fmt.Fprintf(w, "  %-8s %s\n", "gen", "write the Go package, the trampolines and the C++ shim, and build the shim")
 	fmt.Fprintf(w, "  %-8s %s\n", "check", "verify that the generated files are up to date, without writing")
 	fmt.Fprintf(w, "  %-8s %s\n", "version", "print the version of the generator")
 	fmt.Fprintf(w, "  %-8s %s\n", "help", "print this message, or the help of one command")
@@ -221,10 +226,12 @@ func (c *cli) printUsage(w io.Writer) {
 // printGenUsage documents "cppgo gen".
 func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: cppgo gen -header <path> [-header <path>]... -package <name>")
-	fmt.Fprintln(w, "                  -library <name-or-path> [-out <dir>] [-compile-commands <path>]")
+	fmt.Fprintln(w, "                  [-library <file>] [-out <dir>] [-compile-commands <path>]")
 	fmt.Fprintln(w, "                  [-bind <qualified>]... [-exclude <qualified>]...")
-	fmt.Fprintln(w, "                  [-instantiate '<specialisation>']...")
-	fmt.Fprintln(w, "                  [-rename '<signature>=<GoName>']... [-check] [-q]")
+	fmt.Fprintln(w, "                  [-instantiate '<specialization>']...")
+	fmt.Fprintln(w, "                  [-rename '<signature>=<GoName>']... [-status <qualified>]...")
+	fmt.Fprintln(w, "                  [-cxx <compiler>]")
+	fmt.Fprintln(w, "                  [-check] [-q]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "gen reads the C++ headers through libclang and writes:")
 	fmt.Fprintln(w)
@@ -232,11 +239,17 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintf(w, "  %-18s %s\n", "", "declarations")
 	fmt.Fprintf(w, "  %-18s %s\n", gen.AsmFileName, "one NOSPLIT trampoline per binding")
 	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimHeaderFileName, "the extern \"C\" thunk declarations")
-	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimSourceFileName, "the thunks: compile this into the library")
+	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimSourceFileName, "the thunks")
+	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimLibraryName("<package>"), "the shim cppgo compiles and links against")
+	fmt.Fprintf(w, "  %-18s %s\n", "", "the library: Open loads it, and the library brings")
+	fmt.Fprintf(w, "  %-18s %s\n", "", "the user's library in")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Every binding gets exactly one carrier: the direct trampoline when it is")
-	fmt.Fprintln(w, "noexcept, not virtual, defined out of line and register representable; a")
-	fmt.Fprintln(w, "generated thunk everywhere else. The report names the carrier and why.")
+	fmt.Fprintln(w, "The user's build is untouched: no generated file goes into it. Every")
+	fmt.Fprintln(w, "binding gets exactly one carrier: the direct trampoline when it is")
+	fmt.Fprintln(w, "noexcept, not virtual, register representable and its symbol is in the")
+	fmt.Fprintln(w, "library; a thunk for everything else; the reentrant carrier when the")
+	fmt.Fprintln(w, "signature passes a Go function to C++. The report names the carrier and")
+	fmt.Fprintln(w, "why, and the shim build reports the compiler it used.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "flags:")
 	fmt.Fprintln(w, "  -header string")
@@ -244,8 +257,10 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "  -package string")
 	fmt.Fprintln(w, "        Go package name")
 	fmt.Fprintln(w, "  -library string")
-	fmt.Fprintln(w, "        shared object Open loads; when it is a readable file, its dynamic")
-	fmt.Fprintln(w, "        symbol table cross-checks every direct binding")
+	fmt.Fprintln(w, "        the user's shared object: the shim is linked against it, and when it")
+	fmt.Fprintln(w, "        is a readable file its dynamic symbol table cross-checks every direct")
+	fmt.Fprintln(w, "        binding. Omit it for a header-only library, whose shim is the whole")
+	fmt.Fprintln(w, "        binary")
 	fmt.Fprintln(w, "  -out string")
 	fmt.Fprintln(w, "        output directory (default \".\")")
 	fmt.Fprintln(w, "  -compile-commands string")
@@ -256,10 +271,15 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "  -exclude qualified")
 	fmt.Fprintln(w, "        remove a root; repeatable")
 	fmt.Fprintln(w, "  -instantiate 'mathx::Box<int>'")
-	fmt.Fprintln(w, "        emit a concrete template specialisation; repeatable. The header must")
+	fmt.Fprintln(w, "        emit a concrete template specialization; repeatable. The header must")
 	fmt.Fprintln(w, "        make the instantiation visible, e.g. 'template struct Box<int>;'")
 	fmt.Fprintln(w, "  -rename 'signature=GoName'")
 	fmt.Fprintln(w, "        resolve a Go name collision; repeatable")
+	fmt.Fprintln(w, "  -status qualified")
+	fmt.Fprintln(w, "        a declaration whose 32-bit return is a status code: the Go signature")
+	fmt.Fprintln(w, "        returns only an error, and a non-zero value is the failure; repeatable")
+	fmt.Fprintln(w, "  -cxx string")
+	fmt.Fprintln(w, "        C++ compiler to build the shim with (default g++, then clang++)")
 	fmt.Fprintln(w, "  -check")
 	fmt.Fprintln(w, "        report whether the generated files are up to date instead of writing")
 	fmt.Fprintln(w, "  -q")
@@ -267,23 +287,24 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "example:")
 	fmt.Fprintln(w, "  cppgo gen -header include/mathx/vector.hpp -package mathx \\")
-	fmt.Fprintln(w, "            -library libmathx -out ./mathx")
+	fmt.Fprintln(w, "            -library build/libmathx.so -out ./mathx")
 }
 
 // printCheckUsage documents "cppgo check".
 func (c *cli) printCheckUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: cppgo check -header <path> [-header <path>]... -package <name>")
-	fmt.Fprintln(w, "                    -library <name-or-path> [-out <dir>] [-q]")
+	fmt.Fprintln(w, "                    [-library <file>] [-out <dir>] [-q]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "check regenerates the package in memory and compares it with the files on")
-	fmt.Fprintln(w, "disk. It writes nothing, exits 0 when everything is up to date and 1 when")
-	fmt.Fprintln(w, "a file is missing or stale, which is the shape a CI gate wants.")
+	fmt.Fprintln(w, "check regenerates the sources in memory and compares them with the files on")
+	fmt.Fprintln(w, "disk. It writes nothing, builds nothing, exits 0 when everything is up to")
+	fmt.Fprintln(w, "date and 1 when a file is missing or stale, which is the shape a CI gate")
+	fmt.Fprintln(w, "wants.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "It accepts the same manifest flags as \"cppgo gen\".")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "example:")
 	fmt.Fprintln(w, "  cppgo check -header include/mathx/vector.hpp -package mathx \\")
-	fmt.Fprintln(w, "              -library libmathx -out ./mathx || echo out of date")
+	fmt.Fprintln(w, "              -library build/libmathx.so -out ./mathx || echo out of date")
 }
 
 // printVersionUsage documents "cppgo version".

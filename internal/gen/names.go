@@ -218,7 +218,7 @@ func validGoPackage(name string) bool {
 }
 
 // goRecordName is the Go type name of a record: its own name, or for a
-// template specialisation the template name followed by its arguments, as
+// template specialization the template name followed by its arguments, as
 // DESIGN.md specifies: mathx::Box<int> -> BoxInt, Box<mathx::Vector> ->
 // BoxVector, Pair<int, double> -> PairIntFloat64.
 func goRecordName(qualified string) string {
@@ -286,7 +286,7 @@ trimmed:
 }
 
 // scalarArgNames maps the scalar spellings a template argument uses to the
-// name DESIGN.md gives the specialisation: Box<int> is BoxInt and
+// name DESIGN.md gives the specialization: Box<int> is BoxInt and
 // Pair<int, double> is PairIntFloat64, so the integer spelling is capitalised
 // while the floating-point one is named by its Go width.
 var scalarArgNames = map[string]string{

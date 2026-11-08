@@ -68,7 +68,7 @@ func TestParseTranslationUnitWithNullIndex(t *testing.T) {
 
 func TestVisitWithUnregisteredKey(t *testing.T) {
 	// The C trampoline can be entered with a cookie nobody registered (a late
-	// callback after a visit was cancelled); that must stop the traversal
+	// callback after a visit was canceled); that must stop the traversal
 	// instead of dereferencing anything.
 	assert.Equal(t, visitBreak, dispatchVisit(CXCursor{}, CXCursor{}, nil))
 	assert.Equal(t, visitBreak, dispatchVisit(CXCursor{}, CXCursor{}, unsafePointerOf(&visitKey{})))

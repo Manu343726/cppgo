@@ -45,7 +45,7 @@ func (e *SymbolError) Error() string {
 func (e *SymbolError) Unwrap() error { return e.Err }
 
 // ExtractError reports an embedded shared object that could not be
-// materialised in the cache.
+// materialized in the cache.
 type ExtractError struct {
 	// Name is the file name the object takes in the cache, or the name
 	// OpenFS was asked for when no such entry exists.
@@ -74,14 +74,15 @@ func (e *ExtractError) Error() string {
 // Unwrap exposes the underlying error to errors.Is and errors.As.
 func (e *ExtractError) Unwrap() error { return e.Err }
 
-// ErrInsecureCache reports a cache path that is not a private directory: a
-// regular file, a symbolic link, or a directory whose mode could not be
-// tightened to 0700. OpenFS refuses to extract into it rather than write a
-// shared object somewhere another user could replace.
+// ErrInsecureCache reports a cache path whose permissions fail the
+// private-directory check. That covers a regular file, a symbolic link, or a
+// directory whose mode could not be tightened to 0700. OpenFS refuses to
+// extract into it, because another user could replace a shared object written
+// there.
 var ErrInsecureCache = errors.New("cache path is not a private directory")
 
 // NativeError is a failure reported by the foreign library through the
-// cppgo_last_error convention. Its message is the C string verbatim; the
+// cppgo_last_error convention. Its message is the C string verbatim. The
 // generated wrappers add the symbol name on top.
 type NativeError struct {
 	// Message is the text the foreign library stored, without the trailing

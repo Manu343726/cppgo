@@ -53,11 +53,11 @@ func (e *NotFoundError) Unwrap() error { return ErrLibclangNotFound }
 // before it hands the handle to anybody.
 // ---------------------------------------------------------------------------
 
-// CXString mirrors libclang's CXString: { const void *data; unsigned private_flags }.
+// CXString mirrors libclang's C struct, `{ const void *data; unsigned private_flags }`.
 // 16 bytes. Interchange class, returned in RAX/RDX, passed in RDI/RSI.
 //
-// The pointer words in these four structs are uintptr, never unsafe.Pointer, and
-// that is not a style choice: libclang stuffs small integers into the data
+// The pointer words in these four structs are uintptr, never unsafe.Pointer.
+// The choice is deliberate, because libclang stuffs small integers into the data
 // words of some cursors (a tagged cursor is a real thing in its C API), and a
 // Go pointer-typed field holding 0x1 makes the runtime abort the process with
 // "bad pointer in frame" the next time it scans or grows that stack frame.
@@ -67,14 +67,16 @@ type CXString struct {
 	PrivateFlags uint32
 }
 
-// CXType mirrors libclang's CXType: { enum CXTypeKind kind; void *data[2] }.
-// 24 bytes, MEMORY class: passed on the stack, returned through a hidden pointer.
+// CXType mirrors libclang's C struct, `{ enum CXTypeKind kind; void *data[2] }`.
+// 24 bytes, MEMORY class. It is passed on the stack and returned through a
+// hidden pointer.
 type CXType struct {
 	Kind int32
 	Data [2]uintptr
 }
 
-// CXCursor mirrors libclang's CXCursor: { enum CXCursorKind kind; int xdata; const void *data[3] }.
+// CXCursor mirrors libclang's C struct,
+// `{ enum CXCursorKind kind; int xdata; const void *data[3] }`.
 // 32 bytes, MEMORY class.
 type CXCursor struct {
 	Kind  int32
@@ -82,16 +84,16 @@ type CXCursor struct {
 	Data  [3]uintptr
 }
 
-// CXSourceLocation mirrors libclang's CXSourceLocation:
-// { const void *ptr_data[2]; unsigned int_data }.
+// CXSourceLocation mirrors libclang's C struct,
+// `{ const void *ptr_data[2]; unsigned int_data }`.
 // 24 bytes, MEMORY class.
 type CXSourceLocation struct {
 	PtrData [2]uintptr
 	IntData uint32
 }
 
-// CXSourceRange mirrors libclang's CXSourceRange:
-// { const void *ptr_data[2]; unsigned begin_int_data; unsigned end_int_data; }.
+// CXSourceRange mirrors libclang's C struct,
+// `{ const void *ptr_data[2]; unsigned begin_int_data; unsigned end_int_data }`.
 // 24 bytes, MEMORY class.
 type CXSourceRange struct {
 	PtrData  [2]uintptr
@@ -100,8 +102,8 @@ type CXSourceRange struct {
 }
 
 // CXCursorKind values used by this package. They are part of libclang's stable
-// C ABI; TestKindConstants checks every one of them against
-// clang_getCursorKindSpelling at run time, so a wrong number cannot go unnoticed.
+// C ABI. TestKindConstants checks every one of them against
+// clang_getCursorKindSpelling at run time. A wrong number cannot go unnoticed.
 const (
 	cursorInvalidFile     int32 = 70
 	cursorNoDeclFound     int32 = 71
@@ -133,7 +135,7 @@ const (
 	cursorClassTemplatePartialSpecialization int32 = 32
 
 	// Template parameters, in declaration order. They are what the model
-	// substitutes when it reads a specialisation through its pattern.
+	// substitutes when it reads a specialization through its pattern.
 	cursorTemplateTypeParameter     int32 = 27
 	cursorNonTypeTemplateParameter  int32 = 28
 	cursorTemplateTemplateParameter int32 = 29
@@ -196,10 +198,10 @@ const (
 )
 
 // CXCursor_ExceptionSpecificationKind values, as returned by
-// clang_getCursorExceptionSpecificationType. Only the three spellings that are
-// known to promise nothing escapes are treated as such: a computed noexcept
-// is evaluated by the compiler and libclang does not expose the result, so it
-// is conservatively allowed to throw.
+// clang_getCursorExceptionSpecificationType. Only the three spellings that
+// promise no escape are treated as such. A computed noexcept is evaluated by
+// the compiler and libclang hides the result, and that form is conservatively
+// allowed to throw.
 const (
 	exceptionSpecNone             int32 = 0
 	exceptionSpecDynamicNone      int32 = 1
@@ -533,7 +535,8 @@ func bindFunc(into any, handle uintptr, name string) (err error) {
 //
 // Handles are reference counted: Load returns the same handle to every caller
 // and only the last Close unloads the library. A Libclang is safe for concurrent
-// use; the indexes and translation units created from it are not.
+// use. The indexes and translation units created from it are bound to one
+// goroutine.
 type Libclang struct {
 	path   string
 	handle uintptr
@@ -551,7 +554,7 @@ var (
 
 // Load locates libclang and returns a handle to it.
 //
-// The search runs once per process: repeated calls return the same handle with
+// The search runs once per process. Repeated calls return the same handle with
 // an incremented reference count (Close decrements it, and closes the library
 // when it reaches zero). Use LoadPath to load a specific library, and Close
 // followed by Load to re-run the search after changing CPPGO_LIBCLANG.
@@ -571,7 +574,7 @@ func Load() (*Libclang, error) {
 
 // LoadPath loads the libclang at path, without consulting the environment or
 // the usual locations and without caching the result. It is what tests use to
-// point the package at a specific library; production code wants Load.
+// point the package at a specific library. Production code wants Load.
 func LoadPath(path string) (*Libclang, error) {
 	l, err := loadPath(path)
 	if err != nil {
@@ -638,7 +641,7 @@ func (l *Libclang) Version() string {
 }
 
 // Close releases this handle. The library is unloaded when the last reference
-// goes away; closing an already-closed handle is an error, not a panic.
+// goes away. Closing an already-closed handle is an error, never a panic.
 func (l *Libclang) Close() error {
 	l.mu.Lock()
 	if l.closed {
@@ -931,7 +934,7 @@ func (tu *TU) Symbols() []Symbol {
 }
 
 // Lookup finds the first symbol with the given qualified C++ name, e.g.
-// "mathx::Vector::norm". Overloads share a qualified name; use Lookups to get
+// "mathx::Vector::norm". Overloads share a qualified name. Use Lookups to get
 // all of them or LookupMangled for an exact one.
 func (tu *TU) Lookup(name string) (Symbol, bool) {
 	tu.once.Do(tu.extract)
@@ -965,7 +968,7 @@ func (tu *TU) LookupMangled(mangled string) (Symbol, bool) {
 
 // Records returns every class, struct and union definition in the translation
 // unit, in source order, excluding system headers. Templates are included with
-// IsTemplate set and no layout: a declaration that cannot be laid out is still
+// IsTemplate set and no layout. A declaration that cannot be laid out is still
 // a declaration the generator has to report.
 func (tu *TU) Records() []Record {
 	tu.once.Do(tu.extract)

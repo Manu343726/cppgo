@@ -22,7 +22,7 @@ import (
 //
 // The names are for int(int, int) with an int(*)(int, int) target; a generated
 // binding derives them from the signature the same way libstdc++ mangles the
-// _Function_handler specialisation.
+// _Function_handler specialization.
 const (
 	mangledInvoke  = "_ZNSt17_Function_handlerIFiiiEPS0_E9_M_invokeERKSt9_Any_dataOiS6_"
 	mangledManager = "_ZNSt17_Function_handlerIFiiiEPS0_E10_M_managerERSt9_Any_dataRKS3_St18_Manager_operation"

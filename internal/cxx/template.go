@@ -6,8 +6,8 @@ import (
 )
 
 // ExceptionSpec is the C++ exception specification a declaration carries. It
-// is what decides whether a binding can take the direct path: a direct call has
-// no handler, so only a declaration that promises not to throw may use it.
+// decides whether a binding can take the direct path. A direct call has no
+// handler, and only a declaration that promises not to throw may use it.
 type ExceptionSpec uint8
 
 const (
@@ -85,8 +85,8 @@ func TemplateArgumentKindFromLibclang(kind int32) TemplateArgumentKind {
 	}
 }
 
-// TemplateArgumentKind is what one template argument is: a type, an integral
-// value, a template, an expression, or a pack.
+// TemplateArgumentKind is what one template argument is. It is a type, an
+// integral value, a template, an expression, or a pack.
 type TemplateArgumentKind uint8
 
 const (
@@ -126,7 +126,7 @@ func (k TemplateArgumentKind) String() string {
 	}
 }
 
-// specializationName is the identity of a specialisation: the template's
+// specializationName is the identity of a specialization: the template's
 // qualified name followed by its arguments. libclang spells both a pattern and
 // its instantiation "Box", so the arguments are what tells them apart, and
 // "mathx::Box<int>" is the name the generator keys on.
@@ -138,7 +138,7 @@ func specializationName(templateName string, args []TemplateArgument) string {
 	return templateName + "<" + strings.Join(parts, ",") + ">"
 }
 
-// TemplateArgument is one concrete argument of a template specialisation. The
+// TemplateArgument is one concrete argument of a template specialization. The
 // generator names the Go type from these: `Box<int>` is `BoxInt`, and an
 // argument it cannot name is reported with the manifest entry that resolves it.
 type TemplateArgument struct {

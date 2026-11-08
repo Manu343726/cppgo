@@ -1,24 +1,25 @@
 // Package errormap turns a C++ failure convention into a Go error.
 //
-// A C++ library reports failure in at least eight ways: it throws, it returns a
+// A C++ library reports failure in at least eight ways. It throws, it returns a
 // std::error_code, a std::expected, a status int, an errno, a bool with an out
 // parameter, a project-specific Result<T>, or a std::variant whose second
-// alternative is the error. The contract says every one of them becomes the
-// same thing on the Go side — an error as the last result — and this package is
-// the part of that mapping the generated code shares: the projection of a C++
-// failure into a *ErrorCode or a *Message, and the per-package configuration
-// for the conventions that cannot be inferred from the declaration.
+// alternative is the error. The contract says every one of them becomes an
+// error in the last result position on the Go side, and this package is the
+// part of that mapping the generated code shares. That part is the projection
+// of a C++ failure into a *ErrorCode or a *Message, plus the per-package
+// configuration for the conventions that cannot be inferred from the
+// declaration.
 //
 // What is inferred and what is configured:
 //
 //   - exception, std::error_code and a result type whose shape is detectable
-//     (has_value/value/error) need no entry: the declaration says what it is;
+//     (has_value/value/error) need no entry. The declaration says what it is.
 //   - a status int, an errno, a bool-with-out-parameters or a std::variant
-//     cannot be told from a signature that returns int, and a config entry
-//     names the channels;
-//   - an entry is validated against the declaration at generation time — a
-//     parameter that does not exist, or one that cannot carry the channel, is a
-//     generation error and no output is written. A config cannot invent a
+//     cannot be told from a signature that returns int. A config entry names
+//     the channels for those.
+//   - an entry is validated against the declaration at generation time. A
+//     parameter the declaration lacks, or one that cannot carry the channel, is
+//     a generation error and no output is written. A config cannot invent a
 //     signature.
 package errormap
 
@@ -96,9 +97,9 @@ type Shape struct {
 }
 
 // Infer returns the kind a return type's shape implies, and whether the shape
-// was recognised. The three members together are the shape tl::expected,
-// std::expected and most project Result<T> types share; anything else is
-// either configured or not an error type at all.
+// was recognized. The three members together are the shape that tl::expected,
+// std::expected and most project Result<T> types share. Another shape is
+// either configured, or belongs to something other than an error type.
 func Infer(s Shape) (Kind, bool) {
 	if s.HasValue && s.Value && s.Error {
 		return KindCustom, true
@@ -106,8 +107,8 @@ func Infer(s Shape) (Kind, bool) {
 	return "", false
 }
 
-// Entry is one symbol's configuration: the conventions a signature cannot
-// state.
+// Entry is one symbol's configuration. It holds the conventions a signature
+// cannot state.
 type Entry struct {
 	// Kind is the failure convention.
 	Kind Kind `yaml:"kind"`
@@ -133,8 +134,8 @@ type Entry struct {
 	ErrorAccessor string `yaml:"error_accessor,omitempty"`
 }
 
-// Config is a package's error configuration: the file a package writes when a
-// convention cannot be inferred.
+// Config is a package's error configuration. It is the file a package writes
+// when a convention cannot be inferred.
 type Config struct {
 	// Errors maps a qualified C++ declaration to its entry.
 	Errors map[string]Entry `yaml:"errors"`
@@ -202,17 +203,17 @@ type Rule struct {
 //
 // The rules the validation enforces, and why each one exists:
 //
-//   - an entry whose symbol is not a declaration the generator knows is an
-//     error: a config cannot invent a signature;
+//   - an entry must name a symbol the generator knows as an error declaration.
+//     A config cannot invent a signature.
 //   - a channel must be "return" or an existing parameter index, named by
-//     index or by the parameter's name;
-//   - an out-parameter channel must be a pointer or a reference: a value
-//     parameter cannot carry a result back;
+//     index or by the parameter's name.
+//   - an out-parameter channel must be a pointer or a reference. A value
+//     parameter cannot carry a result back.
 //   - a kind that is inferred from the declaration needs no channel, and an
 //     entry for one may only add a projection.
 //
-// infer carries what the declaration alone says: the kind (exception, error
-// code, expected, a Result-shaped type) and whether it is fallible at all.
+// infer carries what the declaration alone says. That is the kind (exception,
+// error code, expected, a Result-shaped type) and whether it is fallible at all.
 func (c *Config) Resolve(sig Signature, infer Inference) (Rule, error) {
 	rule := Rule{Symbol: sig.Name, Value: -1, Error: -1, Alternative: -1, Kind: infer.Kind}
 
@@ -376,8 +377,9 @@ func (s Signature) paramList() string {
 	return strings.Join(parts, ", ")
 }
 
-// Report renders the per-symbol line the generator writes into its report: what
-// the mechanism is and whether it came from the declaration or from the config.
+// Report renders the per-symbol line the generator writes into its report. It
+// says what the mechanism is and whether it came from the declaration or from
+// the config.
 func (r Rule) Report() string {
 	source := "inferred"
 	if r.Configured {
@@ -416,8 +418,8 @@ func (c *Config) Symbols() []string {
 // This is the rule that keeps a config honest in the other direction from
 // Resolve: Resolve says a declaration's entry names existing channels, Validate
 // says an entry names a declaration that exists at all. A typo in a symbol name
-// would otherwise sit in the config doing nothing, exactly like a `-rename`
-// that matches no binding.
+// would otherwise sit in the config unused, exactly like a `-rename` that
+// matches no binding.
 func (c *Config) Validate(sigs []Signature) error {
 	known := make(map[string]bool, len(sigs))
 	for _, sig := range sigs {
@@ -435,7 +437,7 @@ func (c *Config) Validate(sigs []Signature) error {
 }
 
 // Apply validates the config against sigs and resolves every declaration's
-// rule. It is the generator's single entry point: the rules are what the
+// rule. It is the generator's single entry point. The rules are what the
 // emitter turns into `(T, error)` signatures, and an error here means no output
 // is written.
 func (c *Config) Apply(sigs []Signature, infer func(Signature) Inference) ([]Rule, error) {

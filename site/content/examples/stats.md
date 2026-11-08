@@ -1,22 +1,16 @@
 +++
 title = "stats: bulk data"
-description = "Arithmetic over a million-element []float64: (pointer, length) in both directions, a pointer-identity check that proves nothing was copied, and an int32_t status turned into a Go error."
+description = "Arithmetic over a large []float64: (pointer, length) in both directions, four direct calls and one throwing function, a pointer-identity check that proves nothing was copied, and an exception that reaches Go as an error."
 weight = 20
 +++
 
 **Repository path:** [`examples/stats/`](https://github.com/Manu343726/cppgo/tree/main/examples/stats)
 
-`stats` is the case a Go program actually calls out to C++ for: arithmetic over a
-large `[]float64`. Every function takes its data as `(pointer, length)`, and the
-ones that produce bulk output write it into a buffer the caller owns, so nothing
-is copied or marshalled in either direction.
+**Audience:** you want the shape a Go program actually calls out to C++ for. This is arithmetic over a large `[]float64`, with most of the work on the direct carrier.
 
-```console
-$ cd examples/stats
-$ make            # build libstats.so, generate, test, vet
-$ make check      # prove the committed generated files are up to date
-$ make bench      # C++ call against the pure-Go equivalent
-```
+Every function takes its data as `(pointer, length)`, and the one that produces
+bulk output writes into a buffer the caller owns. Nothing is copied or
+marshalled in either direction.
 
 ## The header
 
@@ -30,92 +24,84 @@ namespace stats {
 
 using std::size_t;
 
-double mean(const double *xs, size_t n);
+double mean(const double *xs, size_t n) noexcept;
+double stddev(const double *xs, size_t n) noexcept;
+size_t count_above(const double *xs, size_t n, double threshold) noexcept;
+const double *data_pointer(const double *xs, size_t n) noexcept;
 
-double stddev(const double *xs, size_t n);
-
-size_t count_above(const double *xs, size_t n, double threshold);
-
-// Returns the pointer it was given. If the slice had been copied on the way
-// in, this would not be the address of the caller's first element.
-const double *data_pointer(const double *xs, size_t n);
-
-int32_t histogram(const double *xs, size_t n,
-                  double *bins, size_t nbins,
-                  double lo, double hi);
+// Throws std::invalid_argument for an empty bin range or a non-positive count.
+void histogram(const double *xs, size_t n,
+               double *bins, size_t nbins,
+               double lo, double hi);
 
 } // namespace stats
-
-// The one deliberately extern "C" symbol in the library: a return register
-// cannot carry a message, so the wrapper looks this up after a non-zero status.
-extern "C" const char *cppgo_last_error();
 ```
 
-Everything except `cppgo_last_error` is a normal C++ function defined out of line
-in `src/stats.cpp`. The `extern "C"` accessor is the status convention's other
-half: on failure, `histogram` returns non-zero and leaves a message for
-`cppgo_last_error()`, which the generated wrapper turns into a Go `error`.
+The split is the lesson. Four functions are `noexcept` and defined out of line. The direct carrier takes them, and their Go signatures have no error.
+`histogram` can throw. It goes through the shim, and its Go signature is an error.
 
-`data_pointer` looks pointless — it returns its argument. It is there to *prove*
-something in a test: the pointer that arrives is the pointer that left, so the
-slice was not copied.
+`data_pointer` returns the pointer it was given. It is there to *prove* something in a test. The pointer that arrives is the pointer that left. The slice was not copied.
 
-## The directives
+## Generate
 
-<span class="filename">examples/stats/stats.go</span>
+```console
+$ make gen
+build/cppgo gen -header include/stats/stats.hpp -package stats \
+    -library build/libstats.so -out .
+stats::count_above(const double *, size_t, double) noexcept direct _ZN5stats11count_aboveEPKdmd noexcept, not virtual, register class; the library exports the symbol
+stats::data_pointer(const double *, size_t) noexcept        direct _ZN5stats12data_pointerEPKdm   noexcept, not virtual, register class; the library exports the symbol
+stats::histogram(const double *, size_t, double *, size_t, double, double) thunk  cppgo_thunk_2f7a0df214c2     not noexcept: an exception would unwind into Go
+stats::mean(const double *, size_t) noexcept                direct _ZN5stats4meanEPKdm             noexcept, not virtual, register class; the library exports the symbol
+stats::stddev(const double *, size_t) noexcept              direct _ZN5stats6stddevEPKdm           noexcept, not virtual, register class; the library exports the symbol
+cppgo: built libcppgo_stats.so with /usr/bin/g++
+```
+
+Four `direct` rows, one `thunk`. The generated API follows:
 
 ```go
-//cppgo:library libstats
-//cppgo:header include/stats/stats.hpp
-
-//cppgo:function stats::mean
-func Mean(xs []float64) float64
-
-//cppgo:function stats::stddev
-func Stddev(xs []float64) float64
-
-//cppgo:function stats::count_above
-func CountAbove(xs []float64, threshold float64) int
-
-//cppgo:function stats::data_pointer
+func Open(path string) error
+func CountAbove(xs []float64, threshold float64) uint64
 func DataPointer(xs []float64) *float64
-
-//cppgo:function stats::histogram
-func Histogram(xs, bins []float64, lo, hi float64) error
+func Histogram(xs []float64, bins []float64, lo float64, hi float64) error
+func Mean(xs []float64) float64
+func Stddev(xs []float64) float64
 ```
 
-What crosses is worth reading off the signatures: a `[]float64` is two integer
-arguments (pointer, length), a `float64` is one argument in an XMM register, and
-a function that declares **only** an `error` result is read as an integer
-status. [Register assignment]({{< ref "manual/calling-convention.md" >}}) has the
-full table and the exhaustion limit.
-
-`Histogram` declares only `error`, and the C++ function returns `int32_t`, so the
-integer is read as the **status**: `0` is `nil`, anything else becomes an error
-whose message comes from `cppgo_last_error`. That is the direct ABI mode's only
-error channel, and this example is the working version of it.
+`Mean`, `Stddev`, `CountAbove` and `DataPointer` have no error because the C++
+declarations are `noexcept`. `Histogram` returns only an error because it has no
+value to return and the shim catches what it throws.
 
 ## The call site
 
-From [`examples/stats/stats_test.go`](https://github.com/Manu343726/cppgo/blob/main/examples/stats/stats_test.go)
-and the benchmark:
+From the example's tests:
 
 ```go
-if got := Mean([]float64{1, 2, 3, 4}); !close(got, 2.5) {
-	t.Errorf("Mean = %v, want 2.5", got)
-}
+xs := []float64{2, 4, 4, 4, 5, 5, 7, 9}
 
-// The output crosses as (pointer, length) too: the counts go straight into
-// the caller's slice.
+mean := stats.Mean(xs)        // 5
+deviation := stats.Stddev(xs) // 2
+
+counts := []float64{1, 5, 2, 5, 3}
+above := stats.CountAbove(counts, 2) // 3
+
 bins := make([]float64, 16)
-if err := Histogram(xs, bins, 0, 1); err != nil {
-	t.Fatal(err)
+if err := stats.Histogram(xs, bins, 0, 10); err != nil {
+	log.Fatal(err)
 }
 
 // Same memory, not a copy.
-if DataPointer(xs) != &xs[0] {
-	t.Error("the slice was copied on the way in")
+p := stats.DataPointer(xs)
+if p != &xs[0] {
+	log.Fatal("the slice was copied on the way in")
 }
+```
+
+A failing `Histogram` carries the exception's text:
+
+```go
+err := stats.Histogram(xs, nil, 0, 10)
+// cppgo: stats::histogram: histogram: nbins must be positive
+// errors.As(err, &callErr) → *cppgo.CallError{Symbol: "stats::histogram", ...}
 ```
 
 ## What it teaches
@@ -124,42 +110,26 @@ if DataPointer(xs) != &xs[0] {
   two registers as three. There is no marshalling step because there is no
   intermediate representation: C++ reads Go's backing array.
 - **The direction is symmetric.** Input and output both cross as borrowed
-  pointers; results are written where the caller can see them, not returned.
-- **A pointer identity check is the proof.** `data_pointer` is the only way to
+  pointers. Results are written where the caller can see them.
+- **A pointer identity check is the proof.** `DataPointer` is the only way to
   demonstrate "not copied" from the outside, and it is worth having in a test
   when the whole point of the binding is throughput.
-- **A status is not a value.** `histogram` returns `int32_t` and the Go binding
-  declares only `error`, so the wrapper reads `EAX`, checks it, and calls
-  `LastError` on failure. No out-parameter is needed for the status because the
-  status *is* the return.
-- **Empty slices are legal.** `Mean(nil)` is `(null, 0)` on the wire and the C++
-  side returns 0, which the tests assert.
+- **The carrier is visible in the signature.** Four `noexcept` calls return a
+  value and no error. The one throwing call returns an error and no value.
+- **Infrastructure stays out of the API.** This example has no status accessor
+  to exclude. Its failures are exceptions, and the shim is the C++ frame that
+  catches them.
 
 ## The benchmark
 
-`make bench` runs [`examples/stats/stats_bench_test.go`](https://github.com/Manu343726/cppgo/blob/main/examples/stats/stats_bench_test.go),
-which compares each function against a pure-Go implementation over the same
-memory. Two sizes matter and they answer different questions:
+`make bench` compares each function against a pure-Go implementation over the
+same memory. This page does **not** quote its results. They are run-to-run measurements on one machine, and the example's own README records the run it took. Two sizes matter and answer different questions:
 
-- **8 elements** — the cost is the crossing (the Asm trampoline plus the
-  wrapper). Compare it with the project's 13.9 ns figure, and remember the clock
-  caveat on [benchmarks]({{< ref "project/benchmarks.md" >}}).
-- **a million elements** — the cost is memory bandwidth; the crossing is noise.
-  That is precisely why the slice is passed as `(pointer, length)` and not
-  copied.
+- **8 elements** — the cost is the crossing (the trampoline plus the wrapper).
+  Compare it with the project's 15.9 ns figure, and remember the clock caveat on
+  [benchmarks]({{< ref "project/benchmarks.md" >}}).
+- **a million elements** — the cost is memory bandwidth. The crossing is noise.
+  That is why the slice is passed as `(pointer, length)`.
 
-This page does **not** quote the benchmark's results: they were not measured for
-this page, and they depend on your CPU, compiler and Go version. Run it:
-
-```console
-$ cd examples/stats
-$ make bench
-```
-
-Read the `cppgo` and `go` arms of each sub-benchmark. The difference at
-`n=8` is the boundary; at `n=1048576` the two should be close, because the
-arithmetic dominates. If they are not, the C++ loop is not doing what you think
-— usually because it is not vectorisable as written.
-
-Next: the [manual]({{< ref "manual/_index.md" >}}) for the rules behind all of
-this.
+Next is the [manual]({{< ref "manual/_index.md" >}}) for the rules behind all
+of this.

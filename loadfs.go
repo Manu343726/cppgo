@@ -16,13 +16,13 @@ import (
 )
 
 // LibraryPathEnv is the environment variable that overrides OpenFS with an
-// explicit library path. When it is non-empty OpenFS extracts nothing and
-// loads that path instead, which is how a development build points the same
+// explicit library path. When it is non-empty OpenFS skips extraction and
+// loads that path instead. That is how a development build points the same
 // program at a library the C++ build left in place:
 //
 //	CPPGO_LIBRARY_PATH=/path/to/libmathx.so ./my-program
 //
-// The override names the object to load; that object still resolves its own
+// The override names the object to load. That object still resolves its own
 // dependencies through the dynamic loader's search path.
 const LibraryPathEnv = "CPPGO_LIBRARY_PATH"
 
@@ -44,7 +44,7 @@ const (
 
 	// tempPattern is the prefix os.CreateTemp fills in for the file that is
 	// about to be renamed into place. CreateTemp creates it with O_EXCL and
-	// 0600 inside the private cache directory, so the name is randomised and
+	// 0600 inside the private cache directory, so the name is randomized and
 	// can never be a world-writable path somebody prepared in advance.
 	tempPattern = ".cppgo-extract-*"
 )
@@ -54,12 +54,11 @@ const (
 var errFileChanged = errors.New("file changed while it was being extracted")
 
 // CacheDir returns the directory below which OpenFS extracts embedded shared
-// objects: os.UserCacheDir()/cppgo. One subdirectory per embedded set lives
-// there, named after the set's SHA-256.
+// objects. That is os.UserCacheDir()/cppgo, and one subdirectory per embedded
+// set lives there, named after the set's SHA-256.
 //
-// The path is a location, not a promise that anything is in it: OpenFS creates
-// it on first use. It is a function rather than a constant because
-// os.UserCacheDir reads the environment.
+// The path is a location. OpenFS creates the directory on first use. It is a
+// function because os.UserCacheDir reads the environment.
 func CacheDir() (string, error) {
 	base, err := os.UserCacheDir()
 	if err != nil {
@@ -72,11 +71,11 @@ func CacheDir() (string, error) {
 // CleanCache removes every library OpenFS has extracted for the current user.
 //
 // It is the cache-clear helper a program runs to reclaim disk or to start from
-// a known state: a later OpenFS extracts again from whatever it is given.
+// a known state. A later OpenFS extracts again from whatever it is given.
 // Removing the cache while another goroutine or process is loading from it is
-// not synchronised — an object already mapped stays mapped, and a process that
-// extracts again recreates the entry — so a program calls it when it is the
-// only user of the cache, normally at startup or shutdown.
+// unsynchronized. An object already mapped stays mapped, and a process that
+// extracts again recreates the entry. A program calls it when it is the only
+// user of the cache, normally at startup or shutdown.
 func CleanCache() error {
 	dir, err := CacheDir()
 	if err != nil {
@@ -90,49 +89,48 @@ func CleanCache() error {
 	return nil
 }
 
-// OpenFS loads a shared object that is embedded in the program, materialising
+// OpenFS loads a shared object that is embedded in the program, materializing
 // every shared object of fsys in a private cache first.
 //
-// fsys is any file system: an embed.FS produced by //go:embed is the intended
+// fsys is any file system. An embed.FS produced by //go:embed is the intended
 // source, and fstest.MapFS or os.DirFS serve the same purpose in tests and in
 // development. name is the base name of the object to load and must be one of
 // the ".so" entries of fsys.
 //
-// Every shared object in fsys is extracted, not only name, because the
-// dependencies of an object are loaded by the dynamic loader and not by this
-// function: the cppgo shim and the user's library are two files that have to
-// sit beside each other, and a sibling is found through the DT_RUNPATH the
-// loading object was linked with, conventionally
+// Every shared object in fsys is extracted. The dependencies of an object are
+// loaded by the dynamic loader. This function therefore has to put the cppgo
+// shim and the user's library in one directory, where they sit beside each
+// other. A sibling is found through the DT_RUNPATH the loading object was
+// linked with. That path is conventionally
 //
 //	-Wl,-rpath,$ORIGIN
 //
-// so the loader looks in the directory the object itself was loaded from. A
-// dependency that is not embedded — libc, libm, libstdc++, libgcc_s, or any
-// system library the C++ side linked against — still comes from the loader's
-// normal search path. Embedding makes the C++ side one file to ship; it does
-// not make the Go binary static, and the binary is still dynamically linked to
-// libc.
+// and it makes the loader search the directory the object itself was loaded
+// from. A dependency left out of the embedded set (libc, libm, libstdc++,
+// libgcc_s, or any system library the C++ side linked against) still comes from
+// the loader's normal search path. Embedding makes the C++ side one file to
+// ship. It leaves the Go binary dynamically linked to libc.
 //
 // Entries whose name ends in ".so" are extracted even when they live in a
 // subdirectory, flattened into one directory because that is the only layout
-// in which $ORIGIN sees them; two entries with one base name are an error
-// rather than a silent last-one-wins. Other files are ignored.
+// in which $ORIGIN sees them. Two entries with one base name are an error.
+// Other files are ignored.
 //
-// The cache is CacheDir()/<sha256>/<name>, where the digest covers the whole
-// embedded set — every name, size and content — so a change to any of them
-// lands in a new directory and an old directory is never combined with new
-// contents. The directory is created 0700 and every file 0600, and a mode that
-// was loosened is tightened; a path in the cache's place that is not a private
-// directory — a symbolic link, a regular file, or a directory that cannot be
-// made private — fails with ErrInsecureCache instead of being used. A file is
-// written to a temporary file in that directory and renamed into place, so a
-// reader never sees a partial object and concurrent goroutines or processes
-// cannot corrupt an entry. An existing file is reused only when its size and
-// SHA-256 match what was embedded, so a corrupted or truncated cache entry is
-// replaced instead of loaded. The set is hashed on every call, which is what
-// makes that check meaningful; the cost is one read of the embedded bytes.
+// The cache is CacheDir()/<sha256>/<name>. The digest covers the whole embedded
+// set (every name, size and content). A change to any of them lands in a new
+// directory, and an old directory is never combined with new contents. The
+// directory is created 0700 and every file 0600, and a mode that was loosened
+// is tightened. A path in the cache's place that fails the private-directory
+// check (a symbolic link, a regular file, or a directory that cannot be made
+// private) is rejected with ErrInsecureCache. A file is written to a
+// temporary file in that directory and renamed into place. A reader never sees
+// a partial object, and concurrent goroutines or processes cannot corrupt an
+// entry. An existing file is reused only when its size and SHA-256 match what
+// was embedded. A corrupted or truncated cache entry is replaced. The set is
+// hashed on every call, and that is what makes the reuse check meaningful. The
+// cost is one read of the embedded bytes.
 //
-// OpenFS is the deployment path: a program that embeds its C++ side needs no
+// OpenFS is the deployment path. A program that embeds its C++ side needs no
 // C++ build at run time and no library path in its environment. For a library
 // the C++ build already produced, Open is the call. LibraryPathEnv overrides
 // this function with an explicit path.
@@ -252,7 +250,7 @@ func setDigest(objects []object) string {
 	return hex.EncodeToString(digest[:])
 }
 
-// extract materialises every object in a cache directory named after the set
+// extract materializes every object in a cache directory named after the set
 // and returns it.
 func extract(fsys fs.FS, objects []object) (string, error) {
 	root, err := CacheDir()
@@ -269,7 +267,7 @@ func extract(fsys fs.FS, objects []object) (string, error) {
 	}
 
 	for _, o := range objects {
-		if err := materialise(fsys, dir, o); err != nil {
+		if err := materialize(fsys, dir, o); err != nil {
 			return "", err
 		}
 	}
@@ -312,8 +310,8 @@ func privateDir(dir string) error {
 	return nil
 }
 
-// materialise writes o into dir unless a correct copy is already there.
-func materialise(fsys fs.FS, dir string, o object) error {
+// materialize writes o into dir unless a correct copy is already there.
+func materialize(fsys fs.FS, dir string, o object) error {
 	target := filepath.Join(dir, o.name)
 
 	reuse, err := reusable(target, o)

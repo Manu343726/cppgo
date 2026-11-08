@@ -21,7 +21,7 @@ func TestMaterialiseReportsAnUnusableDirectory(t *testing.T) {
 	fsys := fstest.MapFS{"libx.so": &fstest.MapFile{Data: []byte("payload"), Mode: 0o644}}
 	missing := filepath.Join(t.TempDir(), "absent")
 
-	err := materialise(fsys, missing, object{name: "libx.so", source: "libx.so", size: 7})
+	err := materialize(fsys, missing, object{name: "libx.so", source: "libx.so", size: 7})
 	require.Error(t, err)
 
 	var extractErr *ExtractError

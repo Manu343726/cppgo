@@ -34,9 +34,10 @@ linters:
 
   settings:
     misspell:
-      # The code and prose use British spellings ("initialised", "honouring",
-      # "materialises"); US locale would flag them all without finding a defect.
-      locale: UK
+      # US English throughout, which is also how the domain's own names are
+      # spelled (`Synthesized`, `specialization`, `Color`). A UK locale flagged
+      # every one of them without finding a defect.
+      locale: US
     revive:
       # Only the rules that matter for a small library with a documented API.
       rules:

@@ -67,8 +67,8 @@ type Flags struct {
 	Compiler string
 }
 
-// Assumed reports whether these flags are a guess rather than something the
-// project declared. The generator must say so on stderr when it is true.
+// Assumed reports whether the project declared these flags or flag discovery
+// guessed them. The generator must say so on stderr when this is true.
 func (f *Flags) Assumed() bool { return f.Source == SourceFallback }
 
 // DiscoverOptions controls flag discovery.
@@ -84,12 +84,12 @@ type DiscoverOptions struct {
 }
 
 // Discover finds the compilation flags for a C++ file, following clangd's
-// resolution order instead of inventing one:
+// resolution order:
 //
 //  1. An explicit -compile-commands path, else the CompileFlags.
 //     CompilationDatabase named by a .clangd, else the nearest
 //     compile_commands.json found by walking up from the file's directory.
-//     The database entry for the file is used; when the file is a header with
+//     The database entry for the file is used. When the file is a header with
 //     no entry of its own, the entry of a source that includes it is used.
 //  2. .clangd files in the file's directory and in its ancestors, merged
 //     outermost first as clangd does through CompileFlags.Compiler,
@@ -97,9 +97,9 @@ type DiscoverOptions struct {
 //  3. Otherwise -std=c++17 -I<dir of the file>, reported as an assumption.
 //
 // A few arguments that would confuse a parse-only run are dropped on the way
-// through: the input file itself, -c, and -o with its value. The language is
-// always made explicit (-x c++-header for headers), because libclang would
-// otherwise treat a .h header as C and produce unmangled names.
+// through. Those are the input file itself, -c, and -o with its value. The
+// language is always made explicit (-x c++-header for headers), because libclang
+// would otherwise treat a .h header as C and produce unmangled names.
 func Discover(opts DiscoverOptions) (*Flags, error) {
 	if opts.File == "" {
 		return nil, errors.New("cxx: no file to discover flags for")
@@ -495,7 +495,7 @@ func includes(source, headerBase string) bool {
 	return false
 }
 
-// splitCommand splits a shell command line into words, honouring single and
+// splitCommand splits a shell command line into words, honoring single and
 // double quotes and backslash escapes. A compile_commands.json "command" is a
 // shell string, so this is the only correct way to read it.
 func splitCommand(command string) ([]string, error) {

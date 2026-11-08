@@ -4,9 +4,9 @@ import (
 	"strings"
 )
 
-// Kind is the C++ flavour of a declaration, which is what decides the ABI
-// shape of the call: constructors and methods carry an implicit `this`,
-// static methods and free functions do not.
+// Kind is the C++ flavor of a declaration. It decides the ABI shape of the
+// call. Constructors and methods carry an implicit `this`, and static methods
+// and free functions carry none.
 type Kind uint8
 
 const (
@@ -43,8 +43,8 @@ func (k Kind) String() string {
 }
 
 // TypeKind is the ABI-facing classification of a parameter or result type. It
-// is deliberately coarse: it is what decides whether a value travels in an
-// integer register or in an XMM register, which is all the emitter needs.
+// is deliberately coarse. It decides whether a value travels in an integer
+// register or in an XMM register. That is all the emitter needs.
 type TypeKind string
 
 const (
@@ -120,8 +120,9 @@ type Param struct {
 }
 
 // IsStream reports whether the value is a canonical C++ stream reference or
-// value: std::basic_ostream<C,T> or std::basic_istream<C,T>, which is what the
-// std::ostream/istream aliases resolve to. The operator naming rule uses it.
+// value. The canonical forms are std::basic_ostream<C,T> and
+// std::basic_istream<C,T>, and the std::ostream/istream aliases resolve to
+// them. The operator naming rule uses it.
 func (p Param) IsStream() bool {
 	if p.Ptr && p.Pointee != nil {
 		return p.Pointee.stream()
@@ -132,7 +133,7 @@ func (p Param) IsStream() bool {
 // stream checks the declaration spelling and the canonical record name. The
 // spelling is the reliable half: libclang's canonical form of a reference to
 // the std::ostream alias can be wrong (it resolves to int), so an alias is
-// recognised by how it is written.
+// recognized by how it is written.
 func (p Param) stream() bool {
 	if strings.HasPrefix(p.RecordName, "std::basic_ostream<") ||
 		strings.HasPrefix(p.RecordName, "std::basic_istream<") {
@@ -162,7 +163,7 @@ trimmed:
 
 // Symbol is one bindable C++ function.
 //
-// The field that matters most is HasOutOfLineBody: a member defined inside its
+// The field that matters most is HasOutOfLineBody. A member defined inside its
 // class definition is implicitly inline, emits no dynamic symbol, and binding
 // it produces a trampoline that fails at load time. See Project for how the
 // answer is computed across translation units.
@@ -173,7 +174,7 @@ type Symbol struct {
 	// Mangled is the Itanium C++ ABI mangled name, taken from libclang and
 	// never assembled by hand: "_ZNK5mathx6Vector4normEv".
 	Mangled string
-	// Kind is the declaration flavour.
+	// Kind is the declaration flavor.
 	Kind Kind
 	// IsConst is true for a const member function: the mangling carries K.
 	IsConst bool
@@ -282,14 +283,14 @@ func (l *Libclang) isPureVirtual(cursor CXCursor) bool {
 }
 
 // HasExportedSymbol reports whether a library built from these sources must
-// export Mangled: the function needs a definition outside its class definition
-// and external linkage. A namespace-scope `static` function has the first and
-// not the second, and a template pattern has neither until it is instantiated.
+// export Mangled. The function needs a definition outside its class definition
+// and external linkage. A namespace-scope `static` function has the first
+// only, and a template pattern has both only once it is instantiated.
 //
-// One corner is not covered: for an abstract class, clang++ emits only the
-// base-object constructor (C2) and not the complete-object one (C1), which is
-// what libclang's mangling names. g++ emits both. Nothing a binding tool can do
-// about it beyond failing at load time, which it does loudly.
+// One corner falls outside the rule. For an abstract class, clang++ emits only
+// the base-object constructor (C2), while libclang's mangling names the
+// complete-object one (C1). g++ emits both. A binding tool can only fail at
+// load time, which it does loudly.
 func (s Symbol) HasExportedSymbol() bool {
 	if s.IsTemplate {
 		return false
@@ -409,7 +410,7 @@ func (e *extractor) visit(cursor, parent CXCursor) int32 {
 		// instantiated. Its members are collected and marked.
 		return visitRecurse
 	case cursorClassTemplatePartialSpecialization:
-		// A partial specialisation is a pattern, not a type: its members are
+		// A partial specialization is a pattern, not a type: its members are
 		// read from its cursor when an instantiation matches it.
 		return visitContinue
 	case cursorNamespace, cursorClassDecl, cursorStructDecl, cursorUnionDecl,
@@ -693,8 +694,8 @@ func (l *Libclang) qualifiedName(cursor CXCursor) (string, bool) {
 		cursor = l.f.getSemanticParent(cursor)
 		kind := l.f.getCursorKind(cursor)
 		spelling := l.str(l.f.getCursorSpelling(cursor))
-		// A member of a full or partial specialisation is named after the
-		// specialisation, not after the pattern: Q<int>::Kind, not Q::Kind.
+		// A member of a full or partial specialization is named after the
+		// specialization, not after the pattern: Q<int>::Kind, not Q::Kind.
 		// libclang spells the parent "Q" for all three, so the arguments are
 		// what tell them apart.
 		if isSpecializationRecordKind(kind) {
@@ -710,7 +711,7 @@ func (l *Libclang) qualifiedName(cursor CXCursor) (string, bool) {
 	return qualify(spelling, parents)
 }
 
-// isSpecializationRecordKind reports the cursor kinds a specialisation can be
+// isSpecializationRecordKind reports the cursor kinds a specialization can be
 // declared with. The primary pattern is a ClassTemplate and is not one.
 func isSpecializationRecordKind(kind int32) bool {
 	switch kind {
@@ -733,7 +734,7 @@ type parentName struct {
 // linkage), and a chain that never reaches the translation unit.
 func qualify(spelling string, parents []parentName) (string, bool) {
 	if spelling == "" || strings.HasPrefix(spelling, "(") {
-		// An unnamed entity. libclang synthesises a spelling for these —
+		// An unnamed entity. libclang synthesizes a spelling for these —
 		// "(unnamed enum at /tmp/…/mathx.hpp:183:1)" — and a source path is
 		// not a name: it differs between machines and would make generated
 		// output non-deterministic. There is nothing to bind under it either.
@@ -803,7 +804,7 @@ func (l *Libclang) param(t CXType) Param {
 	}
 	if p.Ptr {
 		// The pointee is read from the surface type: libclang's canonical form
-		// of a reference to a typedef of a class template specialisation can
+		// of a reference to a typedef of a class template specialization can
 		// be wrong (std::ostream & canonically becomes int &).
 		p.Pointee = l.pointee(t)
 	}
