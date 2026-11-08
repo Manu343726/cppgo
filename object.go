@@ -6,17 +6,17 @@ import (
 	"unsafe"
 )
 
-// Object is storage a C++ value lives in whose layout Go does not know.
+// Object is storage for a C++ value whose layout Go cannot see.
 //
-// The generator creates one for every opaque bound record: a Go allocation,
-// aligned and pinned so its address does not move, handed to the C++ side as
-// this. The reference count is Go's, not C++'s: Retain lets several Go values
-// share one object, and Release drops one reference; the concrete destructor
+// The generator creates one for every opaque bound record. It is a Go
+// allocation, aligned and pinned so its address stays put, handed to the
+// C++ side as this. The reference count is Go's. Retain lets several Go values
+// share one object, and Release drops one reference. The concrete destructor
 // the object was created with runs exactly once, when the last reference goes.
 //
-// The zero Object is not usable and Object values are never copied: always hold
-// a *Object, which is what NewObject returns. Addr, Retain and Release are safe
-// for concurrent use once the object exists; Retain must not race with the
+// The zero Object is unusable, and Object values are never copied. Always hold
+// a *Object. NewObject returns one. Addr, Retain and Release are safe
+// for concurrent use once the object exists. Retain must not race with the
 // last Release, because that would be a use-after-free by another name.
 type Object struct {
 	// pinner keeps the storage from moving while C++ holds its address. It is
@@ -39,8 +39,8 @@ type Object struct {
 // and returns an object whose reference count starts at one.
 //
 // release runs exactly once, when the last reference is released. It is the
-// concrete destructor: for a value constructed into this storage, it calls the
-// C++ destructor at Addr; for a value the shim heap-allocated, it deletes it.
+// concrete destructor. A value constructed into this storage gets the C++
+// destructor called at Addr. A value the shim heap-allocated is deleted.
 // A nil release is allowed and means the storage needs no destructor.
 //
 // An align of 0 is treated as 1, and a size of 0 still yields a valid, non-nil
@@ -87,7 +87,7 @@ func (o *Object) Retain() {
 // function runs and the storage is unpinned.
 //
 // Releasing a nil object is a no-op. Releasing an object whose count is already
-// zero does nothing more: the destructor has run and is never run twice.
+// zero has no further effect. The destructor has run and is never run twice.
 func (o *Object) Release() {
 	if o == nil {
 		return
