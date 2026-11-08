@@ -5,8 +5,9 @@ name: CI
 # Why an image at all: CI used to inherit its toolchain from `ubuntu-latest`, and when that
 # image stopped shipping libclang, internal/cxx silently skipped itself, its coverage vanished
 # and the 99% gate failed for a reason that had nothing to do with the code. The Dockerfile
-# pins Go, g++ 14, clang/libclang 22, golangci-lint, hugo, binutils and make instead, so the
-# environment is a reviewed artefact. It also carries the target libraries #15's tests bind
+# pins Go, g++ 14, clang/libclang 22, golangci-lint, hugo, binutils, make and Node 20 instead,
+# so the environment is a reviewed artefact. Node is there for `make prose-check`, whose checker
+# is a Node script; `scripts/prose-check.sh` also needs `perl`, which the base carries. It also carries the target libraries #15's tests bind
 # against the real thing and not a mock — Eigen 3.4.0 and OpenCV 4.10.0 from trixie's archive,
 # ArrayFire 3.10.0 (CPU backend) built from source because the archive has no package for it;
 # the provenance of each and the build-time compile/link/run check are in the `Dockerfile`.
@@ -115,7 +116,7 @@ name: CI
 #
 # The gates below are the repository's: `CGO_ENABLED=0 go build`, `go vet`, `golangci-lint`,
 # `make fmt-check`, the two test passes (`CGO_ENABLED=0`, then `-race` with atomic coverage), the
-# coverage gate at 99.0% and the examples build. Nothing here weakens a Makefile target or the
+# coverage gate at 99.0%, the examples build and `make prose-check`. Nothing here weakens a Makefile target or the
 # threshold, and the suite is the same one `.github/workflows/ci.yml` runs.
 #
 # The order of the steps is a reporting decision and not a gate decision. The two test passes
@@ -147,7 +148,7 @@ env:
   # coverage profile and the gate then fails with a number nobody can explain. Require libclang
   # instead of skipping.
   CPPGO_REQUIRE_LIBCLANG: '1'
-  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-0e49b1c2f9b7
+  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-e1efb00b847f
 
 jobs:
   test:
@@ -161,7 +162,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-0e49b1c2f9b7
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-e1efb00b847f
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}
@@ -223,6 +224,12 @@ jobs:
       - name: Build the examples
         run: ./scripts/build-examples.sh
 
+      - name: Prose gate (make prose-check)
+        # The vendored technical-prose checker, run by the image's Node: README, DESIGN, docs,
+        # site, example READMEs and godoc, against the fail thresholds the skill ships. A hard
+        # gate — the step fails with the checker's own exit status, and nothing here softens it.
+        run: make prose-check
+
       - name: golangci-lint
         # Last on purpose: the suite and the coverage number are the report a reader needs, and
         # a style finding must not be able to hide them. It is still a gate — the job fails here
@@ -266,7 +273,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-0e49b1c2f9b7
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-e1efb00b847f
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}
