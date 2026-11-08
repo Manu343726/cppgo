@@ -1,0 +1,116 @@
+package gen
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// tmplConfig is the template fixture with both explicit instantiations named.
+func tmplConfig() Config {
+	cfg := fixtureConfig("tmpl", "cell.hpp")
+	cfg.Instantiate = []string{"tmpl::Cell<int>", "tmpl::Cell<double>"}
+	return cfg
+}
+
+// TestInstantiateModel checks that -instantiate selects the concrete records
+// and that their pattern members are bound with the substituted signatures.
+func TestInstantiateModel(t *testing.T) {
+	model, err := build(tmplConfig())
+	require.NoError(t, err)
+
+	intCell := findRecord(t, model, "CellInt")
+	assert.False(t, intCell.Mirrored, "a user constructor and destructor make it opaque")
+	assert.Equal(t, "tmpl::Cell<int>", intCell.CxxName)
+	require.NotNil(t, intCell.Dtor)
+	require.Len(t, intCell.Ctors, 1)
+	assert.Equal(t, "value", intCell.Ctors[0].Params[0].Name)
+	assert.Equal(t, "int32", intCell.Ctors[0].Params[0].Type.Go)
+
+	doubleCell := findRecord(t, model, "CellFloat64")
+	assert.Equal(t, "tmpl::Cell<double>", doubleCell.CxxName)
+
+	findBinding(t, model, "NewCellInt")
+	findBinding(t, model, "NewCellFloat64")
+	var get *binding
+	for _, candidate := range model.bindings {
+		if candidate.GoName == "Get" && candidate.Owner != nil && candidate.Owner.GoName == "CellInt" {
+			get = candidate
+		}
+	}
+	require.NotNil(t, get)
+	assert.Equal(t, "int32", get.Result.Go)
+}
+
+// TestInstantiateOutput checks the generated Go names and the shim's use of the
+// instantiated type spelling.
+func TestInstantiateOutput(t *testing.T) {
+	files := renderMap(t, tmplConfig())
+	gen := files[GenFileName]
+	for _, want := range []string{
+		"type CellInt struct {\n\tobj *cppgo.Object\n}",
+		"type CellFloat64 struct {\n\tobj *cppgo.Object\n}",
+		"func NewCellInt(value int32) (*CellInt, error)",
+		"func NewCellFloat64(value float64) (*CellFloat64, error)",
+		"func (c *CellInt) Get() (int32, error)",
+		"func (c *CellFloat64) Set(value float64) error",
+	} {
+		assert.Contains(t, gen, want)
+	}
+	shim := files[ShimSourceFileName]
+	assert.Contains(t, shim, "new (self) ::tmpl::Cell<int>(value)")
+	assert.Contains(t, shim, "static_cast<::tmpl::Cell<int> *>(self)->~Cell()")
+	assert.Contains(t, shim, "static_cast<const ::tmpl::Cell<double> *>(self)->get()")
+}
+
+// TestInstantiateUnmatched checks that a typo in -instantiate cannot silently
+// emit nothing.
+func TestInstantiateUnmatched(t *testing.T) {
+	cfg := fixtureConfig("tmpl", "cell.hpp")
+	cfg.Instantiate = []string{"tmpl::Cell<float>"}
+	_, err := build(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-instantiate tmpl::Cell<float>")
+	assert.Contains(t, err.Error(), "names no instantiation")
+}
+
+// TestTemplateWithoutInstantiate checks that the template error points at the
+// flag that exists.
+func TestTemplateWithoutInstantiate(t *testing.T) {
+	cfg := fixtureConfig("tmpl", "cell.hpp")
+	_, err := build(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "class template is not a type")
+	assert.Contains(t, err.Error(), "-instantiate 'tmpl::Cell<...>'")
+}
+
+// TestInstantiateShimCompiles compiles the generated shim and links it with the
+// fixture's translation unit, which is where the explicit instantiations live.
+func TestInstantiateShimCompiles(t *testing.T) {
+	gxx, err := exec.LookPath("g++")
+	if err != nil {
+		t.Skip("g++ is not in PATH")
+	}
+	out := t.TempDir()
+	cfg := tmplConfig()
+	cfg.Out = out
+	require.NoError(t, Generate(cfg))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	library := filepath.Join(out, "libtmpl.so")
+	args := []string{"-std=c++17", "-O1", "-fPIC", "-shared", "-I" + cwd,
+		filepath.Join(cwd, "testdata", "tmpl", "cell.cpp"),
+		filepath.Join(out, ShimSourceFileName), "-o", library}
+	output, err := exec.Command(gxx, args...).CombinedOutput()
+	require.NoErrorf(t, err, "g++ rejected the template shim:\n%s", output)
+
+	exported, err := exec.Command("nm", "-D", "--defined-only", library).Output()
+	require.NoError(t, err)
+	assert.True(t, strings.Contains(string(exported), "cppgo_thunk_"), "the shim's thunks must be exported")
+}

@@ -36,6 +36,17 @@ const (
 	classFloat
 )
 
+// stdRole says what one wire word is for a standard-library parameter: the
+// primary word (which the shim turns into the C++ value) or an extra word such
+// as the length.
+type stdRole uint8
+
+const (
+	stdRoleNone stdRole = iota
+	stdRolePrimary
+	stdRoleExtra
+)
+
 // SysV AMD64 argument registers, assigned independently per class.
 var (
 	intRegs   = []string{"DI", "SI", "DX", "CX", "R8", "R9"}
@@ -124,6 +135,18 @@ type wireArg struct {
 	// param is the C++ parameter this argument fills, zero for this and for a
 	// thunk's out-pointer.
 	param cxx.Param
+	// stdRole is set for a standard-library parameter's words.
+	stdRole stdRole
+	// stdKind, stdLocal, stdArgs, stdElem and stdMove describe the C++ value
+	// the shim builds from the primary word.
+	stdKind  stdKind
+	stdLocal string
+	stdArgs  []string
+	stdElem  *goType
+	stdType  *goType
+	stdMove  bool
+	// isOut marks a standard-library result's out-parameter.
+	isOut bool
 }
 
 // binding is one callable C++ declaration bound to Go.
@@ -173,6 +196,16 @@ type binding struct {
 	Slots []*slot
 	// Frame is the trampoline frame size.
 	Frame int
+	// hasStd is true when the signature names a standard-library type.
+	hasStd bool
+	// StdResult is true when the result is a standard-library value, which the
+	// thunk copies out through out-parameters.
+	StdResult bool
+	// stdDecls are the Go locals the out-parameters point at.
+	stdDecls []string
+	// usesFree is true when the binding's result is a heap copy that the Go
+	// side must release with the cppgo_free helper.
+	usesFree bool
 	// Out is the result a thunk writes through an out-pointer, nil when the
 	// value comes back in a register or there is no value.
 	Out *goType
@@ -187,12 +220,18 @@ type packageModel struct {
 	cfg      Config
 	mapper   *mapper
 	name     string
+	flags    []string
 	library  string
 	headers  []string
 	records  []*recordModel
 	bindings []*binding
 	verified string
 	warn     []string
+	// usesFree is true when a result is a heap copy that Go releases with
+	// cppgo_free.
+	usesFree bool
+	// usesSpan is true when the generated shim needs <span> (C++20).
+	usesSpan bool
 }
 
 // builder carries the state of one model build.
@@ -207,8 +246,20 @@ type builder struct {
 	// order records the insertion order of records, for deterministic output.
 	order    []string
 	bindings []*binding
-	verified string
-	warnings []string
+	// synthMembers are the members of included template specialisations. The
+	// model reads them from the pattern, because libclang exposes no cursor for
+	// the instantiated definition, so they are not in the project's symbol list.
+	synthMembers []cxx.Symbol
+	// instantiateMatched tracks the -instantiate entries a record matched.
+	instantiateMatched []bool
+	verified           string
+	warnings           []string
+	// flags are the compilation flags the headers were parsed with. The shim
+	// self-check parses the generated translation unit with the same ones.
+	flags    []string
+	usesFree bool
+	// usesSpan is true when the generated shim needs <span> (C++20).
+	usesSpan bool
 }
 
 // build loads the headers and turns the model into a package model.
@@ -222,8 +273,11 @@ func build(cfg Config) (*packageModel, error) {
 	if cfg.Library == "" {
 		return nil, fmt.Errorf("cppgo: -library is required: name the shared object Open loads")
 	}
-	b := &builder{cfg: cfg, records: map[string]*recordModel{}}
+	b := &builder{cfg: cfg, records: map[string]*recordModel{}, instantiateMatched: make([]bool, len(cfg.Instantiate))}
 	if err := b.load(); err != nil {
+		return nil, err
+	}
+	if err := b.rejectUnimplemented(); err != nil {
 		return nil, err
 	}
 	b.mapper = &mapper{records: b.records}
@@ -256,6 +310,9 @@ func (b *builder) load() error {
 		project, err := cxx.Open(cxx.Options{Header: header, CompileCommands: b.cfg.CompileCommands})
 		if err != nil {
 			return fmt.Errorf("cppgo: %s: %w", header, err)
+		}
+		if b.flags == nil {
+			b.flags = append([]string(nil), project.Flags.Args...)
 		}
 		if project.Flags.Assumed() {
 			b.warnings = append(b.warnings, fmt.Sprintf("the compilation flags for %s are an assumption (%s); a parse without the project's real flags can misread the header", header, project.Flags.Detail))
@@ -296,21 +353,20 @@ func (b *builder) buildRecords() error {
 	sort.Slice(b.rawRecords, func(i, j int) bool {
 		return b.rawRecords[i].QualifiedName < b.rawRecords[j].QualifiedName
 	})
-	if len(b.rawEnums) > 0 {
-		return fmt.Errorf("cppgo: enum %s: emitting enums is not implemented by this build yet", b.rawEnums[0].QualifiedName)
-	}
 	for _, rec := range b.rawRecords {
 		if rec.IsTemplate {
-			return fmt.Errorf("cppgo: %s: a class template is not a type until it is instantiated; name the instantiation with -instantiate", rec.QualifiedName)
+			continue
 		}
-		if len(rec.StaticFields) > 0 {
-			return fmt.Errorf("cppgo: %s::%s: emitting static data members is not implemented by this build yet", rec.QualifiedName, rec.StaticFields[0].Name)
-		}
-		if len(rec.MemberTemplates) > 0 {
-			return fmt.Errorf("cppgo: %s::%s: emitting member function templates is not implemented by this build yet", rec.QualifiedName, rec.MemberTemplates[0].QualifiedName)
+		if rec.IsTemplateSpecialization {
+			// A specialisation is part of the API only when the manifest names
+			// it: the user chooses which concrete types to emit.
+			if !b.instantiationNamed(rec.QualifiedName) {
+				continue
+			}
+			b.synthMembers = append(b.synthMembers, rec.Members...)
 		}
 		model := &recordModel{
-			GoName:               exportName(simpleName(rec.QualifiedName)),
+			GoName:               goRecordName(rec.QualifiedName),
 			CxxName:              rec.QualifiedName,
 			Size:                 rec.SizeBytes,
 			Align:                rec.AlignBytes,
@@ -321,7 +377,9 @@ func (b *builder) buildRecords() error {
 		if !model.Mirrored {
 			for _, field := range rec.Fields {
 				if field.Access == cxx.AccessPublic {
-					return fmt.Errorf("cppgo: %s: field accessors for an opaque record are not implemented by this build yet", rec.QualifiedName)
+					return recordError(rec, pending(
+						fmt.Sprintf("the public field %s of an opaque record is not emitted by this build yet", field.Name),
+						"make the field private and expose an accessor in C++, or make the record a POD"))
 				}
 			}
 		}
@@ -337,6 +395,11 @@ func (b *builder) buildRecords() error {
 		}
 		b.records[rec.QualifiedName] = model
 		b.order = append(b.order, rec.QualifiedName)
+	}
+	for i, entry := range b.cfg.Instantiate {
+		if !b.instantiateMatched[i] {
+			return fmt.Errorf("cppgo: -instantiate %s: it names no instantiation this header declares; add an explicit instantiation such as 'template struct ...;' to the header", entry)
+		}
 	}
 	return nil
 }
@@ -420,10 +483,8 @@ func mirrorFieldType(p cxx.Param) *goType {
 // buildBindings turns every public declaration into a binding, before
 // selection and naming.
 func (b *builder) buildBindings() error {
-	for _, sym := range b.symbols {
-		if sym.IsTemplate {
-			return fmt.Errorf("cppgo: %s: a template is not a type until it is instantiated; name the instantiation with -instantiate", sym.QualifiedName)
-		}
+	symbols := append(append([]cxx.Symbol(nil), b.symbols...), b.synthMembers...)
+	for _, sym := range symbols {
 		owner := b.records[sym.Parent]
 		if owner == nil {
 			if sym.Kind != cxx.FreeFunc {
@@ -431,15 +492,9 @@ func (b *builder) buildBindings() error {
 				// to bind it to.
 				continue
 			}
-			if sym.IsOperator || sym.IsConversion {
-				return fmt.Errorf("cppgo: %s: binding operators is not implemented by this build yet", sym.QualifiedName)
-			}
-			if sym.IsVariadic {
-				return fmt.Errorf("cppgo: %s: variadic functions are not implemented by this build yet", sym.QualifiedName)
-			}
 			binding, err := b.newBinding(sym, nil)
 			if err != nil {
-				return err
+				return symbolError(sym, err)
 			}
 			b.bindings = append(b.bindings, binding)
 			continue
@@ -456,7 +511,7 @@ func (b *builder) buildBindings() error {
 			case sym.IsCopyConstructor:
 				clone, err := b.newBinding(sym, owner)
 				if err != nil {
-					return err
+					return symbolError(sym, err)
 				}
 				clone.IsConstructor = false
 				clone.IsClone = true
@@ -469,7 +524,7 @@ func (b *builder) buildBindings() error {
 			default:
 				ctor, err := b.newBinding(sym, owner)
 				if err != nil {
-					return err
+					return symbolError(sym, err)
 				}
 				owner.Ctors = append(owner.Ctors, ctor)
 				b.bindings = append(b.bindings, ctor)
@@ -487,15 +542,9 @@ func (b *builder) buildBindings() error {
 			if sym.IsPureVirtual || sym.IsDeleted {
 				continue
 			}
-			if sym.IsVariadic {
-				return fmt.Errorf("cppgo: %s: variadic functions are not implemented by this build yet", sym.QualifiedName)
-			}
-			if sym.IsOperator || sym.IsConversion {
-				return fmt.Errorf("cppgo: %s: binding operators is not implemented by this build yet", sym.QualifiedName)
-			}
 			method, err := b.newBinding(sym, owner)
 			if err != nil {
-				return err
+				return symbolError(sym, err)
 			}
 			if sym.Kind == cxx.StaticMethod {
 				owner.Statics = append(owner.Statics, method)
@@ -619,19 +668,31 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	if err := b.lowerParams(binding); err != nil {
 		return nil, err
 	}
+	for _, param := range binding.Params {
+		if param.Type.Std != stdNone {
+			binding.hasStd = true
+		}
+	}
 	if !binding.IsConstructor && !binding.IsDestructor {
 		result, err := b.mapper.mapType(sym.Result)
 		if err != nil {
-			return nil, fmt.Errorf("cppgo: %s: %w", sym.QualifiedName, err)
+			return nil, fmt.Errorf("result: %w", err)
 		}
 		if result.Kind != goVoid {
+			if result.Std == stdUniquePtr || result.Std == stdSharedPtr {
+				return nil, pending(fmt.Sprintf("%q is a smart-pointer result", sym.Result.Spelling), "return the object by value or through a reference at the C++ boundary")
+			}
 			if result.Kind == goRecord {
-				return nil, unsupported(sym.Result, "a record by value as a result")
+				return nil, pending(fmt.Sprintf("%q is returned by value", sym.Result.Spelling), "return it through an out parameter or a reference at the C++ boundary")
 			}
 			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored {
-				return nil, unsupported(sym.Result, "a pointer to an opaque record as a result")
+				return nil, pending(fmt.Sprintf("%q is a pointer to an opaque record", sym.Result.Spelling), "return it through a reference at the C++ boundary")
 			}
 			binding.Result = result
+			if result.Std != stdNone {
+				binding.StdResult = true
+				binding.hasStd = true
+			}
 		}
 	}
 	b.chooseCarrier(binding)
@@ -639,18 +700,22 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		return nil, err
 	}
 	if binding.Carrier == thunk && binding.Status && binding.Result != nil {
-		binding.Out = binding.Result
-		binding.OutLocal = outLocalType(binding.Result)
-		binding.Wire = append(binding.Wire, &wireArg{
-			label:    "out",
-			slotType: "unsafe.Pointer",
-			class:    classInt,
-			size:     8,
-			expr:     "unsafe.Pointer(&cppgoResult)",
-			keep:     "&cppgoResult",
-			cType:    outParamType(binding.Result),
-			cName:    "cppgo_result",
-		})
+		if binding.StdResult {
+			b.addStdResult(binding)
+		} else {
+			binding.Out = binding.Result
+			binding.OutLocal = outLocalType(binding.Result)
+			binding.Wire = append(binding.Wire, &wireArg{
+				label:    "out",
+				slotType: "unsafe.Pointer",
+				class:    classInt,
+				size:     8,
+				expr:     "unsafe.Pointer(&cppgoResult)",
+				keep:     "&cppgoResult",
+				cType:    outParamType(binding.Result),
+				cName:    "cppgo_result",
+			})
+		}
 	}
 	binding.ID = shortHash(displaySignature(sym))
 	binding.SymbolVar = "cppgoSym_" + binding.ID
@@ -700,6 +765,27 @@ func (b *builder) lowerParams(binding *binding) error {
 	}
 	for i := 0; i < len(params); i++ {
 		p := params[i]
+		if _, isStd := stdTypeName(p); isStd {
+			if p.Pointee != nil && !p.Pointee.IsConst && strings.HasSuffix(strings.TrimSpace(p.Spelling), "&") {
+				return fmt.Errorf("parameter %s: %w", p.Name, pending(
+					fmt.Sprintf("%q is a non-const standard-library reference", p.Spelling),
+					"take it by value or by const reference; copy-back is not emitted by this build yet"))
+			}
+			mapped, err := b.mapper.mapType(p)
+			if err != nil {
+				return fmt.Errorf("parameter %s: %w", p.Name, err)
+			}
+			if mapped.Std == stdUniquePtr || mapped.Std == stdSharedPtr {
+				return fmt.Errorf("parameter %s: %w", p.Name, pending(
+					fmt.Sprintf("%q is a smart-pointer parameter", p.Spelling),
+					"take the object by reference or by pointer at the C++ boundary"))
+			}
+			name := uniqueName(paramName(p.Name, visible), taken)
+			visible++
+			binding.Params = append(binding.Params, &goParam{Name: name, Type: mapped})
+			b.stdParamWire(binding, p, mapped, name, addWire)
+			continue
+		}
 		if elem, ok := b.sliceElement(p); ok {
 			j := i
 			for j < len(params) {
@@ -753,10 +839,10 @@ func (b *builder) lowerParams(binding *binding) error {
 		}
 		mapped, err := b.mapper.mapType(p)
 		if err != nil {
-			return fmt.Errorf("cppgo: %s: parameter %s: %w", binding.sym.QualifiedName, p.Name, err)
+			return fmt.Errorf("parameter %s: %w", p.Name, err)
 		}
 		if mapped.Kind == goRecord {
-			return fmt.Errorf("cppgo: %s: passing a record by value is not implemented by this build yet", binding.sym.QualifiedName)
+			return pending(fmt.Sprintf("the record parameter %q is passed by value", p.Spelling), "take it by const reference or by pointer at the C++ boundary")
 		}
 		name := uniqueName(paramName(p.Name, visible), taken)
 		visible++
@@ -766,6 +852,121 @@ func (b *builder) lowerParams(binding *binding) error {
 		addWire(wire)
 	}
 	return nil
+}
+
+// stdParamWire lowers one standard-library parameter. The Go value is the
+// table's shape; the wire words are what the shim needs to build the C++
+// value, and the primary word carries the construction recipe.
+func (b *builder) stdParamWire(binding *binding, p cxx.Param, mapped *goType, goName string, add func(*wireArg)) {
+	base := cIdent(p.Name)
+	local := "cppgo_" + base
+	next := func(arg *wireArg) *wireArg {
+		arg.label = "a" + itoa(len(binding.Wire))
+		add(arg)
+		return arg
+	}
+	pointer := func(expr, keep, cType, cName string) *wireArg {
+		return &wireArg{
+			slotType: "unsafe.Pointer", class: classInt, size: 8,
+			expr: expr, keep: keep, cType: cType, cName: cName, param: p,
+		}
+	}
+	switch mapped.Std {
+	case stdString, stdStringView:
+		data := base + "_data"
+		size := base + "_size"
+		primary := next(pointer("cppgo.StrPtr("+goName+")", goName, "const char *", data))
+		next(&wireArg{
+			slotType: "uint64", class: classInt, size: 8,
+			expr: "uint64(len(" + goName + "))", cType: "size_t", cName: size, param: p,
+			stdRole: stdRoleExtra,
+		})
+		primary.stdRole = stdRolePrimary
+		primary.stdKind = mapped.Std
+		primary.stdLocal = local
+		primary.stdArgs = []string{data, size}
+		primary.stdType = mapped
+	case stdVector, stdSpan:
+		elem := mapped.Elem
+		data := base + "_data"
+		size := base + "_size"
+		cType := elem.Cxx + " *"
+		if elem.Const {
+			cType = "const " + cType
+		}
+		primary := next(pointer("cppgo.Ptr("+goName+")", goName, cType, data))
+		next(&wireArg{
+			slotType: "uint64", class: classInt, size: 8,
+			expr: "uint64(len(" + goName + "))", cType: "size_t", cName: size, param: p,
+			stdRole: stdRoleExtra,
+		})
+		primary.stdRole = stdRolePrimary
+		primary.stdKind = mapped.Std
+		primary.stdLocal = local
+		primary.stdArgs = []string{data, size}
+		primary.stdElem = elem
+		primary.stdType = mapped
+	case stdArray:
+		data := base + "_data"
+		primary := next(pointer("unsafe.Pointer(&"+goName+"[0])", goName, "const "+mapped.Elem.Cxx+" *", data))
+		primary.stdRole = stdRolePrimary
+		primary.stdKind = mapped.Std
+		primary.stdLocal = local
+		primary.stdArgs = []string{data}
+		primary.stdElem = mapped.Elem
+		primary.stdType = mapped
+	case stdOptional:
+		value := base + "_value"
+		primary := next(pointer("unsafe.Pointer("+goName+")", goName, "const "+mapped.Elem.Cxx+" *", value))
+		primary.stdRole = stdRolePrimary
+		primary.stdKind = mapped.Std
+		primary.stdLocal = local
+		primary.stdArgs = []string{value}
+		primary.stdElem = mapped.Elem
+		primary.stdType = mapped
+	}
+}
+
+// addStdResult appends the out-parameters a standard-library result crosses
+// through, and the Go locals they aim at.
+func (b *builder) addStdResult(binding *binding) {
+	result := binding.Result
+	out := func(expr, keep, cType, cName string) *wireArg {
+		arg := &wireArg{
+			label:    "a" + itoa(len(binding.Wire)),
+			slotType: "unsafe.Pointer",
+			class:    classInt,
+			size:     8,
+			expr:     expr,
+			keep:     keep,
+			cType:    cType,
+			cName:    cName,
+			isOut:    true,
+		}
+		binding.Wire = append(binding.Wire, arg)
+		return arg
+	}
+	switch result.Std {
+	case stdString, stdStringView:
+		binding.stdDecls = []string{"var cppgoData unsafe.Pointer", "var cppgoSize uint64"}
+		out("unsafe.Pointer(&cppgoData)", "&cppgoData", "void **", "cppgo_out_data")
+		out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
+		binding.usesFree = true
+		b.usesFree = true
+	case stdVector, stdSpan:
+		binding.stdDecls = []string{"var cppgoData unsafe.Pointer", "var cppgoSize uint64"}
+		out("unsafe.Pointer(&cppgoData)", "&cppgoData", "void **", "cppgo_out_data")
+		out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
+		binding.usesFree = true
+		b.usesFree = true
+	case stdArray:
+		binding.stdDecls = []string{"var cppgoResult " + result.Go}
+		out("unsafe.Pointer(&cppgoResult[0])", "&cppgoResult", "void *", "cppgo_out_data")
+	case stdOptional:
+		binding.stdDecls = []string{"var cppgoResult " + result.Elem.Go, "var cppgoHas int32"}
+		out("unsafe.Pointer(&cppgoResult)", "&cppgoResult", "void *", "cppgo_out_value")
+		out("unsafe.Pointer(&cppgoHas)", "&cppgoHas", "int32_t *", "cppgo_out_has")
+	}
 }
 
 // paramWire builds the wire argument for one ordinary parameter.
@@ -842,6 +1043,9 @@ func isLengthParam(p cxx.Param) bool {
 func (b *builder) chooseCarrier(binding *binding) {
 	sym := binding.sym
 	switch {
+	case binding.hasStd:
+		binding.Carrier = thunk
+		binding.Reason = "standard-library type: the thunk constructs, copies and destroys it"
 	case sym.IsTemplate:
 		binding.Carrier = thunk
 		binding.Reason = "template: no symbol until it is instantiated"
@@ -865,7 +1069,10 @@ func (b *builder) chooseCarrier(binding *binding) {
 		binding.Reason = "noexcept, out of line, not virtual, register class"
 	}
 	if binding.Carrier == thunk {
-		binding.Status = !sym.IsNoExcept
+		// A standard-library argument is marshalled inside the thunk, and that
+		// marshalling allocates, so such a call can fail even when the C++
+		// declaration is noexcept.
+		binding.Status = !sym.IsNoExcept || binding.hasStd
 	}
 	if binding.IsConstructor || binding.IsDestructor {
 		binding.ErrorResult = true
@@ -939,6 +1146,9 @@ func (b *builder) model() *packageModel {
 		bindings: b.bindings,
 		verified: b.verified,
 		warn:     b.warnings,
+		flags:    b.flags,
+		usesFree: b.usesFree,
+		usesSpan: b.mapper.usesSpan,
 	}
 }
 

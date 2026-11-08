@@ -15,6 +15,7 @@ func goldenFixtures() map[string]Config {
 		"mathx":     mathxConfig(),
 		"types":     fixtureConfig("types", "types.hpp"),
 		"overloads": fixtureConfig("overloads", "overloads.hpp"),
+		"std":       fixtureConfig("std", "std.hpp"),
 	}
 }
 

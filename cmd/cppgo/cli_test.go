@@ -287,3 +287,60 @@ func mustGen(t *testing.T, args ...string) int {
 	require.Equal(t, exitOK, code, "cppgo %v: %s", args, stderr)
 	return code
 }
+
+// stdDequeHeader is a standard-library type outside DESIGN.md's table: the
+// generator must refuse it, not guess.
+var stdDequeHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "errors", "stddeque.hpp")
+
+// tmplHeader is the class template fixture.
+var tmplHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "tmpl", "cell.hpp")
+
+// TestGenUnimplementedConstructFailsWithoutWriting is the integrity gate: an
+// unimplemented construct is exit 1, a one-line message, and no output files.
+func TestGenUnimplementedConstructFailsWithoutWriting(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	code, stdout, stderr := exec("gen", "-header", stdDequeHeader, "-package", "err", "-library", "liberr", "-out", out)
+	assert.Equal(t, exitError, code)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "outside the emitted table")
+	assert.Contains(t, stderr, "; ")
+	_, err := os.Stat(out)
+	assert.True(t, os.IsNotExist(err), "a failed generation must not create the output directory")
+}
+
+// TestGenInstantiate exercises the flag the template error names.
+func TestGenInstantiate(t *testing.T) {
+	out := t.TempDir()
+	mustExec(t, "gen", "-header", tmplHeader, "-package", "tmpl", "-library", "libtmpl",
+		"-instantiate", "tmpl::Cell<int>", "-out", out)
+	data, err := os.ReadFile(filepath.Join(out, gen.GenFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "type CellInt struct")
+	assert.NotContains(t, string(data), "CellFloat64", "only the named instantiation is emitted")
+}
+
+// TestGenInstantiateUnmatched checks the typo is an error, not an empty package.
+func TestGenInstantiateUnmatched(t *testing.T) {
+	code, stdout, stderr := exec("gen", "-header", tmplHeader, "-package", "tmpl", "-library", "libtmpl",
+		"-instantiate", "tmpl::Cell<float>", "-out", t.TempDir())
+	assert.Equal(t, exitError, code)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "names no instantiation")
+}
+
+// badShimHeader is the template whose thunk cannot compile.
+var badShimHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "badshim", "badshim.hpp")
+
+// TestGenUncompilableShimFails proves the shim self-check is a generation
+// gate: the thunk does not compile, so the command exits 1 and writes nothing.
+func TestGenUncompilableShimFails(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	code, stdout, stderr := exec("gen", "-header", badShimHeader, "-package", "bad", "-library", "libbad",
+		"-instantiate", "bad::Bad<int>", "-out", out)
+	assert.Equal(t, exitError, code)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "the generated shim does not compile")
+	assert.Contains(t, stderr, "bad::Bad<int>::get")
+	_, err := os.Stat(out)
+	assert.True(t, os.IsNotExist(err), "a failed generation must not create the output directory")
+}

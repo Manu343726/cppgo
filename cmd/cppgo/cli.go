@@ -126,7 +126,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		}
 		c.printGenUsage(c.stderr)
 	}
-	var headers, bind, exclude, rename stringList
+	var headers, bind, exclude, instantiate, rename stringList
 	fs.Var(&headers, "header", "C++ header to bind; repeat for several")
 	packageName := fs.String("package", "", "Go package name")
 	library := fs.String("library", "", "shared object Open loads")
@@ -134,6 +134,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 	compileCommands := fs.String("compile-commands", "", "compile_commands.json (or its directory) for the header's flags")
 	fs.Var(&bind, "bind", "add a root; repeatable")
 	fs.Var(&exclude, "exclude", "remove a root; repeatable")
+	fs.Var(&instantiate, "instantiate", "concrete template specialisation to emit; repeatable")
 	fs.Var(&rename, "rename", "<qualified signature>=<GoName>; repeatable")
 	check := fs.Bool("check", checkMode, "report whether the generated files are up to date instead of writing them")
 	quiet := fs.Bool("q", false, "suppress the per-binding report and the confirmation message")
@@ -164,6 +165,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		CompileCommands: *compileCommands,
 		Bind:            bind,
 		Exclude:         exclude,
+		Instantiate:     instantiate,
 		Rename:          rename,
 		Warnings:        c.stderr,
 	}
@@ -221,6 +223,7 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: cppgo gen -header <path> [-header <path>]... -package <name>")
 	fmt.Fprintln(w, "                  -library <name-or-path> [-out <dir>] [-compile-commands <path>]")
 	fmt.Fprintln(w, "                  [-bind <qualified>]... [-exclude <qualified>]...")
+	fmt.Fprintln(w, "                  [-instantiate '<specialisation>']...")
 	fmt.Fprintln(w, "                  [-rename '<signature>=<GoName>']... [-check] [-q]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "gen reads the C++ headers through libclang and writes:")
@@ -252,6 +255,9 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "        add a root (a namespace, class, member or function); repeatable")
 	fmt.Fprintln(w, "  -exclude qualified")
 	fmt.Fprintln(w, "        remove a root; repeatable")
+	fmt.Fprintln(w, "  -instantiate 'mathx::Box<int>'")
+	fmt.Fprintln(w, "        emit a concrete template specialisation; repeatable. The header must")
+	fmt.Fprintln(w, "        make the instantiation visible, e.g. 'template struct Box<int>;'")
 	fmt.Fprintln(w, "  -rename 'signature=GoName'")
 	fmt.Fprintln(w, "        resolve a Go name collision; repeatable")
 	fmt.Fprintln(w, "  -check")
