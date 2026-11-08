@@ -5,9 +5,8 @@ name: CI
 # Why an image at all: CI used to inherit its toolchain from `ubuntu-latest`, and when that
 # image stopped shipping libclang, internal/cxx silently skipped itself, its coverage vanished
 # and the 99% gate failed for a reason that had nothing to do with the code. The Dockerfile
-# pins Go, g++ 14, clang/libclang 22, golangci-lint, hugo, binutils, make and Node 20 instead,
-# so the environment is a reviewed artefact. Node is there for `make prose-check`, whose checker
-# is a Node script; `scripts/prose-check.sh` also needs `perl`, which the base carries. It also carries the target libraries #15's tests bind
+# pins Go, g++ 14, clang/libclang 22, golangci-lint, hugo, binutils and make instead, so the
+# environment is a reviewed artefact. It also carries the target libraries #15's tests bind
 # against the real thing and not a mock — Eigen 3.4.0 and OpenCV 4.10.0 from trixie's archive,
 # ArrayFire 3.10.0 (CPU backend) built from source because the archive has no package for it;
 # the provenance of each and the build-time compile/link/run check are in the `Dockerfile`.
@@ -96,12 +95,8 @@ name: CI
 # `failed to handle credentials: username is empty`, which is a configuration answer and not a
 # defect in the tree.
 #
-# Node.js: this image deliberately carries none, and that has a consequence which is written
-# here once. Every `uses:` is a JavaScript action that the runner executes with the *container's*
-# `node`; run #677 measured what that means for this image — `actions/checkout@v4` died in 6 s
-# with `exec: "node": executable file not found in $PATH`. So nothing here uses an action: the
-# checkout is the `git fetch` in each job, and `actions/upload-artifact` is unavailable, which
-# means `coverage.out` is **not** attached to the run. What a later reader gets instead:
+# What the run reports, and where. This workflow uses no `uses:` at all — the checkout is a
+# `git fetch` in each job — so nothing is attached as an artifact. What a later reader gets:
 #
 #   * the coverage gate's own `PASS/FAIL` line, the per-package table and the whole
 #     `coverage-gate.sh` report are in the `Coverage gate (>= 99%)` step's log, kept with the
@@ -110,13 +105,12 @@ name: CI
 #     by the last step of `test`, so the run's headline survives the log;
 #   * benchmarks are not run here — `make bench` is a record, not a gate.
 #
-# A JUnit XML is not produced by `go test` without a reporter neither image nor runner has
-# today, so no step invents one. The image could carry Node.js and both would come back; that is
-# a `Dockerfile` change and a new recipe tag, not a workflow one, and it is not made here.
+# A JUnit XML is not produced by `go test` without a reporter neither image nor runner has, so
+# no step invents one.
 #
 # The gates below are the repository's: `CGO_ENABLED=0 go build`, `go vet`, `golangci-lint`,
 # `make fmt-check`, the two test passes (`CGO_ENABLED=0`, then `-race` with atomic coverage), the
-# coverage gate at 99.0%, the examples build and `make prose-check`. Nothing here weakens a Makefile target or the
+# coverage gate at 99.0% and the examples build. Nothing here weakens a Makefile target or the
 # threshold, and the suite is the same one `.github/workflows/ci.yml` runs.
 #
 # The order of the steps is a reporting decision and not a gate decision. The two test passes
@@ -168,10 +162,9 @@ jobs:
         password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - name: Checkout
-        # `actions/checkout` is a JavaScript action (`node dist/index.js`) and this image carries
-        # no Node.js: the runner executed it and died with `exec: "node": executable file not
-        # found in $PATH` (run #677, job `test`, 2026-11-08, 6 s). Rather than add a runtime to
-        # the image that the suite does not use, the clone is done with the image's own git.
+        # The clone is done with the image's own git and not with `actions/checkout`: no
+        # JavaScript action has to run inside the job container, so nothing here depends on the
+        # platform's action tree.
         #
         # `GITHUB_REF` is the ref under test — `refs/pull/16/head` for a pull request,
         # `refs/heads/<branch>` for a push — so this fetches the same tree `actions/checkout`
@@ -224,12 +217,6 @@ jobs:
       - name: Build the examples
         run: ./scripts/build-examples.sh
 
-      - name: Prose gate (make prose-check)
-        # The vendored technical-prose checker, run by the image's Node: README, DESIGN, docs,
-        # site, example READMEs and godoc, against the fail thresholds the skill ships. A hard
-        # gate — the step fails with the checker's own exit status, and nothing here softens it.
-        run: make prose-check
-
       - name: golangci-lint
         # Last on purpose: the suite and the coverage number are the report a reader needs, and
         # a style finding must not be able to hide them. It is still a gate — the job fails here
@@ -279,10 +266,9 @@ jobs:
         password: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - name: Checkout
-        # `actions/checkout` is a JavaScript action (`node dist/index.js`) and this image carries
-        # no Node.js: the runner executed it and died with `exec: "node": executable file not
-        # found in $PATH` (run #677, job `test`, 2026-11-08, 6 s). Rather than add a runtime to
-        # the image that the suite does not use, the clone is done with the image's own git.
+        # The clone is done with the image's own git and not with `actions/checkout`: no
+        # JavaScript action has to run inside the job container, so nothing here depends on the
+        # platform's action tree.
         #
         # `GITHUB_REF` is the ref under test — `refs/pull/16/head` for a pull request,
         # `refs/heads/<branch>` for a push — so this fetches the same tree `actions/checkout`

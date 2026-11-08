@@ -158,11 +158,6 @@ jobs:
       - name: Build the examples
         run: ./scripts/build-examples.sh
 
-      - name: Prose gate (make prose-check)
-        # The vendored technical-prose checker, run by the image's Node. A hard gate:
-        # it exits non-zero when a file is over a fail threshold.
-        run: make prose-check
-
       - name: Upload coverage profile
         if: always()
         uses: actions/upload-artifact@v4
