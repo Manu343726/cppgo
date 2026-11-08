@@ -44,6 +44,36 @@
 # there, so a pin that falls behind the code fails the build rather than the
 # test suite.
 #
+# The target libraries (#15). These exist so the target-use-case tests run against
+# the real libraries and not against mocks, and each one's provenance is written
+# here because it decides how a bump is done:
+#
+#   Eigen 3.4.0        package `libeigen3-dev` (trixie). Header-only, no runtime.
+#   OpenCV 4.10.0      packages `libopencv-core-dev`, `libopencv-imgproc-dev`,
+#                      `libopencv-imgcodecs-dev` (trixie). The component -dev
+#                      packages and NOT the `libopencv-dev` metapackage: the
+#                      metapackage pulls the whole GUI chain (Qt5, GTK, Vulkan,
+#                      OpenCL ICD) for `highgui`, which this image has no use
+#                      for. The consequence, said plainly: OpenCV's own
+#                      `opencv4.pc` and `OpenCVConfig.cmake` ship only in that
+#                      metapackage, so the interface here is the header tree plus
+#                      the component libraries:
+#
+#                        -I/usr/include/opencv4
+#                        -lopencv_core -lopencv_imgproc -lopencv_imgcodecs
+#
+#                      `pkg-config --modversion opencv4` therefore does NOT
+#                      work in this image, by choice; `dpkg-query -W
+#                      libopencv-core-dev` names the version instead.
+#   ArrayFire 3.10.0   built from source in the `arrayfire` stage below: trixie's
+#                      archive has no ArrayFire package at all (`apt-cache policy
+#                      libarrayfire-dev` resolves nothing), so there is nothing to
+#                      install. CPU backend only — no CUDA, no OpenCL, no oneAPI,
+#                      no graphics, no image IO, no tests, no examples — installed
+#                      to /usr/local as `libaf` (unified) plus `libafcpu`.
+#
+# Qt is out of scope and is not installed anywhere in this image.
+#
 # Runs as root, deliberately: GitHub Actions container jobs start as root, so a
 # non-root USER here would either be ignored (the runner passes --user) or make
 # the bind-mounted workspace unwritable. No HEALTHCHECK either: this is a build
@@ -137,6 +167,86 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
+# Stage 1c — ArrayFire, CPU backend only, from source. Trixie ships no package
+# (`apt-cache policy libarrayfire-dev` is empty), and #15 needs the real library,
+# so it is built here from a pinned release tag and the final image takes only
+# its installed tree. Nothing in this stage reaches the final image except
+# /staging/arrayfire.
+# ---------------------------------------------------------------------------
+FROM debian:${DEBIAN_VERSION}-slim AS arrayfire
+
+# Pinned release, and the only floating thing about it is the tarball itself:
+# codeload generates an archive per request, so a checksum of it is not stable
+# and pinning one would only document a number that changes. The tag is the pin.
+ARG ARRAYFIRE_VERSION=v3.10.0
+
+# The CPU backend links FFTW for its FFT and BLAS/LAPACK for its linear algebra,
+# so both are real dependencies here and not niceties: without them ArrayFire
+# builds with its slow internal fallbacks or fails outright. Boost's headers are
+# a configure-time requirement of the CPU backend's sort-by-key kernels: without
+# them CMake reports `Found relative path while evaluating include directories
+# … "Boost_INCLUDE_DIR-NOTFOUND"` for every one of them (measured), so
+# `libboost-dev` is here for the headers and nothing else. `liblapacke-dev` is
+# the C interface the CPU backend's `lapack_helper.hpp` includes directly — the
+# Fortran `liblapack-dev` alone stops the compile at `lapacke.h: No such file`.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      cmake \
+      curl \
+      g++ \
+      git \
+      libboost-dev \
+      libfftw3-dev \
+      liblapack-dev \
+      liblapacke-dev \
+      libopenblas-dev \
+      make \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN set -eux; \
+    curl -fsSL --retry 3 --retry-delay 2 -o arrayfire.tar.gz \
+      "https://codeload.github.com/arrayfire/arrayfire/tar.gz/refs/tags/${ARRAYFIRE_VERSION}"; \
+    tar -xzf arrayfire.tar.gz --strip-components=1; \
+    rm -f arrayfire.tar.gz
+
+# `git` is not for this recipe: ArrayFire's own CMake clones `forge` (its windowing
+# dependency, pinned by the tree at v1.0.8) while configuring, even with
+# `AF_BUILD_FORGE=OFF`, which only switches off *building* it. Without git the
+# configure dies with `could not find git for clone of af_forge-populate`
+# (measured). It also fetches boost_compute, so this stage is not hermetic: both
+# clones are pinned by REFs inside the tarball, and both stay in this stage.
+#
+# BUILD_TESTING=OFF is load-bearing, not tidiness: ArrayFire's test tree downloads
+# sparse datasets from the network at configure time and fails the build when it
+# cannot (measured on the first attempt, with the error coming out of
+# test/CMakeModules/download_sparse_datasets.cmake). AF_BUILD_GRAPHICS is not
+# even offered as an option in 3.10; forge is only pulled in by AF_BUILD_FORGE,
+# which stays OFF.
+# CMAKE_INSTALL_PREFIX is /usr/local — where the files really end up — and the
+# staged copy is produced with DESTDIR. That is not a style choice: ArrayFire's
+# unified `libaf` resolves its backends through the install prefix compiled into
+# it, so staging with `--prefix /staging/arrayfire` leaves it looking for
+# `libafcpu` under a directory that only existed during the build, and the first
+# `af::constant` dies with `ArrayFire couldn't locate any backends` (measured).
+RUN cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DBUILD_TESTING=OFF \
+      -DAF_BUILD_CPU=ON \
+      -DAF_BUILD_CUDA=OFF \
+      -DAF_BUILD_OPENCL=OFF \
+      -DAF_BUILD_ONEAPI=OFF \
+      -DAF_BUILD_UNIFIED=ON \
+      -DAF_BUILD_EXAMPLES=OFF \
+      -DAF_BUILD_DOCS=OFF \
+      -DAF_WITH_IMAGEIO=OFF \
+      -DAF_BUILD_FORGE=OFF \
+ && cmake --build build --parallel "$(nproc)" \
+ && DESTDIR=/staging/arrayfire cmake --install build
+
+# ---------------------------------------------------------------------------
 # Stage 2 — the image CI runs in.
 # ---------------------------------------------------------------------------
 FROM debian:${DEBIAN_VERSION}-slim
@@ -201,6 +311,19 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 #                    out-of-line bodies. Its absence makes those tests SKIP and
 #                    the coverage gate fail — exactly the class of bug this
 #                    image exists to prevent, so it is explicit, not implicit.
+#   libeigen3-dev,   the target libraries #15's tests bind: Eigen's headers,
+#   libopencv-       OpenCV's core/imgproc/imgcodecs components (not the GUI
+#   core-dev,        chain — see the header), and ArrayFire, which is copied in
+#   libopencv-       from the stage above because trixie has no package for it.
+#   imgproc-dev,
+#   libopencv-
+#   imgcodecs-dev
+#   libfftw3-*3,     ArrayFire's *runtime*: the CPU backend links FFTW, LAPACKE
+#   liblapacke,      and OpenBLAS in the builder stage, so those shared objects
+#   libopenblas0     must exist here too. Without them `dlopen("libafcpu.so.3")`
+#                    fails on unresolved dependencies and every af_* call answers
+#                    `ArrayFire couldn't locate any backends` — which reads like
+#                    a broken build and is a missing package (measured).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash \
@@ -211,6 +334,14 @@ RUN apt-get update \
       g++ \
       git \
       libclang-${CLANG_VERSION}-dev \
+      libeigen3-dev \
+      libfftw3-double3 \
+      libfftw3-single3 \
+      liblapacke \
+      libopenblas0 \
+      libopencv-core-dev \
+      libopencv-imgcodecs-dev \
+      libopencv-imgproc-dev \
       make \
       pkg-config \
       xz-utils \
@@ -221,6 +352,13 @@ RUN apt-get update \
       /usr/share/man/* \
       /usr/share/info/* \
  && find /usr/lib/llvm-*/lib -maxdepth 1 -name '*.a' -delete
+
+# ArrayFire, CPU backend, built in the `arrayfire` stage and staged under
+# DESTDIR: `/staging/arrayfire/usr/local/{lib,include,share}` is exactly the
+# layout /usr/local has, and libaf's compiled-in prefix is /usr/local, so the
+# unified dispatcher finds libafcpu where it expects it.
+COPY --from=arrayfire /staging/arrayfire/usr/local/ /usr/local/
+RUN ldconfig
 
 COPY --from=fetch /staging/rootfs/usr/local/go /usr/local/go
 COPY --from=fetch /staging/rootfs/usr/local/bin/golangci-lint /usr/local/bin/golangci-lint
@@ -307,6 +445,83 @@ RUN git config --system --add safe.directory '*'
 ENV PATH="/usr/local/go/bin:${PATH}" \
     GOTOOLCHAIN=local \
     LANG=C.UTF-8
+
+# The target libraries, proven by a real compile, a real link and a real run
+# rather than by a package listing: Eigen is header-only so its check is the
+# compile and the trace, OpenCV's is a `cv::Mat` through `cvtColor`, and
+# ArrayFire's is a reduction through the CPU backend plus the version the
+# library reports. A library that is present but broken fails here, at build
+# time, and not as an `undefined symbol` in a test months later.
+RUN <<'SCRIPT'
+set -eux
+
+mkdir -p /tmp/targets-check
+cat >/tmp/targets-check/check.cpp <<'CHECK'
+#include <cmath>
+#include <cstdio>
+
+#include <Eigen/Dense>
+#include <af/algorithm.h>
+#include <af/array.h>
+#include <af/data.h>
+#include <af/util.h>
+#include <opencv2/core.hpp>
+#include <opencv2/core/version.hpp>
+#include <opencv2/imgproc.hpp>
+
+int main() {
+    const Eigen::Matrix3d m = Eigen::Matrix3d::Identity();
+    const double trace = m.trace();
+
+    cv::Mat bgr(4, 4, CV_8UC3, cv::Scalar(0, 0, 255));
+    cv::Mat gray;
+    cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+    const int g = gray.at<uchar>(0, 0);
+
+    af::array a = af::constant(1.5, 3);
+    const double total = af::sum<double>(a);
+
+    int major = 0, minor = 0, patch = 0;
+    af_get_version(&major, &minor, &patch);
+
+    std::printf("eigen=%d.%d.%d trace=%.0f opencv=%s gray=%d arrayfire=%d.%d.%d sum=%.1f\n",
+                EIGEN_WORLD_VERSION, EIGEN_MAJOR_VERSION, EIGEN_MINOR_VERSION, trace,
+                CV_VERSION, g, major, minor, patch, total);
+
+    if (std::fabs(trace - 3.0) > 1e-9) return 1;
+    if (g <= 0) return 2;              /* BGR(0,0,255) is red: its grey is 76 */
+    if (std::fabs(total - 4.5) > 1e-9) return 3;
+    if (major == 0) return 4;
+    return 0;
+}
+CHECK
+
+g++ -std=c++17 -O2 -o /tmp/targets-check/check /tmp/targets-check/check.cpp \
+    -I/usr/include/eigen3 -I/usr/include/opencv4 \
+    -lopencv_core -lopencv_imgproc \
+    -laf
+
+ldconfig -p | grep -E 'libaf(cpu)?\.so|libspdlog\.so' || {
+  echo "the loader does not know /usr/local/lib libaf; the ld cache was not refreshed" >&2
+  exit 1
+}
+# The backend is loaded with dlopen at run time, so a missing runtime dependency
+# is invisible to the link above and only shows up as "couldn't locate any
+# backends". This is that check, named.
+if ldd /usr/local/lib/libafcpu.so.3 | grep -q 'not found'; then
+  ldd /usr/local/lib/libafcpu.so.3 >&2
+  echo "libafcpu has an unresolved dependency; the final image is missing a runtime library" >&2
+  exit 1
+fi
+AF_SHOW_LOAD_PATH=1 /tmp/targets-check/check
+
+# The headers and the ABI files the link above does not exercise.
+test -f /usr/include/eigen3/Eigen/Dense
+test -f /usr/include/opencv4/opencv2/imgproc.hpp
+test -f /usr/local/include/af/array.h
+ldconfig -p | grep -q 'libafcpu\.so'
+rm -rf /tmp/targets-check
+SCRIPT
 
 # Fail the build, not the job, if a pinned tool is missing or wrong.
 RUN set -eux; \
