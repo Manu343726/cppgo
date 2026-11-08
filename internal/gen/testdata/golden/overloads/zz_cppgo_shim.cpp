@@ -7,9 +7,15 @@
 
 #include "testdata/overloads/overloads.hpp"
 
+#include <array>
+#include <cstring>
 #include <exception>
+#include <memory>
 #include <new>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace {
 

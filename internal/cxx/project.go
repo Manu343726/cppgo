@@ -121,7 +121,9 @@ func (p *Project) parse(header string, opts Options) error {
 			}
 			args = other.Args
 		}
-		tu, err := p.Library.ParseTranslationUnit(file, args)
+		// The resource directory is what makes the standard headers resolve;
+		// without it libclang degrades std::vector and friends to int.
+		tu, err := p.Library.ParseTranslationUnit(file, p.Library.withResourceDir(args))
 		if err != nil {
 			return err
 		}

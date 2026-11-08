@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -266,6 +267,20 @@ func TestStdTypeName(t *testing.T) {
 
 	_, ok = stdTypeName(cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Vector"})
 	assert.False(t, ok)
+
+	_, ok = stdTypeName(cxx.Param{Kind: cxx.TypeOther, Spelling: "std::deque<int>"})
+	assert.False(t, ok, "only record and pointer declarations are library-shaped")
+	_, ok = stdTypeName(cxx.Param{Kind: cxx.TypeInteger, Spelling: "std::int32_t", SizeBytes: 4})
+	assert.False(t, ok, "a fixed-width alias is a scalar")
+	sizePointer := cxx.Param{Kind: cxx.TypePointer, Ptr: true, Spelling: "std::size_t *",
+		Pointee: &cxx.Param{Kind: cxx.TypeInteger, Spelling: "std::size_t", SizeBytes: 8}}
+	_, ok = stdTypeName(sizePointer)
+	assert.False(t, ok, "a pointer to a std scalar alias is a scalar pointer")
+	rvalue := cxx.Param{Kind: cxx.TypePointer, Ptr: true, Spelling: "std::vector<double> &&",
+		Pointee: &cxx.Param{Kind: cxx.TypeRecord, RecordName: "std::vector<double>"}}
+	name, ok = stdTypeName(rvalue)
+	assert.True(t, ok)
+	assert.Equal(t, "std::vector<double>", name)
 }
 
 // TestMissingRecordFix checks that a specialisation error names -instantiate.
@@ -274,4 +289,85 @@ func TestMissingRecordFix(t *testing.T) {
 	assert.Contains(t, specialization.Error(), "-instantiate 'mathx::Box<int>'")
 	plain := missingRecord(cxx.Param{Kind: cxx.TypeRecord, Spelling: "ns::Missing", RecordName: "ns::Missing"})
 	assert.Contains(t, plain.Error(), "include its complete definition")
+}
+
+// TestMapStd covers every row of DESIGN.md's standard-library table, its
+// malformed spellings, and the two smart-pointer shapes.
+func TestMapStd(t *testing.T) {
+	point := cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Point", ClangKind: "Record", RecordName: "mathx::Point"}
+	cases := []struct {
+		name    string
+		param   cxx.Param
+		wantGo  string
+		wantStd stdKind
+		wantErr string
+	}{
+		{"string", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::string"}, "string", stdString, ""},
+		{"string_view", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::string_view"}, "string", stdStringView, ""},
+		{"vector", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<double>"}, "[]float64", stdVector, ""},
+		{"span", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::span<const double>"}, "[]float64", stdSpan, ""},
+		{"array", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::array<int, 4>"}, "[4]int32", stdArray, ""},
+		{"optional", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::optional<double>"}, "*float64", stdOptional, ""},
+		{"optional record", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::optional<mathx::Point>"}, "*Point", stdOptional, ""},
+		{"vector record", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<mathx::Point>"}, "[]Point", stdVector, ""},
+		{"unique_ptr", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::unique_ptr<mathx::Vector>"}, "*Vector", stdUniquePtr, ""},
+		{"shared_ptr", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::shared_ptr<mathx::Vector>"}, "*Vector", stdSharedPtr, ""},
+		{"pointer to std", cxx.Param{Kind: cxx.TypePointer, Ptr: true, Spelling: "std::string *"}, "", stdNone, "pointer to a standard-library type"},
+		{"unknown std", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::deque<int>"}, "", stdNone, "outside the emitted table"},
+		{"vector two args", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<int, double>"}, "", stdNone, "one-argument"},
+		{"vector unclosed", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<int"}, "", stdNone, "is not a std::vector"},
+		{"array one arg", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::array<int>"}, "", stdNone, "two-argument"},
+		{"array bad count", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::array<int, x>"}, "", stdNone, "is not an array size"},
+		{"optional unknown", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::optional<ns::Missing>"}, "", stdNone, "not a scalar or a known record"},
+		{"span two args", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::span<int, double>"}, "", stdNone, "one-argument"},
+		{"array unclosed", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::array<int"}, "", stdNone, "is not a std::array"},
+		{"array unknown", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::array<ns::Missing, 2>"}, "", stdNone, "not a scalar or a known record"},
+		{"unique unclosed", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::unique_ptr<mathx::Vector"}, "", stdNone, "is not a std::unique_ptr"},
+		{"vector empty args", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<>"}, "", stdNone, "no template arguments"},
+		{"vector opaque", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<mathx::Vector>"}, "", stdNone, "not a POD"},
+		{"unique unknown", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::unique_ptr<ns::Missing>"}, "", stdNone, "not part of the generated API"},
+		{"shared two args", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::shared_ptr<mathx::Vector, int>"}, "", stdNone, "one-argument"},
+	}
+	_ = point
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// A fresh mapper per case: mapStd records the span header it needs.
+			mapped, err := testMapper().mapStd(tc.param, mustStdName(t, tc.param))
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantGo, mapped.Go)
+			assert.Equal(t, tc.wantStd, mapped.Std)
+		})
+	}
+}
+
+// mustStdName returns the normalised standard-library name of a platform.
+func mustStdName(t *testing.T, p cxx.Param) string {
+	t.Helper()
+	name, ok := stdTypeName(p)
+	if !ok {
+		// The pointer-to-std case is constructed directly.
+		name = strings.TrimSuffix(strings.TrimSpace(p.Spelling), " *")
+	}
+	return name
+}
+
+// TestLookupRecordAmbiguous checks the unqualified-spelling fallback's
+// ambiguity guard.
+func TestLookupRecordAmbiguous(t *testing.T) {
+	m := &mapper{records: map[string]*recordModel{
+		"a::V": {GoName: "AV"},
+		"b::V": {GoName: "BV"},
+	}}
+	_, ok := m.lookupRecord("V")
+	assert.False(t, ok, "an unqualified name that matches two records is ambiguous")
+	record, ok := m.lookupRecord("a::V")
+	assert.True(t, ok)
+	assert.Equal(t, "AV", record.GoName)
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // ResourceDirEnv names the environment variable that overrides the clang
@@ -69,3 +70,23 @@ func resourceDir(libPath string) string {
 // clang driver invocation, libclang loaded as a shared object does not add it
 // by itself.
 func (l *Libclang) ResourceDir() string { return resourceDir(l.path) }
+
+// withResourceDir adds -resource-dir when the arguments do not already name one
+// and a resource directory is discoverable. Project parsing uses it so the
+// standard headers resolve; a caller of ParseTranslationUnit controls its own
+// flag list.
+func (l *Libclang) withResourceDir(args []string) []string {
+	for _, arg := range args {
+		if arg == "-resource-dir" || arg == "--resource-dir" || strings.HasPrefix(arg, "-resource-dir=") {
+			return args
+		}
+	}
+	dir := resourceDir(l.path)
+	if dir == "" {
+		return args
+	}
+	out := make([]string, 0, len(args)+2)
+	out = append(out, "-resource-dir", dir)
+	out = append(out, args...)
+	return out
+}

@@ -42,6 +42,10 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 	h.WriteString(" * on this thread, or an empty string when there is none. The pointer\n")
 	h.WriteString(" * stays valid until the next thunk call on the same thread. */\n")
 	h.WriteString("const char *cppgo_last_error(void);\n")
+	if m.usesFree {
+		h.WriteString("/* cppgo_free releases a result copy the Go side has read. */\n")
+		h.WriteString("void cppgo_free(void *block);\n")
+	}
 
 	var s strings.Builder
 	s.WriteString(GeneratedBanner + "\n")
@@ -57,7 +61,11 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		seen[header] = true
 		fmt.Fprintf(&s, "#include %q\n", header)
 	}
-	s.WriteString("\n#include <exception>\n#include <new>\n#include <string>\n\n")
+	s.WriteString("\n#include <array>\n#include <cstring>\n#include <exception>\n#include <memory>\n#include <new>\n#include <optional>\n#include <string>\n#include <string_view>\n#include <vector>\n")
+	if m.usesSpan {
+		s.WriteString("#include <span>\n")
+	}
+	s.WriteString("\n")
 	s.WriteString("namespace {\n\n")
 	s.WriteString("// The message the failing thunk on this thread stored. It is cleared at the\n")
 	s.WriteString("// entry of every thunk, so a successful call can never report a stale error.\n")
@@ -66,6 +74,12 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 	s.WriteString("extern \"C\" const char *cppgo_last_error(void) {\n")
 	s.WriteString("\treturn cppgo_error_message.c_str();\n")
 	s.WriteString("}\n")
+	if m.usesFree {
+		s.WriteString("\n// cppgo_free releases a result copy the Go side has read.\n")
+		s.WriteString("extern \"C\" void cppgo_free(void *block) {\n")
+		s.WriteString("\t::operator delete[](block);\n")
+		s.WriteString("}\n")
+	}
 
 	var spans []thunkSpan
 	for _, binding := range m.bindings {
@@ -150,7 +164,14 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 	}
 	b.WriteString("\tcppgo_error_message.clear();\n")
 	b.WriteString("\ttry {\n")
-	if binding.Result != nil {
+	b.WriteString(m.stdLocals(binding))
+	if binding.StdResult {
+		result, err := m.stdResult(binding, call)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(result)
+	} else if binding.Result != nil {
 		fmt.Fprintf(&b, "\t\t*cppgo_result = %s;\n", call)
 	} else {
 		fmt.Fprintf(&b, "\t\t%s;\n", call)
@@ -170,7 +191,15 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 func (m *packageModel) targetCall(binding *binding) (string, error) {
 	args := make([]string, 0, len(binding.Wire))
 	for _, arg := range binding.Wire {
-		if arg.label == "this" || arg.label == "out" {
+		if arg.label == "this" || arg.label == "out" || arg.isOut || arg.stdRole == stdRoleExtra {
+			continue
+		}
+		if arg.stdRole == stdRolePrimary {
+			if arg.stdMove {
+				args = append(args, "std::move("+arg.stdLocal+")")
+			} else {
+				args = append(args, arg.stdLocal)
+			}
 			continue
 		}
 		expr, err := m.shimArg(arg.param, arg.cName)
@@ -227,4 +256,80 @@ func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
 		return "*" + name, nil
 	}
 	return name, nil
+}
+
+// stdLocals renders the C++ values the shim builds for a binding's
+// standard-library parameters. They live inside the try block, so an allocation
+// failure is translated like any other exception.
+func (m *packageModel) stdLocals(binding *binding) string {
+	var b strings.Builder
+	for _, arg := range binding.Wire {
+		if arg.stdRole != stdRolePrimary {
+			continue
+		}
+		elem := arg.stdElem
+		switch arg.stdKind {
+		case stdString:
+			fmt.Fprintf(&b, "\t\tstd::string %s(%s, %s);\n", arg.stdLocal, arg.stdArgs[0], arg.stdArgs[1])
+		case stdStringView:
+			fmt.Fprintf(&b, "\t\tstd::string_view %s(%s, %s);\n", arg.stdLocal, arg.stdArgs[0], arg.stdArgs[1])
+		case stdVector:
+			fmt.Fprintf(&b, "\t\tstd::vector<%s> %s;\n", elem.Cxx, arg.stdLocal)
+			fmt.Fprintf(&b, "\t\tif (%s != 0) { %s.assign(%s, %s + %s); }\n",
+				arg.stdArgs[1], arg.stdLocal, arg.stdArgs[0], arg.stdArgs[0], arg.stdArgs[1])
+		case stdSpan:
+			qualifier := ""
+			if elem.Const {
+				qualifier = "const "
+			}
+			fmt.Fprintf(&b, "\t\tstd::span<%s%s> %s(static_cast<%s%s *>(%s), %s);\n",
+				qualifier, elem.Cxx, arg.stdLocal, qualifier, elem.Cxx, arg.stdArgs[0], arg.stdArgs[1])
+		case stdArray:
+			fmt.Fprintf(&b, "\t\tstd::array<%s, %d> %s{};\n", elem.Cxx, arg.stdType.ArrayLen, arg.stdLocal)
+			fmt.Fprintf(&b, "\t\tfor (size_t cppgo_i = 0; cppgo_i < %d; ++cppgo_i) { %s[cppgo_i] = static_cast<const %s *>(%s)[cppgo_i]; }\n",
+				arg.stdType.ArrayLen, arg.stdLocal, elem.Cxx, arg.stdArgs[0])
+		case stdOptional:
+			fmt.Fprintf(&b, "\t\tstd::optional<%s> %s;\n", elem.Cxx, arg.stdLocal)
+			fmt.Fprintf(&b, "\t\tif (%s != nullptr) { %s = *static_cast<const %s *>(%s); }\n",
+				arg.stdArgs[0], arg.stdLocal, elem.Cxx, arg.stdArgs[0])
+		}
+	}
+	return b.String()
+}
+
+// stdResult renders the copy-out of a standard-library result into the
+// out-parameters the Go caller provided. The C++ value is destroyed at the end
+// of the thunk; what crosses is a plain array the Go side owns and frees.
+func (m *packageModel) stdResult(binding *binding, call string) (string, error) {
+	result := binding.Result
+	elem := result.Elem
+	var b strings.Builder
+	switch result.Std {
+	case stdString, stdStringView:
+		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
+		b.WriteString("\t\tconst size_t cppgo_size = cppgo_value.size();\n")
+		b.WriteString("\t\tchar *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));\n")
+		b.WriteString("\t\tif (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }\n")
+		b.WriteString("\t\t*cppgo_out_data = cppgo_copy;\n")
+		b.WriteString("\t\t*cppgo_out_size = cppgo_size;\n")
+	case stdVector, stdSpan:
+		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
+		b.WriteString("\t\tconst size_t cppgo_size = cppgo_value.size();\n")
+		fmt.Fprintf(&b, "\t\t%s *cppgo_copy = static_cast<%s *>(::operator new[]((cppgo_size == 0 ? 1 : cppgo_size) * sizeof(%s)));\n",
+			elem.Cxx, elem.Cxx, elem.Cxx)
+		b.WriteString("\t\tfor (size_t cppgo_i = 0; cppgo_i < cppgo_size; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }\n")
+		b.WriteString("\t\t*cppgo_out_data = cppgo_copy;\n")
+		b.WriteString("\t\t*cppgo_out_size = cppgo_size;\n")
+	case stdArray:
+		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
+		fmt.Fprintf(&b, "\t\t%s *cppgo_copy = static_cast<%s *>(cppgo_out_data);\n", elem.Cxx, elem.Cxx)
+		fmt.Fprintf(&b, "\t\tfor (size_t cppgo_i = 0; cppgo_i < %d; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }\n", result.ArrayLen)
+	case stdOptional:
+		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
+		fmt.Fprintf(&b, "\t\tif (cppgo_value) { *static_cast<%s *>(cppgo_out_value) = *cppgo_value; *static_cast<int32_t *>(cppgo_out_has) = 1; }\n", elem.Cxx)
+		b.WriteString("\t\telse { *static_cast<int32_t *>(cppgo_out_has) = 0; }\n")
+	default:
+		return "", pending(fmt.Sprintf("a %q result is not emitted by this build yet", result.Go), "return it through a pointer or a reference at the C++ boundary")
+	}
+	return b.String(), nil
 }

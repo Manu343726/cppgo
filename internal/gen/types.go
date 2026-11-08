@@ -18,6 +18,24 @@ const (
 	goPointer
 	goSlice
 	goRecord
+	goString
+	goArray
+	goOptional
+)
+
+// stdKind is the standard-library shape a type crosses as.
+type stdKind uint8
+
+const (
+	stdNone stdKind = iota
+	stdString
+	stdStringView
+	stdVector
+	stdSpan
+	stdArray
+	stdOptional
+	stdUniquePtr
+	stdSharedPtr
 )
 
 // goType is one C++ type on both sides of the boundary.
@@ -38,6 +56,10 @@ type goType struct {
 	Elem *goType
 	// Record is the record model a record or record pointer refers to.
 	Record *recordModel
+	// Std is the standard-library shape, stdNone for an ordinary type.
+	Std stdKind
+	// ArrayLen is std::array's element count.
+	ArrayLen int64
 	// Const is top-level const of the pointee, for the C parameter type.
 	Const bool
 	// Param is the model type this was mapped from.
@@ -48,6 +70,9 @@ type goType struct {
 // mirrorable aggregate from an opaque value.
 type mapper struct {
 	records map[string]*recordModel
+	// usesSpan is true when std::span is part of the API, whose header needs
+	// C++20.
+	usesSpan bool
 }
 
 // mapType maps one C++ type, rejecting only what this build cannot emit yet.
@@ -80,22 +105,228 @@ func (m *mapper) mapType(p cxx.Param) (*goType, error) {
 	}
 }
 
-// mapStd maps a standard-library type. Every type in DESIGN.md's table is
-// implemented by the marshalling unit; until then the construct is named, not
-// guessed.
+// mapStd maps DESIGN.md's standard-library table. The shape of the Go value is
+// decided here; the generated thunk constructs, copies and destroys the C++
+// value, so no standard-library type is ever visible in Go or in the C ABI.
 func (m *mapper) mapStd(p cxx.Param, name string) (*goType, error) {
-	return nil, pending(fmt.Sprintf("%q is a standard-library type", name), "pass the data as a supported value (a scalar, a pointer and length, or a POD) at the C++ boundary")
+	if strings.HasSuffix(strings.TrimSpace(p.Spelling), "*") {
+		return nil, pending(fmt.Sprintf("%q is a pointer to a standard-library type", p.Spelling),
+			"take it by value or by reference at the C++ boundary")
+	}
+	switch {
+	case name == "std::string":
+		return &goType{Kind: goString, Go: "string", Std: stdString, Param: p}, nil
+	case name == "std::string_view":
+		return &goType{Kind: goString, Go: "string", Std: stdStringView, Param: p}, nil
+	case strings.HasPrefix(name, "std::vector<"):
+		elem, err := m.mapTemplateElement(name, "std::vector")
+		if err != nil {
+			return nil, err
+		}
+		return &goType{Kind: goSlice, Go: "[]" + elem.Go, Elem: elem, Std: stdVector, Param: p}, nil
+	case strings.HasPrefix(name, "std::span<"):
+		m.usesSpan = true
+		elem, err := m.mapTemplateElement(name, "std::span")
+		if err != nil {
+			return nil, err
+		}
+		return &goType{Kind: goSlice, Go: "[]" + elem.Go, Elem: elem, Std: stdSpan, Param: p}, nil
+	case strings.HasPrefix(name, "std::array<"):
+		args, err := templateArguments(name, "std::array")
+		if err != nil {
+			return nil, err
+		}
+		if len(args) != 2 {
+			return nil, pending(fmt.Sprintf("%q is not a two-argument std::array", name), "write std::array<T, N> at the C++ boundary")
+		}
+		elem, err := m.mapElement(args[0])
+		if err != nil {
+			return nil, err
+		}
+		count, err := arrayCount(args[1])
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", name, err)
+		}
+		return &goType{Kind: goArray, Go: fmt.Sprintf("[%d]%s", count, elem.Go), Elem: elem, ArrayLen: count, Std: stdArray, Param: p}, nil
+	case strings.HasPrefix(name, "std::optional<"):
+		elem, err := m.mapTemplateElement(name, "std::optional")
+		if err != nil {
+			return nil, err
+		}
+		return &goType{Kind: goOptional, Go: "*" + elem.Go, Elem: elem, Std: stdOptional, Param: p}, nil
+	case strings.HasPrefix(name, "std::unique_ptr<"):
+		elem, err := m.mapSmartPointer(name, "std::unique_ptr")
+		if err != nil {
+			return nil, err
+		}
+		return &goType{Kind: goPointer, Go: "*" + elem.Go, Elem: elem, Record: elem.Record, Std: stdUniquePtr, Param: p}, nil
+	case strings.HasPrefix(name, "std::shared_ptr<"):
+		elem, err := m.mapSmartPointer(name, "std::shared_ptr")
+		if err != nil {
+			return nil, err
+		}
+		return &goType{Kind: goPointer, Go: "*" + elem.Go, Elem: elem, Record: elem.Record, Std: stdSharedPtr, Param: p}, nil
+	default:
+		return nil, pending(fmt.Sprintf("%q is a standard-library type outside the emitted table", name),
+			"cross it as a scalar, T*/length or POD, or bind a C++ wrapper with a supported signature")
+	}
 }
 
-// stdTypeName recognises a standard-library type by its spelling and returns
-// the normalised name. It only fires for record-shaped declarations: a
-// std::size_t parameter is a scalar and is mapped as one.
-func stdTypeName(p cxx.Param) (string, bool) {
-	record := p.Kind == cxx.TypeRecord
-	if p.Kind == cxx.TypePointer && p.Pointee != nil {
-		record = p.Pointee.Kind == cxx.TypeRecord
+// templateArguments returns the top-level arguments of a class template
+// spelling such as std::vector<double>.
+func templateArguments(name, prefix string) ([]string, error) {
+	if !strings.HasPrefix(name, prefix+"<") || !strings.HasSuffix(name, ">") {
+		return nil, pending(fmt.Sprintf("%q is not a %s", name, prefix), "write "+prefix+"<...> at the C++ boundary")
 	}
-	if !record {
+	args := splitTemplateArgs(name[len(prefix)+1 : len(name)-1])
+	if len(args) == 0 {
+		return nil, pending(fmt.Sprintf("%q has no template arguments", name), "write a concrete specialisation at the C++ boundary")
+	}
+	return args, nil
+}
+
+// mapTemplateElement maps the first argument of a one-argument template.
+func (m *mapper) mapTemplateElement(name, prefix string) (*goType, error) {
+	args, err := templateArguments(name, prefix)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, pending(fmt.Sprintf("%q has %d template arguments", name, len(args)), "write a one-argument specialisation at the C++ boundary")
+	}
+	return m.mapElement(args[0])
+}
+
+// mapSmartPointer maps std::unique_ptr<T> and std::shared_ptr<T>. The pointee
+// is always a record the generated API knows: the Go value is *T and owns (or
+// shares) the object.
+func (m *mapper) mapSmartPointer(name, prefix string) (*goType, error) {
+	args, err := templateArguments(name, prefix)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, pending(fmt.Sprintf("%q has %d template arguments", name, len(args)), "write a one-argument specialisation at the C++ boundary")
+	}
+	record, ok := m.lookupRecord(strings.TrimSpace(args[0]))
+	if !ok {
+		return nil, pending(fmt.Sprintf("%q points at a record that is not part of the generated API", name),
+			"include the record's definition and name a template instantiation if it is one")
+	}
+	return &goType{Kind: goRecord, Go: record.GoName, Cxx: "::" + record.CxxName, Record: record, Std: stdNone}, nil
+}
+
+// mapElement maps one template argument: a scalar or a mirrored record.
+func (m *mapper) mapElement(spelling string) (*goType, error) {
+	name := strings.TrimSpace(spelling)
+	isConst := strings.HasPrefix(name, "const ")
+	for {
+		switch {
+		case strings.HasPrefix(name, "const "):
+			name = strings.TrimSpace(name[len("const "):])
+		case strings.HasPrefix(name, "volatile "):
+			name = strings.TrimSpace(name[len("volatile "):])
+		default:
+			goto trimmed
+		}
+	}
+trimmed:
+	if scalar, ok := elementScalars[name]; ok {
+		return &goType{Kind: scalar.kind, Go: scalar.goName, C: scalar.cName, Cxx: scalar.cName, Const: isConst}, nil
+	}
+	if record, ok := m.lookupRecord(name); ok {
+		if !record.Mirrored {
+			return nil, pending(fmt.Sprintf("%q is not a POD", name), "use scalar elements, or bind a C++ wrapper that copies the objects")
+		}
+		return &goType{Kind: goRecord, Go: record.GoName, C: "void *", Cxx: "::" + record.CxxName, Record: record, Const: isConst}, nil
+	}
+	return nil, pending(fmt.Sprintf("%q is not a scalar or a known record", name), "use a scalar element type at the C++ boundary")
+}
+
+// lookupRecord finds a record by its spelling. A template argument is often
+// spelled unqualified inside its own namespace ("V" for "ns::V"), so an exact
+// miss falls back to a unique simple-name match; an ambiguous name is a miss
+// and the caller reports it.
+func (m *mapper) lookupRecord(name string) (*recordModel, bool) {
+	if record, ok := m.records[name]; ok {
+		return record, true
+	}
+	var found *recordModel
+	for qualified, record := range m.records {
+		if simpleName(qualified) != name {
+			continue
+		}
+		if found != nil {
+			return nil, false
+		}
+		found = record
+	}
+	return found, found != nil
+}
+
+// elementScalars maps the scalar spellings a container argument uses.
+var elementScalars = map[string]struct {
+	kind   goKind
+	goName string
+	cName  string
+}{
+	"bool":               {goBool, "bool", "bool"},
+	"char":               {goInteger, "int8", "int8_t"},
+	"signed char":        {goInteger, "int8", "int8_t"},
+	"unsigned char":      {goInteger, "uint8", "uint8_t"},
+	"short":              {goInteger, "int16", "int16_t"},
+	"unsigned short":     {goInteger, "uint16", "uint16_t"},
+	"int":                {goInteger, "int32", "int32_t"},
+	"unsigned int":       {goInteger, "uint32", "uint32_t"},
+	"unsigned":           {goInteger, "uint32", "uint32_t"},
+	"long":               {goInteger, "int64", "int64_t"},
+	"unsigned long":      {goInteger, "uint64", "uint64_t"},
+	"long long":          {goInteger, "int64", "int64_t"},
+	"unsigned long long": {goInteger, "uint64", "uint64_t"},
+	"float":              {goFloat, "float32", "float"},
+	"double":             {goFloat, "float64", "double"},
+	"std::size_t":        {goInteger, "uint64", "uint64_t"},
+	"size_t":             {goInteger, "uint64", "uint64_t"},
+	"std::int8_t":        {goInteger, "int8", "int8_t"},
+	"int8_t":             {goInteger, "int8", "int8_t"},
+	"std::uint8_t":       {goInteger, "uint8", "uint8_t"},
+	"uint8_t":            {goInteger, "uint8", "uint8_t"},
+	"std::int16_t":       {goInteger, "int16", "int16_t"},
+	"int16_t":            {goInteger, "int16", "int16_t"},
+	"std::uint16_t":      {goInteger, "uint16", "uint16_t"},
+	"uint16_t":           {goInteger, "uint16", "uint16_t"},
+	"std::int32_t":       {goInteger, "int32", "int32_t"},
+	"int32_t":            {goInteger, "int32", "int32_t"},
+	"std::uint32_t":      {goInteger, "uint32", "uint32_t"},
+	"uint32_t":           {goInteger, "uint32", "uint32_t"},
+	"std::int64_t":       {goInteger, "int64", "int64_t"},
+	"int64_t":            {goInteger, "int64", "int64_t"},
+	"std::uint64_t":      {goInteger, "uint64", "uint64_t"},
+	"uint64_t":           {goInteger, "uint64", "uint64_t"},
+}
+
+// arrayCount parses std::array's non-type size argument.
+func arrayCount(spelling string) (int64, error) {
+	value := strings.TrimRight(strings.TrimSpace(spelling), "uUlL")
+	var count int64
+	if _, err := fmt.Sscan(value, &count); err != nil || count < 0 {
+		return 0, pending(fmt.Sprintf("%q is not an array size", spelling), "write a literal count in std::array<T, N>")
+	}
+	return count, nil
+}
+
+// stdTypeName recognises a standard-library type by its declaration spelling
+// and returns the normalised name.
+//
+// The canonical type cannot decide this: libclang's canonical form of a
+// reference to a class-template alias can be wrong (std::string & resolves to
+// int & on some versions), so a std:: spelling on a record or pointer/reference
+// declaration is a library type even when the pointee kind says "integer". The
+// scalar aliases (std::size_t, std::int32_t, ...) are excluded explicitly, and
+// a pointer to a library type (as opposed to a reference or a value) is left to
+// mapStd's error.
+func stdTypeName(p cxx.Param) (string, bool) {
+	if p.Kind != cxx.TypeRecord && p.Kind != cxx.TypePointer {
 		return "", false
 	}
 	s := strings.TrimSpace(p.Spelling)
@@ -115,6 +346,9 @@ trimmed:
 	s = strings.TrimSuffix(s, "*")
 	s = strings.TrimSpace(s)
 	if s == "std::nullptr_t" || !strings.HasPrefix(s, "std::") {
+		return "", false
+	}
+	if _, scalar := elementScalars[s]; scalar {
 		return "", false
 	}
 	return s, true

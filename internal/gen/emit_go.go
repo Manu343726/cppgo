@@ -100,6 +100,9 @@ var (
 	for _, binding := range m.bindings {
 		fmt.Fprintf(b, "\t// %s\n\t%s uintptr\n", binding.Symbol, binding.SymbolVar)
 	}
+	if m.usesFree {
+		b.WriteString("\t// cppgo_free\n\tcppgoFreeSym uintptr\n")
+	}
 	b.WriteString(")\n\n")
 
 	b.WriteString(`// cppgoOpen loads the shared library and resolves every symbol the generated
@@ -130,6 +133,9 @@ func cppgoOpen(path string) error {
 `)
 	for _, binding := range m.bindings {
 		fmt.Fprintf(b, "\t\t{name: %q, addr: &%s, thunk: %t},\n", binding.Symbol, binding.SymbolVar, binding.Carrier == thunk)
+	}
+	if m.usesFree {
+		b.WriteString("\t\t{name: \"cppgo_free\", addr: &cppgoFreeSym, thunk: true},\n")
 	}
 	b.WriteString(`	} {
 		addr, err := lib.Symbol(symbol.name)
@@ -437,6 +443,9 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 	// caller must not hand over differently sized arrays.
 	m.emitLengthChecks(b, binding)
 
+	for _, decl := range binding.stdDecls {
+		fmt.Fprintf(b, "\t%s\n", decl)
+	}
 	if err := cppgoOpenCode(binding, "\t"); err != "" {
 		b.WriteString(err)
 	}
@@ -454,9 +463,12 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		m.emitKeepAlive(b, binding, ctx)
 		fmt.Fprintf(b, "\tif cppgoStatus != 0 {\n\t\treturn %scppgoCallError(%q)\n\t}\n",
 			errorZeroPrefix(binding), binding.sym.QualifiedName)
-		if binding.Result != nil {
+		switch {
+		case binding.StdResult:
+			m.emitStdReturn(b, binding)
+		case binding.Result != nil:
 			fmt.Fprintf(b, "\treturn %s, nil\n", convertResult(binding, "cppgoResult"))
-		} else {
+		default:
 			b.WriteString("\treturn nil\n")
 		}
 	case binding.Result != nil:
@@ -559,6 +571,9 @@ func (m *packageModel) emitKeepAlive(b *strings.Builder, binding *binding, ctx c
 // emitTrampolineDeclarations declares every assembly trampoline.
 func (m *packageModel) emitTrampolineDeclarations(b *strings.Builder) {
 	b.WriteString("\n// Assembly trampolines. Each one reads its arguments, switches to a 16-byte\n// aligned stack for the C call, restores the Go stack pointer and only then\n// stores the result. They must not be called directly.\n")
+	if m.usesFree {
+		b.WriteString("\n// cppgoFree is the NOSPLIT trampoline for cppgo_free.\nfunc cppgoFree(fn uintptr, block unsafe.Pointer)\n")
+	}
 	for _, binding := range m.bindings {
 		b.WriteString("\n")
 		fmt.Fprintf(b, "// %s is the NOSPLIT trampoline for %s.\n", binding.Trampoline, binding.Symbol)
@@ -612,10 +627,39 @@ func zeroValue(t *goType) string {
 	switch t.Kind {
 	case goBool:
 		return "false"
-	case goPointer:
+	case goPointer, goOptional:
 		return "nil"
+	case goString:
+		return `""`
+	case goSlice:
+		return "nil"
+	case goArray:
+		return t.Go + "{}"
 	default:
 		return "0"
+	}
+}
+
+// emitStdReturn copies a standard-library result out of the C++ copy and
+// releases it. The bytes are copied before cppgo_free runs, so no C++ memory
+// escapes the thunk.
+func (m *packageModel) emitStdReturn(b *strings.Builder, binding *binding) {
+	result := binding.Result
+	switch result.Std {
+	case stdString, stdStringView:
+		b.WriteString("\tvar cppgoResult string\n")
+		b.WriteString("\tif cppgoSize != 0 {\n\t\tcppgoResult = string(unsafe.Slice((*byte)(cppgoData), int(cppgoSize)))\n\t}\n")
+		b.WriteString("\tcppgoFree(cppgoFreeSym, cppgoData)\n")
+		b.WriteString("\treturn cppgoResult, nil\n")
+	case stdVector, stdSpan:
+		fmt.Fprintf(b, "\tvar cppgoResult %s\n", result.Go)
+		fmt.Fprintf(b, "\tif cppgoSize != 0 {\n\t\tcppgoResult = append(cppgoResult, unsafe.Slice((*%s)(cppgoData), int(cppgoSize))...)\n\t}\n", result.Elem.Go)
+		b.WriteString("\tcppgoFree(cppgoFreeSym, cppgoData)\n")
+		b.WriteString("\treturn cppgoResult, nil\n")
+	case stdArray:
+		b.WriteString("\treturn cppgoResult, nil\n")
+	case stdOptional:
+		b.WriteString("\tif cppgoHas != 0 {\n\t\treturn &cppgoResult, nil\n\t}\n\treturn nil, nil\n")
 	}
 }
 

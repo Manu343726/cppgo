@@ -37,6 +37,9 @@ func TestGenerationErrors(t *testing.T) {
 		{"operand.hpp", "operators and conversion operators"},
 		{"packed.hpp", "public field"},
 		{"pointerresult.hpp", "pointer to an opaque record"},
+		{"smartparam.hpp", "smart-pointer parameter"},
+		{"smartresult.hpp", "smart-pointer result"},
+		{"stdinout.hpp", "non-const standard-library reference"},
 		{"staticdata.hpp", "static data member"},
 		{"templfunc.hpp", "function template"},
 		{"unionrecord.hpp", "public field"},
@@ -78,7 +81,7 @@ func TestEnumDiagnostic(t *testing.T) {
 // cppgo: <file>:<line>: <symbol>: <what is wrong>; <fix>.
 func TestUnimplementedErrorShape(t *testing.T) {
 	cfg := Config{
-		Headers: []string{"testdata/errors/stdstring.hpp"},
+		Headers: []string{"testdata/errors/stddeque.hpp"},
 		Package: "err",
 		Library: "liberr",
 	}
@@ -86,7 +89,7 @@ func TestUnimplementedErrorShape(t *testing.T) {
 	require.Error(t, err)
 	pattern := regexp.MustCompile(`^cppgo: .+:\d+: .+: .+; .+$`)
 	assert.Regexp(t, pattern, err.Error())
-	assert.Contains(t, err.Error(), "standard-library type")
+	assert.Contains(t, err.Error(), "outside the emitted table")
 }
 
 // TestInheritedAndNestedRejections covers the two constructs the verifier saw

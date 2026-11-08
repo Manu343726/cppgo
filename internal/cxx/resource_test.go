@@ -54,3 +54,20 @@ func TestResourceDirGlobError(t *testing.T) {
 	t.Cleanup(func() { resourcePatterns = saved })
 	assert.Equal(t, "", resourceDir("/nonexistent/libclang.so"))
 }
+
+// TestWithResourceDir checks the flag injection: once when absent, never twice,
+// and only when a directory is known.
+func TestWithResourceDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(ResourceDirEnv, dir)
+	library := &Libclang{path: "/nonexistent/libclang.so"}
+	assert.Equal(t, []string{"-resource-dir", dir, "-std=c++17"}, library.withResourceDir([]string{"-std=c++17"}))
+	assert.Equal(t, []string{"-resource-dir", "/already", "-std=c++17"},
+		library.withResourceDir([]string{"-resource-dir", "/already", "-std=c++17"}))
+
+	t.Setenv(ResourceDirEnv, "")
+	saved := resourcePatterns
+	resourcePatterns = func(string) []string { return nil }
+	t.Cleanup(func() { resourcePatterns = saved })
+	assert.Equal(t, []string{"-std=c++17"}, library.withResourceDir([]string{"-std=c++17"}))
+}

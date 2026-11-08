@@ -201,7 +201,12 @@ func TestFixtureShimsCompile(t *testing.T) {
 			require.NoError(t, Generate(cfg))
 			cwd, err := os.Getwd()
 			require.NoError(t, err)
-			cmd := exec.Command(compiler, "-std=c++17", "-fsyntax-only", "-I"+cwd, filepath.Join(out, ShimSourceFileName))
+			standard := "-std=c++17"
+			if name == "std" {
+				// std::span is C++20; the fixture's .clangd says so too.
+				standard = "-std=c++20"
+			}
+			cmd := exec.Command(compiler, standard, "-fsyntax-only", "-I"+cwd, filepath.Join(out, ShimSourceFileName))
 			cmd.Dir = cwd
 			output, err := cmd.CombinedOutput()
 			require.NoErrorf(t, err, "%s rejected %s's shim:\n%s", compiler, name, output)

@@ -96,3 +96,46 @@ func TestParseShimWriteError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "writing")
 }
+
+// TestStdResultError covers a standard-library result shape the emitter does
+// not copy out.
+func TestStdResultError(t *testing.T) {
+	model := &packageModel{}
+	binding := &binding{Result: &goType{Std: stdUniquePtr, Go: "*Vector"}}
+	_, err := model.stdResult(binding, "call()")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not emitted by this build yet")
+}
+
+// TestTargetCallMovesStdValue covers the move a smart-pointer argument would
+// need; the carriers are rejected today, but the renderer is ready.
+func TestTargetCallMovesStdValue(t *testing.T) {
+	model := &packageModel{}
+	binding := &binding{
+		sym: cxx.Symbol{Kind: cxx.FreeFunc, QualifiedName: "ns::take"},
+		Wire: []*wireArg{{
+			stdRole: stdRolePrimary, stdKind: stdUniquePtr,
+			stdLocal: "cppgo_value", stdMove: true,
+			param: cxx.Param{Kind: cxx.TypePointer, Ptr: true, Pointee: &cxx.Param{Kind: cxx.TypeRecord, RecordName: "ns::V"}},
+		}},
+	}
+	call, err := model.targetCall(binding)
+	require.NoError(t, err)
+	assert.Equal(t, "::ns::take(std::move(cppgo_value))", call)
+}
+
+// TestShimBodyStdResultError covers the copy-out failure of a result shape the
+// emitter does not handle.
+func TestShimBodyStdResultError(t *testing.T) {
+	model := &packageModel{}
+	binding := &binding{
+		sym:       cxx.Symbol{Kind: cxx.FreeFunc, QualifiedName: "ns::f"},
+		Carrier:   thunk,
+		Status:    true,
+		StdResult: true,
+		Result:    &goType{Std: stdUniquePtr, Go: "*V"},
+	}
+	_, err := model.shimBody(binding)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not emitted by this build yet")
+}

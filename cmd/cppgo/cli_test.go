@@ -288,8 +288,9 @@ func mustGen(t *testing.T, args ...string) int {
 	return code
 }
 
-// stdStringHeader is the verifier's silent-wrong-binding case.
-var stdStringHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "errors", "stdstring.hpp")
+// stdDequeHeader is a standard-library type outside DESIGN.md's table: the
+// generator must refuse it, not guess.
+var stdDequeHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "errors", "stddeque.hpp")
 
 // tmplHeader is the class template fixture.
 var tmplHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "tmpl", "cell.hpp")
@@ -298,10 +299,10 @@ var tmplHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "tmpl"
 // unimplemented construct is exit 1, a one-line message, and no output files.
 func TestGenUnimplementedConstructFailsWithoutWriting(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
-	code, stdout, stderr := exec("gen", "-header", stdStringHeader, "-package", "err", "-library", "liberr", "-out", out)
+	code, stdout, stderr := exec("gen", "-header", stdDequeHeader, "-package", "err", "-library", "liberr", "-out", out)
 	assert.Equal(t, exitError, code)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "standard-library type")
+	assert.Contains(t, stderr, "outside the emitted table")
 	assert.Contains(t, stderr, "; ")
 	_, err := os.Stat(out)
 	assert.True(t, os.IsNotExist(err), "a failed generation must not create the output directory")

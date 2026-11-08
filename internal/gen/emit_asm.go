@@ -36,6 +36,17 @@ func (m *packageModel) emitAsm() []byte {
 		}
 		b.WriteString("\tRET\n")
 	}
+	if m.usesFree {
+		b.WriteString("\n// func cppgoFree(fn uintptr, block unsafe.Pointer)\n")
+		b.WriteString("TEXT ·cppgoFree(SB), NOSPLIT, $0-16\n")
+		b.WriteString("\tMOVQ\tfn+0(FP), R12\n")
+		b.WriteString("\tMOVQ\tblock+8(FP), DI\n")
+		b.WriteString("\tMOVQ\tSP, R13\n")
+		b.WriteString("\tANDQ\t$~15, SP\n")
+		b.WriteString("\tCALL\tR12\n")
+		b.WriteString("\tMOVQ\tR13, SP\n")
+		b.WriteString("\tRET\n")
+	}
 	return []byte(b.String())
 }
 
