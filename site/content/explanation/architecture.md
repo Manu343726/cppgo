@@ -39,7 +39,8 @@ libclang and no C++ compiler; it needs the two shared objects at run time.
 | the generated Go package | cppgo | `zz_cppgo.gen.go` and `zz_cppgo_amd64.s`: the API you call, one trampoline per binding, and the code that loads the shim |
 
 The dotted line is the contract's edge: **your build is untouched, and no
-generated code is in it.**
+generated code is in it.** A header-only library has no shared object at all: the
+shim is the whole binary.
 
 ## The generated files
 
