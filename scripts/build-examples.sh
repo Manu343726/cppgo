@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-examples.sh — build, generate and test every example under examples/.
+# build-examples.sh — check, build, generate and test every example under examples/.
 #
 # Each example owns its build. Its Makefile does the three things a v4 example
 # has to do, in this order:
@@ -12,8 +12,18 @@
 #      library;
 #   3. runs the example's tests and vet.
 #
-# This script only finds the examples and runs their default target. It never
-# compiles C++ itself, which is what keeps the contract's line intact: no
+# Before any of that, the script runs the example's `check` target, on the tree
+# as checked out. This ordering is load-bearing: `gen` writes the generated
+# files in place, so a `check` that ran after it could never fail — the stale
+# files it is meant to catch would already have been overwritten, and a branch
+# that committed them stale would stay green. `check` regenerates in memory
+# only (see "cppgo check" in cmd/cppgo and its tests), so it modifies nothing
+# and the build that follows is unaffected. A stale committed `zz_cppgo.gen.go`,
+# `zz_cppgo_amd64.s`, `cppgo_shim/*` or shim binary fails the run here, before
+# any example is built.
+#
+# This script only finds the examples and runs their targets. It never compiles
+# C++ itself, which is what keeps the contract's line intact: no
 # cppgo-generated translation unit can end up in a user's library.
 #
 # Directories without a Makefile are reported and skipped; examples/ being
@@ -37,9 +47,16 @@ built=0
 skipped=0
 
 for dir in "$EXAMPLES_DIR"/*/; do
+  dir="${dir%/}" # the glob leaves a trailing slash; keep the printed commands copyable
   name="$(basename "$dir")"
 
   if [[ -f "$dir/Makefile" || -f "$dir/makefile" ]]; then
+    # The gate first, while the committed files are still the ones on disk.
+    echo "== $name: check"
+    if ! "$MAKE" -C "$dir" check; then
+      echo "!! $name: committed generated sources are stale — run \"make -C $dir gen\" and commit the result" >&2
+      exit 1
+    fi
     echo "== $name: make"
     "$MAKE" -C "$dir"
     built=$((built + 1))

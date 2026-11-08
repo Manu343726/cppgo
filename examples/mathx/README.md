@@ -127,7 +127,5 @@ under `-race`.
 
 `zz_cppgo.gen.go`, `zz_cppgo_amd64.s` and `cppgo_shim/` are committed on purpose:
 the example is teaching material, and `make gen` reproduces them byte for byte.
-`make check` is the gate, and at this commit it reports
-`zz_cppgo_shim.cpp` out of date — the committed file predates an
-`#include <cstdint>` the current emitter writes. `make gen` and a commit clear
-it.
+`make check` is the gate: it fails when a committed file differs from what
+`make gen` writes.
