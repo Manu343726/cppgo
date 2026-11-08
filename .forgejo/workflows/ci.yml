@@ -1,0 +1,231 @@
+name: CI
+
+# The gate, run inside the image this repository's Dockerfile produces.
+#
+# Why an image at all: CI used to inherit its toolchain from `ubuntu-latest`, and when that
+# image stopped shipping libclang, internal/cxx silently skipped itself, its coverage vanished
+# and the 99% gate failed for a reason that had nothing to do with the code. The Dockerfile
+# pins Go, g++ 14, clang/libclang 19, golangci-lint, hugo, binutils and make instead, so the
+# environment is a reviewed artefact.
+#
+# ---------------------------------------------------------------------------
+# THE TWO FACTS THIS FILE OWNS. Every other mention of them, here and in the pull request,
+# points back to this block.
+# ---------------------------------------------------------------------------
+# 1. THE IMAGE AND ITS TAG.
+#
+#      registry.docker.manu343726.com/homelab/cppgo-ci:<recipe>
+#
+#    `<recipe>` is the 7-character short sha of the commit that last touched `Dockerfile`:
+#
+#        git log -1 --format=%h -- Dockerfile     # 1914e8c, for the recipe this file names
+#
+#    The tag is the recipe's address, so a green run can be re-read months later and describe
+#    the same environment. It is immutable: a published tag is never rebuilt over, because a
+#    run that reported on one environment cannot be told apart from a run on the next. A
+#    changed recipe gets a new tag (the new commit's sha), built, run, and only then used here.
+#    `latest` exists beside it for humans reading the registry; no workflow may run in it.
+#
+#    The image is published by hand today (issue #13: the exact image GHCR already carried was
+#    transferred and pushed, digest `sha256:fcfece09e8ab…`). Publishing it on a `Dockerfile`
+#    change is not automated yet — when it is, it lands in `.forgejo/workflows/image.yml` and
+#    this block gains one link to it. Until then, a recipe change means: build, push under the
+#    new recipe tag, run this workflow in it, and only then point the line below at it.
+#
+# 2. THE RUNNER LABEL.
+#
+#      runs-on: [docker, homelab]
+#
+#    The instance has two runners, both registered at instance level (`owner_id 0`,
+#    `repo_id 0`): `forgejo-runner-108` on VM 108, labels `docker` + `homelab`, and
+#    `forgejo-runner-pcgordo` in PCGORDO's WSL, labels `docker` + `wsl`. `ubuntu-latest` —
+#    what this workflow asked for while it was GitHub's — is a label no runner declares, and a
+#    job whose `runs-on` nothing serves is never assigned: it waits until
+#    `[actions] ABANDONED_JOB_TIMEOUT` cancels it. That is the whole of runs #664–#676.
+#
+#    `[docker, homelab]` is an intersection, so it pins every job to VM 108. The reason is
+#    measured, not assumed: that is the only host where the pull of this private Harbor
+#    project's image was proven (`docker pull …:1914e8c`, then `docker run --rm … go version`),
+#    and the gate must not depend on which host the scheduler happens to pick. The cost is
+#    capacity 1 on that runner, so this file's two jobs run one after the other. Lifting the
+#    pin to `runs-on: docker` is a one-line change on the day a job is measured green on the
+#    other host.
+#
+# ---------------------------------------------------------------------------
+# Why this file is here and not in `.github/workflows/`.
+#
+# Forgejo reads exactly one workflow directory: the first that exists among `.forgejo/workflows`,
+# `.gitea/workflows` and `.github/workflows` (`modules/actions/workflows.go`, `ListWorkflows`).
+# With this directory present, Forgejo runs exactly the files in it and stops reading
+# `.github/workflows/` — so `.github/workflows/ci.yml` stays as GitHub's copy of the same gate,
+# and the two copies never both run on one forge.
+#
+# The pull credential is a repository secret, read at run time and never written into the image,
+# a layer, a build argument or this file:
+#
+#   REGISTRY_USER   `robot$homelab+ci`
+#   REGISTRY_TOKEN  that robot's password
+#
+# The pair is the same one `manu343726/z80-emulator` uses for the same robot on this instance, so
+# one registry has one set of names. A missing secret fails the pull with
+# `failed to handle credentials: username is empty`, which is a configuration answer and not a
+# defect in the tree.
+#
+# The gates below are the repository's: `CGO_ENABLED=0 go build`, `go vet`, `golangci-lint`,
+# `make fmt-check`, the two test passes (`CGO_ENABLED=0`, then `-race` with atomic coverage), the
+# coverage gate at 99.0% and the examples build. Nothing here weakens a Makefile target or the
+# threshold, and the suite is the same one `.github/workflows/ci.yml` runs.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'site/**'
+      - '**/*.md'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COVERAGE_THRESHOLD: '99.0'
+  # A skipped introspection test is a lie in CI: it silently drops most of internal/cxx from the
+  # coverage profile and the gate then fails with a number nobody can explain. Require libclang
+  # instead of skipping.
+  CPPGO_REQUIRE_LIBCLANG: '1'
+  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:1914e8c
+
+jobs:
+  test:
+    name: test
+    runs-on: [docker, homelab]
+    # The runner's ceiling is 5h; this is the job's own, well inside it. A job killed by its own
+    # `timeout-minutes` reports as the step that hung, which is the report a reader can act on.
+    timeout-minutes: 90
+    container:
+      # The literal and not `${{ env.CI_IMAGE }}`: the `env` context is not available to
+      # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
+      # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
+      # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:1914e8c
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v4
+
+      - name: Show the pinned toolchain
+        # The evidence that the gates below ran in the image and not on a runner's host: these
+        # versions are the Dockerfile's ARGs, read out of the container.
+        run: |
+          go version
+          g++ --version | head -n 1
+          clang --version | head -n 1
+          golangci-lint --version
+          hugo version
+          nm --version | head -n 1
+
+      - name: Build without cgo (the no-cgo contract)
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        run: golangci-lint run --timeout=8m
+
+      - name: gofmt (make fmt-check)
+        run: make fmt-check
+
+      - name: Test without cgo (proves the library needs no cgo)
+        run: CGO_ENABLED=0 go test -count=1 ./...
+
+      - name: Test (race + atomic coverage)
+        run: |
+          go test -race -count=1 -covermode=atomic \
+            -coverprofile=coverage.out ./...
+
+      - name: Coverage gate (>= 99%)
+        # `tee` keeps the gate's own output for the summary below; the pipeline still fails the
+        # step because the runner's shell is `bash -e -o pipefail`.
+        run: ./scripts/coverage-gate.sh coverage.out "${COVERAGE_THRESHOLD}" | tee coverage-gate.txt
+
+      - name: Build the examples
+        run: ./scripts/build-examples.sh
+
+      - name: Attach the coverage profile to the run
+        # A report, not a gate: if the artifact store cannot take it, the run stays as green as
+        # its gates were, and the summary step below still carries the number.
+        if: always()
+        continue-on-error: true
+        uses: https://data.forgejo.org/actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage-gate.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: The run's report
+        # Forgejo 17 persists `$GITHUB_STEP_SUMMARY` and renders it above the job's log, so this is
+        # where the number a later reader needs lives. It restates the gate's own line rather than
+        # recomputing a percentage of its own.
+        if: always()
+        continue-on-error: true
+        run: |
+          {
+            echo "## cppgo — test"
+            echo
+            echo "- image: \`${CI_IMAGE}\`"
+            echo "- commit: \`$(git rev-parse HEAD)\`"
+            echo "- toolchain: $(go version), $(clang --version | head -n 1)"
+            if [ -s coverage-gate.txt ]; then
+              echo "- coverage gate: $(sed -e 's/\x1b\[[0-9;]*m//g' coverage-gate.txt | grep -E '^(PASS|FAIL)' | tail -n 1)"
+            else
+              echo "- coverage gate: no output (the profile was not produced, or the gate did not run)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-latest-go:
+    name: build with the latest Go
+    # Forward-compatibility smoke test only: no coverage, no libclang. It answers one question —
+    # does the library still compile with a Go newer than the one the image pins? — so a
+    # toolchain bump is never a surprise.
+    #
+    # GitHub's copy of this gate uses `actions/setup-go`. Here the toolchain is fetched with curl
+    # from go.dev into `/tmp`, which is the same question asked without a third-party action and
+    # without a second environment: the job still runs in the pinned image, so the compiler's
+    # host and its C++ side are the ones under test.
+    runs-on: [docker, homelab]
+    timeout-minutes: 30
+    container:
+      # The literal and not `${{ env.CI_IMAGE }}`: the `env` context is not available to
+      # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
+      # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
+      # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:1914e8c
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v4
+
+      - name: Fetch the newest released Go and compile the module with it
+        run: |
+          set -euo pipefail
+          version="$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -n 1)"
+          platform="$(go env GOOS)-$(go env GOARCH)"
+          echo "latest Go: ${version} (${platform})"
+          curl -fsSL "https://go.dev/dl/${version}.${platform}.tar.gz" -o /tmp/go-latest.tar.gz
+          mkdir -p /tmp/go-latest
+          tar -xzf /tmp/go-latest.tar.gz -C /tmp/go-latest --strip-components=1
+          /tmp/go-latest/bin/go version
+          CGO_ENABLED=0 /tmp/go-latest/bin/go build ./...
+          CGO_ENABLED=0 /tmp/go-latest/bin/go vet ./...
