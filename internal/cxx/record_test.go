@@ -419,10 +419,32 @@ func TestRecordLayoutKnown(t *testing.T) {
 	assert.True(t, records["mathx::Pair"].LayoutKnown)
 	assert.True(t, records["mathx::Flags"].LayoutKnown, "bitfields are laid out; they are merely not mirrorable")
 	assert.False(t, records["mathx::Box"].LayoutKnown, "a template pattern has no layout")
-	assert.False(t, records["mathx::Box<int>"].LayoutKnown, "libclang defers the instantiated layout")
-	assert.False(t, records["mathx::BoxHolder"].LayoutKnown, "a member whose layout is deferred makes the record untrustworthy")
-	assert.Equal(t, int64(-1), records["mathx::BoxHolder"].SizeBytes, "an untrusted size is reported as unknown, not as 1")
-	assert.Equal(t, int64(-1), records["mathx::BoxHolder"].AlignBytes)
+
+	// Box<int> is the instantiation libclang may or may not complete, depending
+	// on whether the environment's <cstddef> resolves; both branches are valid,
+	// and each must have the shape assertLayoutIsContractual pins.
+	box := records["mathx::Box<int>"]
+	assertLayoutIsContractual(t, box)
+	require.Len(t, box.Fields, 1, "the fields are reachable on both branches")
+	assert.Equal(t, "value", box.Fields[0].Name)
+
+	// BoxHolder's only field is a Box<double>. Its layout is trustworthy
+	// exactly when the member's type was resolved; a deferred member layout
+	// makes the holder untrustworthy, and an untrusted size is -1, not a guess.
+	holder := records["mathx::BoxHolder"]
+	member := records["mathx::Box<double>"]
+	assertLayoutIsContractual(t, holder)
+	assertLayoutIsContractual(t, member)
+	require.Len(t, holder.Fields, 1, "the fields are reachable on both branches")
+	if member.LayoutKnown {
+		assert.True(t, holder.LayoutKnown, "a fully laid-out member lets the holder's layout be mirrored")
+		assert.Equal(t, int64(8), holder.SizeBytes, "sizeof(BoxHolder) is sizeof(Box<double>): one double, 8 bytes")
+		assert.Equal(t, int64(8), holder.AlignBytes, "alignof(BoxHolder) is alignof(double)")
+	} else {
+		assert.False(t, holder.LayoutKnown, "a member whose layout is deferred makes the record untrustworthy")
+		assert.Equal(t, int64(-1), holder.SizeBytes, "an untrusted size is reported as unknown")
+		assert.Equal(t, int64(-1), holder.AlignBytes)
+	}
 }
 
 func TestMergeRecordCarriesHierarchyAndTemplateData(t *testing.T) {

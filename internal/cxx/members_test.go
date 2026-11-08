@@ -226,10 +226,13 @@ func TestConstructibilityThroughSpecializationFields(t *testing.T) {
 	require.True(t, ok)
 	boxDouble, ok := records["mathx::Box<double>"]
 	require.True(t, ok)
-	assert.False(t, boxDouble.LayoutKnown, "the fixture defers the instantiated layout")
+	// libclang may complete this instantiation or defer it, depending on the
+	// environment's standard headers; both are valid and both must satisfy the
+	// layout contract.
+	assertLayoutIsContractual(t, boxDouble)
 	assert.True(t, boxDouble.IsTrivial)
 	assert.True(t, boxDouble.IsDefaultConstructible)
-	assert.True(t, boxHolder.IsDefaultConstructible, "a deferred-layout field that the model classifies as constructible qualifies")
+	assert.True(t, boxHolder.IsDefaultConstructible, "a field the model classifies as constructible qualifies")
 	assert.True(t, boxHolder.IsCopyConstructible)
 
 	fixedHolder, ok := records["mathx::FixedHolder"]

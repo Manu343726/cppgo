@@ -9,6 +9,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +61,45 @@ func copyFixture(t *testing.T) string {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o644))
 	}
 	return dir
+}
+
+// assertLayoutIsContractual asserts the layout promise a Record makes, on
+// whichever branch the environment produces. Whether libclang completes an
+// instantiated template's layout depends on the standard headers it can see:
+// the pinned CI image completes it, a bare checkout may not. Both outcomes are
+// valid, but they have different shapes, and the model must be internally
+// consistent on either one.
+//
+// The source of the contract is Record's doc comment in record.go (SizeBytes,
+// AlignBytes and LayoutKnown) and DESIGN.md "Mirrorable record -> Go struct":
+//
+//   - LayoutKnown true: SizeBytes and AlignBytes are real positive values and
+//     every non-bitfield field offset is real and non-negative, so the emitter
+//     can mirror the layout;
+//   - LayoutKnown false: SizeBytes and AlignBytes are exactly -1 -- a size the
+//     model could not trust is reported as unknown, never guessed -- and the
+//     emitter takes the opaque accessor path.
+//
+// Fields and members are deliberately not part of this helper: they must be
+// reachable in both branches, so callers assert them separately.
+func assertLayoutIsContractual(t *testing.T, rec Record) {
+	t.Helper()
+	if !rec.LayoutKnown {
+		assert.Equal(t, int64(-1), rec.SizeBytes,
+			"%s: an unknown layout is reported as -1, not guessed", rec.QualifiedName)
+		assert.Equal(t, int64(-1), rec.AlignBytes,
+			"%s: an unknown layout has no alignof", rec.QualifiedName)
+		return
+	}
+	assert.Positive(t, rec.SizeBytes, "%s: a known layout has a real sizeof", rec.QualifiedName)
+	assert.Positive(t, rec.AlignBytes, "%s: a known layout has a real alignof", rec.QualifiedName)
+	for _, field := range rec.Fields {
+		if field.IsBitField {
+			continue
+		}
+		assert.GreaterOrEqual(t, field.OffsetBytes, int64(0),
+			"%s.%s: a known layout has a real field offset", rec.QualifiedName, field.Name)
+	}
 }
 
 // cxxCompiler returns a C++ compiler able to build a shared library, or skips.
