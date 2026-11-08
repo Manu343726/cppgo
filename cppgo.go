@@ -1,17 +1,18 @@
-// Package cppgo calls C++ from Go without cgo. There is no import "C", no cgo
-// at build time, and no trip through the runtime's cgo call path.
+// Package cppgo calls C++ from Go without cgo: it loads a shared object, resolves
+// the symbols a binding needs and makes the call, with no import "C" and nothing
+// to build with cgo.
 //
-// A library is loaded with Open, its symbols are resolved with
-// Library.Symbol, and each call enters the System V C ABI from a small
-// assembly trampoline (internal/asm). The shortcut carries two costs for the
-// caller. A foreign call runs on the goroutine's own stack and must be
-// preceded by ProbeStack. A call in flight delays a garbage collection cycle
-// for as long as it lasts, because the goroutine keeps its P.
+// A library is loaded with Open and a symbol resolved with Library.Symbol; the
+// call itself is made by generated code, or by a hand-written binding through
+// CallReentrant. Two rules belong to every caller. A foreign call runs on a stack
+// Go cannot grow, so ProbeStack runs first and before any pointer into the
+// caller's frame is taken. A foreign call is also not preempted, so a long one
+// delays the runtime's own work until it returns.
 //
-// Wire helpers (Ptr, StrPtr, KeepAlive) exist so hand-written bindings and
-// generated code can pass Go memory across the boundary safely, and LastError
-// reads the message a failing function stored through the cppgo_last_error
-// convention.
+// The package carries the values a binding moves across the boundary: Handle and
+// Object for storage whose layout Go cannot see, Ptr, StrPtr and KeepAlive for Go
+// memory lent to a call, OpenFS for a shared object embedded in the program, and
+// LastError with the typed errors around it.
 package cppgo
 
 import (
@@ -29,12 +30,11 @@ const lastErrorSymbol = "cppgo_last_error"
 // Library is a loaded shared object, the handle every bound symbol is resolved
 // through.
 //
-// A Library is safe for concurrent use. Symbols can be resolved from many
-// goroutines at once, and Close is serialized against them. Close waits for no
-// call that is already running inside the library. A program that
-// closes a library while another goroutine is in a function it resolved from
-// that library is asking for a use-after-free. A Library is normally closed
-// once, after the work is done.
+// It is safe for concurrent use. Symbol may be called from many goroutines
+// while Close runs, and Close is serialized against them. Close does not wait
+// for calls already running inside the library: closing a library while another
+// goroutine is in a function resolved from it is a use-after-free, so a program
+// closes a Library once, when the work that uses it is over.
 type Library struct {
 	mu     sync.RWMutex
 	lib    *rtl.Library
@@ -44,9 +44,13 @@ type Library struct {
 
 // Open loads the shared object at path and returns a handle to its symbols.
 //
-// The path is passed to the dynamic loader as given. It may be absolute, a
-// name on the loader's search path such as "libm.so.6", or a relative path
-// containing a slash.
+// The path goes to the dynamic loader unchanged. It may be absolute, a name the
+// loader searches for such as "libm.so.6", or a relative path containing a
+// slash. An empty path is refused, because the loader reads "" as the main
+// program.
+//
+// Returns an *OpenError wrapping the loader's failure when the object cannot be
+// loaded.
 func Open(path string) (*Library, error) {
 	if path == "" {
 		return nil, &OpenError{Path: path, Err: errEmptyPath}
@@ -82,9 +86,11 @@ func (l *Library) Close() error {
 
 // Symbol resolves name to the address of the foreign function or variable.
 //
-// The returned address is a code or data pointer inside the loaded library,
-// with no Go pointer semantics, and must not be stored in Go memory that the
-// garbage collector has to trace.
+// The address points into the loaded library and has no Go pointer semantics,
+// so it must not be stored anywhere the collector traces. Hold it as a uintptr.
+//
+// Returns a *SymbolError wrapping ErrClosed once Close has run, or the loader's
+// error for a name the library does not export.
 func (l *Library) Symbol(name string) (uintptr, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -101,9 +107,10 @@ func (l *Library) Symbol(name string) (uintptr, error) {
 	return addr, nil
 }
 
-// MustSymbol is Symbol for generated initialisation code. It panics on a
-// missing symbol, because a symbol missing from the library the program was
-// built against is a fatal configuration mistake.
+// MustSymbol is Symbol for generated initialization code, which has no error
+// path. It panics with the *SymbolError, because a symbol missing from the
+// library the program was built against is a broken deployment rather than a
+// runtime condition.
 func (l *Library) MustSymbol(name string) uintptr {
 	addr, err := l.Symbol(name)
 	if err != nil {
@@ -114,10 +121,10 @@ func (l *Library) MustSymbol(name string) uintptr {
 
 // LastError reads cppgo_last_error from lib and returns it as an error.
 //
-// It returns nil when the library omits the symbol (a library that cannot
-// fail) and when the C string is empty (no error has been recorded).
-// The message is copied out immediately. The C string itself is only valid
-// until the next call into the library.
+// It returns nil for a nil lib, for a library that exports no such symbol (a
+// library that cannot fail) and for an empty C string (nothing has been
+// recorded). The message is copied out before returning, because the C string
+// belongs to the library and is only valid until the next call into it.
 func LastError(lib *Library) error {
 	if lib == nil {
 		return nil

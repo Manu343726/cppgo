@@ -27,11 +27,10 @@ type Options struct {
 // Project is a C++ header plus the translation units needed to answer, for each
 // declaration in it, whether a symbol exists in the compiled library.
 //
-// A header on its own declares the API (`Vector(double,double);`) while the
-// definition lives in a .cpp. Open parses the header (for the API surface
-// and the mangled names) and every source that includes it (for the bodies),
-// then merges the sightings by mangled name. The merged Symbol answers both
-// questions at once.
+// A header declares the API (`Vector(double,double);`) while the definition lives
+// in a .cpp. Open parses the header, for the API surface and the mangled names,
+// and every source that includes it, for the bodies, then merges the sightings by
+// mangled name, so one Symbol answers both parts of the question.
 type Project struct {
 	// Header is the absolute path that was introspected.
 	Header string
@@ -382,11 +381,13 @@ func (p *Project) Enum(name string) (Enum, bool) {
 	return p.enums[i], true
 }
 
-// MissingBodies returns the symbols that are declared but export no symbol of
-// their own. Those are inline members, pure virtuals, static functions with
-// internal linkage, and template patterns. The generator carries them through a
-// thunk. A direct call to one would fail at load time. The list is what a
-// report uses to explain a carrier choice.
+// MissingBodies returns every symbol no parsed translation unit contains an
+// out-of-line definition of: inline members, pure virtuals, static functions with
+// internal linkage, and template patterns.
+//
+// The library may still export one of them, because a header-only definition
+// whose mangled name is in the symbol table is a direct binding, so this list is
+// evidence for a carrier decision rather than the decision itself.
 func (p *Project) MissingBodies() []Symbol {
 	var out []Symbol
 	for _, sym := range p.Symbols() {

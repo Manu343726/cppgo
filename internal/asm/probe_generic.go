@@ -12,10 +12,10 @@ var probeSink atomic.Uint32
 //
 // This is the fallback for architectures cppgo cannot call into. With no
 // assembly trampoline there is no frame to protect, but ProbeStack still has to
-// be a well-behaved function. It grows the stack the portable way, with a large
-// local array that the compiler cannot drop. That costs a 32 KiB memclr per
-// call, and that is why the amd64 build does the same job with an assembly
-// frame.
+// be a well-behaved function rather than a panic, so it grows the stack the
+// portable way, with a large local array the compiler cannot drop. That costs a
+// 32 KiB clear per call, and it is why the amd64 build does the same job with an
+// assembly frame.
 //
 //go:noinline
 func Probe() {

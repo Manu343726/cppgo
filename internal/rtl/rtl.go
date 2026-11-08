@@ -1,16 +1,16 @@
 // Package rtl is the dynamic-loader shim cppgo is built on.
 //
-// It wraps dlopen/dlsym/dlclose as exposed by github.com/ebitengine/purego and
-// adds two things cppgo needs. One is errors that say which library and which
-// symbol failed, and the other is a documented way to turn a symbol address
-// into an unsafe.Pointer without tripping go vet's unsafeptr check.
+// It wraps dlopen/dlsym/dlclose as github.com/ebitengine/purego exposes them, and
+// adds the two things cppgo needs on top: errors that name the library and the
+// symbol that failed, and a documented way to turn a symbol address into an
+// unsafe.Pointer without tripping go vet's unsafeptr check.
 //
-// Only purego's dynamic-loader entry points are used. Its calling convention
-// (RegisterFunc, SyscallN and friends) goes unused, because cppgo enters the C
+// Only purego's loader entry points are used. Its calling convention
+// (RegisterFunc, SyscallN and the rest) goes unused, because cppgo enters the C
 // ABI from its own assembly trampolines.
 //
-// A Library carries no lock of its own. The cppgo package wraps it in an
-// RWMutex. dlopen/dlsym themselves are thread-safe in glibc.
+// A Library carries no lock of its own; the cppgo package wraps it in an
+// RWMutex. dlopen, dlsym and dlclose are thread-safe in glibc.
 package rtl
 
 import (
@@ -73,6 +73,10 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Err }
 
 // Library is a loaded shared object.
+//
+// It holds no lock, so a caller that closes it while another goroutine resolves a
+// symbol through it reads a torn closed flag; the cppgo package adds the RWMutex
+// that makes that safe.
 type Library struct {
 	handle uintptr
 	path   string
@@ -119,8 +123,8 @@ func (l *Library) Symbol(name string) (uintptr, error) {
 	return addr, nil
 }
 
-// Close unloads the library. Closing twice is an error wrapping ErrClosed. A
-// double Close is therefore always reported.
+// Close unloads the library. A second Close is an error wrapping ErrClosed, so a
+// double close is always reported.
 func (l *Library) Close() error {
 	if l.closed {
 		return &Error{Op: "dlclose", Path: l.path, Err: ErrClosed}
@@ -137,22 +141,22 @@ func (l *Library) Close() error {
 
 // Pointer reinterprets a raw foreign address as an unsafe.Pointer.
 //
-// Addresses handed out by the loader point at code or at data owned by the
-// foreign library, never into Go memory. Converting them with
-// unsafe.Pointer(uintptr) is exactly what is meant, but go vet's unsafeptr
-// check cannot know that and rejects the conversion. Reading the bits through
-// a *uintptr performs the same conversion and states the intent. The result
-// points outside the Go heap, and the garbage collector tracks only Go memory.
+// Addresses the loader hands out point at code or at data owned by the foreign
+// library, never into Go memory. unsafe.Pointer(uintptr) is exactly the
+// conversion meant, but go vet's unsafeptr check cannot know that and rejects it.
+// Reading the bits through a *uintptr performs the same conversion and states the
+// intent. The result points outside the Go heap, and the collector tracks only Go
+// memory.
 func Pointer(addr uintptr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&addr))
 }
 
 // GoString copies the NUL-terminated C string at addr into a Go string. A zero
-// address is the empty string. A library that returns NULL from its error
-// accessor therefore reports no error.
+// address is the empty string, so a library that returns NULL from its error
+// accessor reports no error.
 //
-// The copy happens immediately. The C string itself is typically only valid
-// until the next call into the library.
+// The copy happens immediately. The C string is typically only valid until the
+// next call into the library.
 func GoString(addr uintptr) string {
 	p := Pointer(addr)
 	if p == nil {

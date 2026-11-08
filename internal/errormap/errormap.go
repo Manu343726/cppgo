@@ -1,26 +1,25 @@
 // Package errormap turns a C++ failure convention into a Go error.
 //
-// A C++ library reports failure in at least eight ways. It throws, it returns a
-// std::error_code, a std::expected, a status int, an errno, a bool with an out
+// A C++ library reports failure in many ways. It throws, or it returns a
+// std::error_code, a std::expected, a status int, an errno, a bool beside an out
 // parameter, a project-specific Result<T>, or a std::variant whose second
-// alternative is the error. The contract says every one of them becomes an
-// error in the last result position on the Go side, and this package is the
-// part of that mapping the generated code shares. That part is the projection
-// of a C++ failure into a *ErrorCode or a *Message, plus the per-package
-// configuration for the conventions that cannot be inferred from the
-// declaration.
+// alternative is the error. The Go API turns every one of them into an error in
+// the last result position, and this package is the part of that mapping the
+// declarations cannot supply on their own: the projection of a failure into an
+// *ErrorCode or a *Message, and the per-package configuration for the
+// conventions that cannot be inferred.
 //
-// What is inferred and what is configured:
+// # Inferred and configured
 //
-//   - exception, std::error_code and a result type whose shape is detectable
-//     (has_value/value/error) need no entry. The declaration says what it is.
-//   - a status int, an errno, a bool-with-out-parameters or a std::variant
-//     cannot be told from a signature that returns int. A config entry names
-//     the channels for those.
-//   - an entry is validated against the declaration at generation time. A
-//     parameter the declaration lacks, or one that cannot carry the channel, is
-//     a generation error and no output is written. A config cannot invent a
-//     signature.
+//   - an exception, a std::error_code, and a result type whose shape is
+//     detectable (has_value, value, error) need no entry, because the declaration
+//     says what they are.
+//   - a status int, an errno, a bool with out parameters and a std::variant
+//     cannot be told from a signature such as `int f()`. A config entry names the
+//     channels for those.
+//   - an entry is validated against the declaration. A parameter the declaration
+//     lacks, or one that cannot carry the channel, is a generation error and no
+//     output is written, because a config must not be able to invent a signature.
 package errormap
 
 import (
