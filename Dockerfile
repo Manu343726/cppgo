@@ -11,10 +11,68 @@
 # assumed: Debian 12 ships clang 14, and with it the suite fails (cmd/cppgo's
 # ABI tests — TestGenABIReport, TestCheckABIIsSilent, TestGenABIForce, ... — and
 # parts of internal/cxx) because the libclang behaviour the project relies on
-# is newer than 14. The same tree with trixie's clang 19 passes at 99.4% total
-# coverage; clang 19 is therefore the oldest version that satisfies the code,
-# and trixie is the Debian stable that carries it. g++ 14 covers the C++17
-# fixtures. arm64 maps to the same package names, so the build stays portable.
+# is newer than 14. g++ 14 covers the C++17 fixtures.
+#
+# clang/libclang come from apt.llvm.org rather than from trixie's archive, and
+# that is the same measurement a second time. trixie's archive stops at clang 19,
+# and since eadb901 (2026-11-08) the tree binds `clang_getOffsetOfBase`, which
+# libclang 19 does not export — the suite dies at load time with
+#
+#   cxx: libclang not found: … /usr/lib/libclang.so: undefined symbol:
+#   clang_getOffsetOfBase
+#
+# which is a statement about the image and not about the code under test: the
+# failure this image exists to prevent.
+#
+# Why 22 and not "the oldest major that exports the symbol": both halves are
+# measured. LLVM 20 is the oldest that exports `clang_getOffsetOfBase`
+# (`nm -D --defined-only`: present in 20.1 and 22.1, absent in 19.1). But the
+# suite also asserts what libclang *does* with an explicitly instantiated
+# template — internal/cxx expects the layout to be deferred (`LayoutKnown` false,
+# size -1) — and that expectation only holds while the parse cannot resolve
+# `<cstddef>`. With the C++ headers available, libclang 20, 21 and 22 all
+# complete the layout and four tests in internal/cxx fail; with `-nostdinc++`
+# the same binary reports the deferred layout the tests expect. So it is the
+# tests that encode a degraded parse, not a property of a major, and the finding
+# is named in the pull request that introduced this pin. No compiler here can
+# satisfy both the test and the code, so the pin follows the code.
+#
+# 22.1.8 is the version the project is developed against, and apt.llvm.org's
+# trixie archive ships it as a release build (the -20 and -21 components are
+# snapshots of their branches). Its signing key is fingerprint-checked below
+# instead of trusted, and the build-time probe proves `clang_getOffsetOfBase` is
+# there, so a pin that falls behind the code fails the build rather than the
+# test suite.
+#
+# The target libraries (#15). These exist so the target-use-case tests run against
+# the real libraries and not against mocks, and each one's provenance is written
+# here because it decides how a bump is done:
+#
+#   Eigen 3.4.0        package `libeigen3-dev` (trixie). Header-only, no runtime.
+#   OpenCV 4.10.0      packages `libopencv-core-dev`, `libopencv-imgproc-dev`,
+#                      `libopencv-imgcodecs-dev` (trixie). The component -dev
+#                      packages and NOT the `libopencv-dev` metapackage: the
+#                      metapackage pulls the whole GUI chain (Qt5, GTK, Vulkan,
+#                      OpenCL ICD) for `highgui`, which this image has no use
+#                      for. The consequence, said plainly: OpenCV's own
+#                      `opencv4.pc` and `OpenCVConfig.cmake` ship only in that
+#                      metapackage, so the interface here is the header tree plus
+#                      the component libraries:
+#
+#                        -I/usr/include/opencv4
+#                        -lopencv_core -lopencv_imgproc -lopencv_imgcodecs
+#
+#                      `pkg-config --modversion opencv4` therefore does NOT
+#                      work in this image, by choice; `dpkg-query -W
+#                      libopencv-core-dev` names the version instead.
+#   ArrayFire 3.10.0   built from source in the `arrayfire` stage below: trixie's
+#                      archive has no ArrayFire package at all (`apt-cache policy
+#                      libarrayfire-dev` resolves nothing), so there is nothing to
+#                      install. CPU backend only — no CUDA, no OpenCL, no oneAPI,
+#                      no graphics, no image IO, no tests, no examples — installed
+#                      to /usr/local as `libaf` (unified) plus `libafcpu`.
+#
+# Qt is out of scope and is not installed anywhere in this image.
 #
 # Runs as root, deliberately: GitHub Actions container jobs start as root, so a
 # non-root USER here would either be ignored (the runner passes --user) or make
@@ -31,10 +89,19 @@ ARG DEBIAN_VERSION=trixie
 # ---------------------------------------------------------------------------
 FROM debian:${DEBIAN_VERSION}-slim AS fetch
 
-# Go must match the `go` directive in go.mod (1.25.0). Bump both together: the
-# final image sets GOTOOLCHAIN=local, so a go.mod newer than this fails loudly
-# instead of silently downloading a second toolchain.
-ARG GO_VERSION=1.25.0
+# Go has to be at least the `go` directive in go.mod (1.25.0) — the final image
+# sets GOTOOLCHAIN=local, so a module newer than this pin fails loudly instead of
+# silently downloading a second toolchain — and at least what the suite itself
+# asks for. It asks for more than go.mod does: internal/gen's end-to-end fixture
+# writes a throwaway module declaring `go 1.27.0` (writeModule, in
+# internal/gen/e2e_test.go), so a 1.25 toolchain stops four of those tests with
+# `go.mod requires go >= 1.27.0 (running go 1.25.0; GOTOOLCHAIN=local)`. 1.27.3
+# is the newest release, and the `build with the latest Go` job already proves
+# the module builds and vets with it. That a test fixture requires a Go newer
+# than the library's own documented minimum is a finding in the test, named in
+# the pull request that introduced this pin — it is not a reason to hold the
+# image behind the suite it has to run.
+ARG GO_VERSION=1.27.3
 # Same version as .golangci.yml / golangci-lint-action in ci.yml (v2, a v1
 # binary refuses the v2 config).
 ARG GOLANGCI_LINT_VERSION=v2.15.0
@@ -77,16 +144,137 @@ RUN set -eux; \
     mv rootfs/hugo rootfs/usr/local/bin/hugo; \
     chmod 0755 rootfs/usr/local/bin/golangci-lint rootfs/usr/local/bin/hugo
 
+# apt.llvm.org's signing key, imported only if its fingerprint is the one this
+# repository pinned: an archive that starts serving a different key fails this
+# build instead of being trusted. `gpg` is needed to read the key and for nothing
+# else, which is why the key is fetched here and copied into the final stage
+# rather than installed there — and why this is a step of its own, after the
+# pinned downloads: it changes nothing those steps read, so their layer survives.
+# Named "fingerprint" and not "key", for the build check that flags any ARG or ENV
+# whose name says "key": this value is a public fingerprint, and the flag it would
+# raise on every build is noise.
+ARG LLVM_ARCHIVE_FINGERPRINT=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gnupg; \
+    curl -fsSL --retry 3 --retry-delay 2 -o apt.llvm.org.asc \
+      https://apt.llvm.org/llvm-snapshot.gpg.key; \
+    fpr="$(gpg --show-keys --with-colons ./apt.llvm.org.asc | awk -F: '/^fpr:/ {print $10; exit}')"; \
+    if [ "$fpr" != "${LLVM_ARCHIVE_FINGERPRINT}" ]; then \
+      echo "apt.llvm.org key fingerprint is '$fpr', expected '${LLVM_ARCHIVE_FINGERPRINT}'" >&2; \
+      exit 1; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Stage 1c — ArrayFire, CPU backend only, from source. Trixie ships no package
+# (`apt-cache policy libarrayfire-dev` is empty), and #15 needs the real library,
+# so it is built here from a pinned release tag and the final image takes only
+# its installed tree. Nothing in this stage reaches the final image except
+# /staging/arrayfire.
+# ---------------------------------------------------------------------------
+FROM debian:${DEBIAN_VERSION}-slim AS arrayfire
+
+# Pinned release, and the only floating thing about it is the tarball itself:
+# codeload generates an archive per request, so a checksum of it is not stable
+# and pinning one would only document a number that changes. The tag is the pin.
+ARG ARRAYFIRE_VERSION=v3.10.0
+
+# The CPU backend links FFTW for its FFT and BLAS/LAPACK for its linear algebra,
+# so both are real dependencies here and not niceties: without them ArrayFire
+# builds with its slow internal fallbacks or fails outright. Boost's headers are
+# a configure-time requirement of the CPU backend's sort-by-key kernels: without
+# them CMake reports `Found relative path while evaluating include directories
+# … "Boost_INCLUDE_DIR-NOTFOUND"` for every one of them (measured), so
+# `libboost-dev` is here for the headers and nothing else. `liblapacke-dev` is
+# the C interface the CPU backend's `lapack_helper.hpp` includes directly — the
+# Fortran `liblapack-dev` alone stops the compile at `lapacke.h: No such file`.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      cmake \
+      curl \
+      g++ \
+      git \
+      libboost-dev \
+      libfftw3-dev \
+      liblapack-dev \
+      liblapacke-dev \
+      libopenblas-dev \
+      make \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN set -eux; \
+    curl -fsSL --retry 3 --retry-delay 2 -o arrayfire.tar.gz \
+      "https://codeload.github.com/arrayfire/arrayfire/tar.gz/refs/tags/${ARRAYFIRE_VERSION}"; \
+    tar -xzf arrayfire.tar.gz --strip-components=1; \
+    rm -f arrayfire.tar.gz
+
+# `git` is not for this recipe: ArrayFire's own CMake clones `forge` (its windowing
+# dependency, pinned by the tree at v1.0.8) while configuring, even with
+# `AF_BUILD_FORGE=OFF`, which only switches off *building* it. Without git the
+# configure dies with `could not find git for clone of af_forge-populate`
+# (measured). It also fetches boost_compute, so this stage is not hermetic: both
+# clones are pinned by REFs inside the tarball, and both stay in this stage.
+#
+# BUILD_TESTING=OFF is load-bearing, not tidiness: ArrayFire's test tree downloads
+# sparse datasets from the network at configure time and fails the build when it
+# cannot (measured on the first attempt, with the error coming out of
+# test/CMakeModules/download_sparse_datasets.cmake). AF_BUILD_GRAPHICS is not
+# even offered as an option in 3.10; forge is only pulled in by AF_BUILD_FORGE,
+# which stays OFF.
+# CMAKE_INSTALL_PREFIX is /usr/local — where the files really end up — and the
+# staged copy is produced with DESTDIR. That is not a style choice: ArrayFire's
+# unified `libaf` resolves its backends through the install prefix compiled into
+# it, so staging with `--prefix /staging/arrayfire` leaves it looking for
+# `libafcpu` under a directory that only existed during the build, and the first
+# `af::constant` dies with `ArrayFire couldn't locate any backends` (measured).
+RUN cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DBUILD_TESTING=OFF \
+      -DAF_BUILD_CPU=ON \
+      -DAF_BUILD_CUDA=OFF \
+      -DAF_BUILD_OPENCL=OFF \
+      -DAF_BUILD_ONEAPI=OFF \
+      -DAF_BUILD_UNIFIED=ON \
+      -DAF_BUILD_EXAMPLES=OFF \
+      -DAF_BUILD_DOCS=OFF \
+      -DAF_WITH_IMAGEIO=OFF \
+      -DAF_BUILD_FORGE=OFF \
+ && cmake --build build --parallel "$(nproc)" \
+ && DESTDIR=/staging/arrayfire cmake --install build
+
 # ---------------------------------------------------------------------------
 # Stage 2 — the image CI runs in.
 # ---------------------------------------------------------------------------
 FROM debian:${DEBIAN_VERSION}-slim
 
-# Pinned libclang/libclang major. Trixie's metapackages (`clang`,
-# `libclang-dev`) resolve to these, but naming the version keeps the image
-# honest if the base ever floats: changing it is a code decision (see the base
-# note above), not an image tweak.
-ARG CLANG_VERSION=19
+# Pinned clang/libclang major, from apt.llvm.org (see the base note above).
+# trixie's own metapackages (`clang`, `libclang-dev`) stop at 19 and cannot bind
+# `clang_getOffsetOfBase`, so they are not used: changing this number is a code
+# decision, not an image tweak.
+ARG CLANG_VERSION=22
+# The apt.llvm.org suite that matches the base. It is a separate ARG because the
+# archive names its components `<suite>-<major>` and both halves are pinned.
+ARG LLVM_APT_SUITE=trixie
+
+# `apt-get update` reaches apt.llvm.org over TLS, and the slim base ships no CA
+# bundle (every Debian mirror in its sources is http://). Without this the index
+# download fails with `SSL routines::certificate verify failed` and the pinned
+# packages are then simply "unable to locate" — measured on the first build of
+# this recipe.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# The key verified in the fetch stage, and the one archive this image reads
+# clang from. No `[trusted=yes]`, no `Acquire::AllowInsecureRepositories`.
+COPY --from=fetch /staging/apt.llvm.org.asc /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+RUN set -eux; \
+    echo "deb https://apt.llvm.org/${LLVM_APT_SUITE}/ llvm-toolchain-${LLVM_APT_SUITE}-${CLANG_VERSION} main" \
+      > /etc/apt/sources.list.d/llvm.list
 
 LABEL org.opencontainers.image.title="cppgo-ci" \
       org.opencontainers.image.description="Pinned Go + C++17 + libclang + golangci-lint + Hugo toolchain for cppgo" \
@@ -101,18 +289,28 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 #   git              `git describe` in tests, module VCS fallback
 #   make             the Makefile is how CI drives the suite, and examples/*
 #                    are built through their own Makefiles
+#   nodejs           the interpreter `make prose-check` runs the vendored technical-
+#                    prose checker in (`.agents/skills/technical-prose-style/scripts/
+#                    prose-check.mjs` and `scripts/prose-check-godoc.mjs`, both ESM
+#                    with Node built-ins and no npm tree). trixie's package is Node
+#                    20.19.2 — a distro pin, like g++ and make, and the build asserts
+#                    the major, so a base that loses node fails the image instead of
+#                    the prose gate. `scripts/prose-check.sh` also needs `perl`,
+#                    which the base already carries (5.40.1, perl-base).
 #   pkg-config       asked for by the image contract; some cgo paths use it
 #   g++              C++17 fixtures (internal/testlib, examples, build-examples)
 #                    and the race detector's cgo; `cc` also builds the fake
 #                    libclang the cxx tests use
 #   clang-$CLANG_VERSION
-#                    the compiler the project introspects with. clang 14 vs 19
-#                    differ in observable behaviour (see the base note), so the
-#                    exact version is a tested dependency, not an incidental
-#                    runtime.
+#                    the compiler the project introspects with. clang 14, 19,
+#                    20 and 22 differ in observable behaviour (see the base
+#                    note), so the exact version is a tested dependency, not an
+#                    incidental runtime.
 #   libclang-$CLANG_VERSION-dev
-#                    the C API internal/cxx dlopen()s, plus the unversioned
-#                    /usr/lib/llvm-19/lib/libclang.so the loader looks for.
+#                    the C API internal/cxx dlopen()s, including
+#                    clang_getOffsetOfBase, which libclang 19 does not export,
+#                    plus the /usr/lib/llvm-20/lib/libclang.so.1 the loader
+#                    reaches through the symlink created below.
 #                    It also installs clang's static archives (libclangSema.a
 #                    and friends, ~250 MB) which nothing here links at run
 #                    time, so they are deleted below; the shared object, the
@@ -121,6 +319,19 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 #                    out-of-line bodies. Its absence makes those tests SKIP and
 #                    the coverage gate fail — exactly the class of bug this
 #                    image exists to prevent, so it is explicit, not implicit.
+#   libeigen3-dev,   the target libraries #15's tests bind: Eigen's headers,
+#   libopencv-       OpenCV's core/imgproc/imgcodecs components (not the GUI
+#   core-dev,        chain — see the header), and ArrayFire, which is copied in
+#   libopencv-       from the stage above because trixie has no package for it.
+#   imgproc-dev,
+#   libopencv-
+#   imgcodecs-dev
+#   libfftw3-*3,     ArrayFire's *runtime*: the CPU backend links FFTW, LAPACKE
+#   liblapacke,      and OpenBLAS in the builder stage, so those shared objects
+#   libopenblas0     must exist here too. Without them `dlopen("libafcpu.so.3")`
+#                    fails on unresolved dependencies and every af_* call answers
+#                    `ArrayFire couldn't locate any backends` — which reads like
+#                    a broken build and is a missing package (measured).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash \
@@ -131,7 +342,16 @@ RUN apt-get update \
       g++ \
       git \
       libclang-${CLANG_VERSION}-dev \
+      libeigen3-dev \
+      libfftw3-double3 \
+      libfftw3-single3 \
+      liblapacke \
+      libopenblas0 \
+      libopencv-core-dev \
+      libopencv-imgcodecs-dev \
+      libopencv-imgproc-dev \
       make \
+      nodejs \
       pkg-config \
       xz-utils \
  && rm -rf \
@@ -141,6 +361,13 @@ RUN apt-get update \
       /usr/share/man/* \
       /usr/share/info/* \
  && find /usr/lib/llvm-*/lib -maxdepth 1 -name '*.a' -delete
+
+# ArrayFire, CPU backend, built in the `arrayfire` stage and staged under
+# DESTDIR: `/staging/arrayfire/usr/local/{lib,include,share}` is exactly the
+# layout /usr/local has, and libaf's compiled-in prefix is /usr/local, so the
+# unified dispatcher finds libafcpu where it expects it.
+COPY --from=arrayfire /staging/arrayfire/usr/local/ /usr/local/
+RUN ldconfig
 
 COPY --from=fetch /staging/rootfs/usr/local/go /usr/local/go
 COPY --from=fetch /staging/rootfs/usr/local/bin/golangci-lint /usr/local/bin/golangci-lint
@@ -153,17 +380,21 @@ RUN rm -rf /usr/local/go/test /usr/local/go/api /usr/local/go/doc /usr/local/go/
 
 # libclang discovery: internal/cxx looks for $CPPGO_LIBCLANG, then
 # /usr/lib/libclang.so, then /usr/lib/libclang-*.so*, then /usr/lib/llvm-*/lib/.
-# Debian's package puts the real object in the multiarch directory with the
-# version *in the middle* (libclang-19.so.1), a name the last pattern does not
-# match, so the unversioned name the loader tries first must be created here.
+# apt.llvm.org's package puts the real object in the multiarch directory
+# (/usr/lib/x86_64-linux-gnu/libclang-20.so.20) and a versioned hop beside it
+# (/usr/lib/llvm-20/lib/libclang-20.so.1), which the loader's last pattern does
+# reach — but the unversioned name it tries first (/usr/lib/libclang.so) is what
+# the environment actually resolves, so it is created here and then proven.
 # It is then proven with a real dlopen + dlsym that the symlink resolves, that
-# the C API is exported and that the major matches the pin — a build-time
-# failure is far cheaper than a silent test skip that only shows up as a red
-# coverage gate.
+# the C API is exported, that the major matches the pin **and that the version's
+# own symbols are there**: `clang_getOffsetOfBase` is the one internal/cxx calls
+# that a major can be too old for (clang 19 does not export it, clang 20 does),
+# and the failure it causes in the suite is an `undefined symbol` after a
+# successful load — far away from the pin that caused it. A build-time failure
+# is cheaper than a silent test skip that only shows up as a red coverage gate.
 #
-# The versionless compiler names are what Debian's `clang` metapackage provides;
-# we install the pinned clang-19 instead (the metapackage is only a symlink
-# carrier), so create them the same way.
+# The versionless compiler names are what a `clang` metapackage provides; the
+# pinned clang-20 package does not create them, so they are created here.
 RUN <<'SCRIPT'
 set -eux
 
@@ -197,6 +428,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "libclang C API symbols not found\n");
         return 2;
     }
+    /* The version-dependent symbol internal/cxx binds: absent before LLVM 20. */
+    if (!dlsym(handle, "clang_getOffsetOfBase")) {
+        fprintf(stderr, "clang_getOffsetOfBase is not exported by %s\n", argv[1]);
+        return 3;
+    }
     printf("%s\n", get_string(get_version()));
     return 0;
 }
@@ -219,16 +455,95 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
     GOTOOLCHAIN=local \
     LANG=C.UTF-8
 
+# The target libraries, proven by a real compile, a real link and a real run
+# rather than by a package listing: Eigen is header-only so its check is the
+# compile and the trace, OpenCV's is a `cv::Mat` through `cvtColor`, and
+# ArrayFire's is a reduction through the CPU backend plus the version the
+# library reports. A library that is present but broken fails here, at build
+# time, and not as an `undefined symbol` in a test months later.
+RUN <<'SCRIPT'
+set -eux
+
+mkdir -p /tmp/targets-check
+cat >/tmp/targets-check/check.cpp <<'CHECK'
+#include <cmath>
+#include <cstdio>
+
+#include <Eigen/Dense>
+#include <af/algorithm.h>
+#include <af/array.h>
+#include <af/data.h>
+#include <af/util.h>
+#include <opencv2/core.hpp>
+#include <opencv2/core/version.hpp>
+#include <opencv2/imgproc.hpp>
+
+int main() {
+    const Eigen::Matrix3d m = Eigen::Matrix3d::Identity();
+    const double trace = m.trace();
+
+    cv::Mat bgr(4, 4, CV_8UC3, cv::Scalar(0, 0, 255));
+    cv::Mat gray;
+    cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+    const int g = gray.at<uchar>(0, 0);
+
+    af::array a = af::constant(1.5, 3);
+    const double total = af::sum<double>(a);
+
+    int major = 0, minor = 0, patch = 0;
+    af_get_version(&major, &minor, &patch);
+
+    std::printf("eigen=%d.%d.%d trace=%.0f opencv=%s gray=%d arrayfire=%d.%d.%d sum=%.1f\n",
+                EIGEN_WORLD_VERSION, EIGEN_MAJOR_VERSION, EIGEN_MINOR_VERSION, trace,
+                CV_VERSION, g, major, minor, patch, total);
+
+    if (std::fabs(trace - 3.0) > 1e-9) return 1;
+    if (g <= 0) return 2;              /* BGR(0,0,255) is red: its grey is 76 */
+    if (std::fabs(total - 4.5) > 1e-9) return 3;
+    if (major == 0) return 4;
+    return 0;
+}
+CHECK
+
+g++ -std=c++17 -O2 -o /tmp/targets-check/check /tmp/targets-check/check.cpp \
+    -I/usr/include/eigen3 -I/usr/include/opencv4 \
+    -lopencv_core -lopencv_imgproc \
+    -laf
+
+ldconfig -p | grep -E 'libaf(cpu)?\.so|libspdlog\.so' || {
+  echo "the loader does not know /usr/local/lib libaf; the ld cache was not refreshed" >&2
+  exit 1
+}
+# The backend is loaded with dlopen at run time, so a missing runtime dependency
+# is invisible to the link above and only shows up as "couldn't locate any
+# backends". This is that check, named.
+if ldd /usr/local/lib/libafcpu.so.3 | grep -q 'not found'; then
+  ldd /usr/local/lib/libafcpu.so.3 >&2
+  echo "libafcpu has an unresolved dependency; the final image is missing a runtime library" >&2
+  exit 1
+fi
+AF_SHOW_LOAD_PATH=1 /tmp/targets-check/check
+
+# The headers and the ABI files the link above does not exercise.
+test -f /usr/include/eigen3/Eigen/Dense
+test -f /usr/include/opencv4/opencv2/imgproc.hpp
+test -f /usr/local/include/af/array.h
+ldconfig -p | grep -q 'libafcpu\.so'
+rm -rf /tmp/targets-check
+SCRIPT
+
 # Fail the build, not the job, if a pinned tool is missing or wrong.
 RUN set -eux; \
     go version; \
+    node --version; \
+    node --version | grep -qE '^v(2[0-9]|[3-9][0-9])\.' || { echo "node is older than 20" >&2; exit 1; }; \
     golangci-lint --version; \
     hugo version; \
     test -x /usr/bin/nm; \
     g++ --version | head -n 1; \
     clang --version | head -n 1; \
     hugo version | grep -qi extended; \
-    go version | grep -q "go1\.25\.0 "; \
+    go version | grep -q "go1\.27\.3 "; \
     clang --version | grep -q "clang version ${CLANG_VERSION}\."
 
 CMD ["bash"]

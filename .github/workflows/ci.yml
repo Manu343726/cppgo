@@ -12,6 +12,22 @@ name: CI
 # A single Go version is tested on purpose: bumping Go is a Dockerfile ARG
 # change, reviewed like any other dependency. The second job keeps an eye on
 # newer Go releases by checking that the library still compiles with them.
+#
+# WHICH IMAGE, AND WHY IT IS NOT `latest`. `container.image` cannot be computed
+# from a step, so the image is resolved by a job of its own: `image` hashes the
+# Dockerfile — the recipe's content address, `recipe-<first 12 hex of
+# sha256(Dockerfile)>` — and waits until `.github/workflows/image.yml` has published
+# that tag, then hands the ref to `test` through `needs`. A push to `main` that
+# changes the Dockerfile starts both workflows in the same second; without that wait
+# the gate could pull the *previous* recipe and fail for the image's age instead of
+# for the code. A pull request cannot publish, so there the tag is checked once and
+# the run says plainly that a Dockerfile change is only testable after it lands on
+# `main`.
+#
+# That tag is the same one the Forgejo workflow runs in
+# (`registry.docker.manu343726.com/homelab/cppgo-ci:recipe-…`): two registries, one
+# address, one recipe. When the gate is red in one forge it is red in the other for
+# a reason in the tree, not in the environment.
 
 on:
   push:
@@ -33,6 +49,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  IMAGE: ghcr.io/manu343726/cppgo-ci
   COVERAGE_THRESHOLD: '99.0'
   # A skipped introspection test is a lie in CI: it silently drops most of
   # internal/cxx from the coverage profile and the gate then fails with a
@@ -40,11 +57,69 @@ env:
   CPPGO_REQUIRE_LIBCLANG: '1'
 
 jobs:
+  image:
+    name: image
+    runs-on: ubuntu-latest
+    # The wait is bounded at 60 minutes below; this keeps a stuck job from holding a
+    # runner for the six hours GitHub allows.
+    timeout-minutes: 75
+    outputs:
+      # `container.image` accepts the `needs` context (GitHub's context-table row for
+      # `jobs.<job_id>.container.image`), which is what lets a step's answer choose the
+      # container a later job runs in.
+      ref: ${{ steps.resolve.outputs.ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Resolve the recipe image, and wait for it when this push publishes it
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The same string `.github/workflows/image.yml` publishes. One recipe, one
+          # address; if the two ever disagree the wait below times out instead of running
+          # the gate in a different environment.
+          tag="recipe-$(sha256sum Dockerfile | cut -c1-12)"
+          case "${tag}" in
+            recipe-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *) echo "::error::cannot compute the recipe tag from ./Dockerfile (got '${tag}')" >&2; exit 1 ;;
+          esac
+          ref="${IMAGE}:${tag}"
+          echo "ref=${ref}" >>"${GITHUB_OUTPUT}"
+          echo "the recipe of this tree is ${ref}"
+
+          printf '%s' "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+          # A push to main that changes the Dockerfile starts image.yml at the same time
+          # as this run: wait for it (30 s x 120). Nothing can publish from a pull
+          # request, so there the check is once and the failure names the reason.
+          attempts=120
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then attempts=1; fi
+
+          i=1
+          while [ "${i}" -le "${attempts}" ]; do
+            if docker manifest inspect "${ref}" >/dev/null 2>&1; then
+              echo "${ref} is published (attempt ${i}/${attempts})"
+              exit 0
+            fi
+            echo "attempt ${i}/${attempts}: ${ref} is not in GHCR yet"
+            i=$((i + 1))
+            if [ "${i}" -le "${attempts}" ]; then sleep 30; fi
+          done
+
+          echo "::error::${ref} is not published. .github/workflows/image.yml publishes it on a push to main that changes the Dockerfile, so a Dockerfile change is only testable after it lands on main." >&2
+          exit 1
+
   test:
     name: test
+    needs: image
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/manu343726/cppgo-ci:latest
+      image: ${{ needs.image.outputs.ref }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
