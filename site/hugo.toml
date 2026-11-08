@@ -1,11 +1,41 @@
-# Hugo configuration for the placeholder in site/.
+# Hugo configuration for the cppgo documentation site.
 #
-# The real documentation is being rewritten (issue #29); this site exists so
-# that the GitHub Pages deployment serves a notice instead of the pages that
-# were taken down. Replace it, do not extend it.
+# The site is the manual: tutorials, how-to guides, reference and explanation,
+# laid out along the four quadrants of Diátaxis. The design contract and the
+# decision records are not duplicated here; the pages link to them in the
+# repository.
+#
+# Build it with the pinned toolchain:
+#
+#   make site
+#
+# which runs hugo 0.169 (the extended build) from the ci image. GitHub Pages
+# publishes the result from .github/workflows/pages.yml.
 
 baseURL = "https://manu343726.github.io/cppgo/"
 title = "cppgo"
 locale = "en-us"
 
+# The site is a set of pages, not a blog: no taxonomies, no feeds. "404" is
+# disabled because GitHub Pages serves its own.
 disableKinds = ["taxonomy", "term", "RSS", "sitemap", "robotsTXT", "404"]
+
+[params]
+  # One sentence, used as the meta description of every page that has none.
+  description = "Call C++ from Go with no cgo at build time: generate a Go package from the headers, and let cppgo build the C++ shim that carries the rest."
+  # Links the sidebar offers beside the four quadrants. Source lives on the
+  # public mirror; the board is the project's Forgejo, which needs an account.
+  repo = "https://github.com/Manu343726/cppgo"
+  design = "https://github.com/Manu343726/cppgo/blob/main/DESIGN.md"
+  issues = "https://git.manu343726.com/manu343726/cppgo/issues"
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      # Reference tables and the ADR-style tables in the pages need no raw HTML,
+      # but a page may quote a <table>; unsafe=false keeps the source honest.
+      unsafe = false
+  [markup.highlight]
+    # Code blocks are highlighted at build time (no client-side script).
+    style = "monokai"
+    lineNos = false
