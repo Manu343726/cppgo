@@ -6,7 +6,10 @@ name: CI
 # image stopped shipping libclang, internal/cxx silently skipped itself, its coverage vanished
 # and the 99% gate failed for a reason that had nothing to do with the code. The Dockerfile
 # pins Go, g++ 14, clang/libclang 22, golangci-lint, hugo, binutils and make instead, so the
-# environment is a reviewed artefact.
+# environment is a reviewed artefact. It also carries the target libraries #15's tests bind
+# against the real thing and not a mock — Eigen 3.4.0 and OpenCV 4.10.0 from trixie's archive,
+# ArrayFire 3.10.0 (CPU backend) built from source because the archive has no package for it;
+# the provenance of each and the build-time compile/link/run check are in the `Dockerfile`.
 #
 # ---------------------------------------------------------------------------
 # THE TWO FACTS THIS FILE OWNS. Every other mention of them, here and in the pull request,
@@ -28,9 +31,10 @@ name: CI
 #
 #    The image is published by hand today, and the tag below names the last build that was
 #    pushed: it was built from this repository's `Dockerfile` when the recipe moved to clang 22
-#    (trixie's archive stops at 19, and the tree binds `clang_getOffsetOfBase`, which 19 does
-#    not export — the reason is in the `Dockerfile`'s base note, which owns it). Its index
-#    digest is `sha256:99ed52b665833c45236cfeb18f7aea1783b8ce8f546fb518596bf9b54d9fc7d4`.
+#    (trixie's archive stops at 19 and the tree binds `clang_getOffsetOfBase`; the reason and
+#    the measured choice of major are in the `Dockerfile`'s base note, which owns them) and
+#    gained the target libraries. Its index digest is
+#    `sha256:42e52d97eb251d7fc608ac41d08aacdc60bd8acfa64627b24f13bca0941cefce`.
 #
 #    Publishing on a `Dockerfile` change is not automated yet: a change lands in
 #    `.forgejo/workflows/image.yml` on the day it does, and this block gains one link to it.
@@ -128,7 +132,7 @@ env:
   # coverage profile and the gate then fails with a number nobody can explain. Require libclang
   # instead of skipping.
   CPPGO_REQUIRE_LIBCLANG: '1'
-  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:7b27511
+  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:3610540
 
 jobs:
   test:
@@ -142,7 +146,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:7b27511
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:3610540
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}
@@ -247,7 +251,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:7b27511
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:3610540
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}
