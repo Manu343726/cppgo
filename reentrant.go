@@ -21,8 +21,7 @@ type Args = asm.Args
 //
 // It is the call to use whenever a Go function is passed to C++, as a function
 // pointer or a std::function, because no other call may invoke a callback. A call
-// that passes none does not need it, and a plain call costs less: 151 ns against
-// 15.9 ns per call in the measurement in DESIGN.md.
+// that passes none does not need it, and costs less.
 //
 // The results are read from a.Ret and a.RetF after the call returns.
 func CallReentrant(fn uintptr, a *Args) {

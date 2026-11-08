@@ -2,10 +2,8 @@
 // worked example of the free-function and slice shapes.
 //
 // It is generated from include/stats/stats.hpp: the Go functions here are the C++
-// API as a caller sees it, taking Go slices and returning Go values and errors,
-// and the command that produced them is in zz_cppgo.gen.go's banner. Nothing in
-// this directory is written by hand, and `make check` proves the committed files
-// are what the generator produces.
+// API as a caller sees it, taking Go slices and returning Go values and errors. It
+// is generator output, not hand-written code.
 //
 // The C++ side is src/stats.cpp, built by the example's own Makefile. A caller
 // needs nothing from it but the generated package: the two shared objects it loads
