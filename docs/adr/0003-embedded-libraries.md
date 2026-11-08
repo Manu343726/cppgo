@@ -92,10 +92,13 @@ any user library that itself has siblings.
   randomised name) and renamed into place, so no reader ever sees a partial object and no temporary
   path is predictable or world-writable;
 - an existing file is reused only when its size **and** SHA-256 match the embedded bytes. A truncated
-  or corrupted entry is replaced; a file that is not a regular file (a directory, a symbolic link) is
-  never trusted, it is replaced by the rename;
-- a symbolic link where the entry directory belongs is refused with `ErrInsecureCache` rather than
-  followed, because that is the one shape another local user could have prepared in advance;
+  or corrupted entry is replaced; a symbolic link is never followed and is replaced by the rename that
+  follows; a directory at an object path cannot be replaced at all, and the rename that tries fails
+  with an `*ExtractError` naming the object;
+- a path where an entry directory belongs that is not a private directory — a symbolic link, which
+  `MkdirAll` follows and `Lstat` does not, a regular file in its place, or a directory whose mode
+  cannot be tightened — is refused with `ErrInsecureCache` rather than used, because those are the
+  shapes another local user could have prepared in advance;
 - extraction happens in full before `dlopen`, in every process, so a concurrent process cannot load a
   half-extracted set: it either finds every file with the right digest or writes the missing ones
   itself. The rename is atomic per file, and two writers of the same bytes produce the same bytes.
@@ -115,11 +118,11 @@ because of its name alone.
 ## Alternatives considered
 
 - **`memfd_create` and `dlopen("/proc/self/fd/N")`** — rejected, and not only for portability. It is
-  Linux-only (purego's loader also serves darwin), the object has no name in `/proc/<pid>/maps` or a
-  coredump, and — the decisive point — `$ORIGIN` of such an object is `/proc/self/fd`, which is not a
-  directory of siblings, so the second object ADR-0002 introduced could not be found at all. An
-  anonymous inode cannot be the neighbour of another anonymous inode. Nothing in this feature needs
-  to avoid the disk, so the memory route buys nothing and loses the dependency story.
+  Linux-only (purego's loader also serves darwin), and — the decisive point — `$ORIGIN` of such an
+  object is `/proc/self/fd`, which is not a directory of siblings, so the second object ADR-0002
+  introduced could not be found at all. An anonymous inode cannot be the neighbour of another
+  anonymous inode. Nothing in this feature needs to avoid the disk, so the memory route buys nothing
+  and loses the dependency story.
 - **Extract to `os.TempDir()` under a fixed name** — a predictable path in a shared, world-writable
   directory: another local user can pre-create it, replace the object between write and `dlopen`, or
   plant a symlink. The user cache directory with `0700`/`0600` and `O_EXCL` closes that.
