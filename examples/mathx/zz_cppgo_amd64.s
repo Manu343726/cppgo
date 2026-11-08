@@ -88,6 +88,17 @@ TEXT ·cppgoCall_5e3a9d471306(SB), NOSPLIT, $0-24
 	MOVQ	R13, SP
 	RET
 
+// func cppgoCall_2ceca75f5a00(fn uintptr, this uintptr) int32
+TEXT ·cppgoCall_2ceca75f5a00(SB), NOSPLIT, $0-20
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	MOVL	AX, ret+16(FP)
+	RET
+
 // func cppgoCall_00064a4bc112(fn uintptr, this uintptr, out unsafe.Pointer) int32
 TEXT ·cppgoCall_00064a4bc112(SB), NOSPLIT, $0-28
 	MOVQ	fn+0(FP), R12

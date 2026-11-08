@@ -41,6 +41,12 @@ double Vector::at(std::size_t index) const {
     return index == 0 ? x_ : y_;
 }
 
+void Vector::validate() const {
+    if (x_ == 0.0 && y_ == 0.0) {
+        throw std::runtime_error("Vector::validate: the zero vector has no direction");
+    }
+}
+
 void Vector::scale(double k) noexcept {
     x_ *= k;
     y_ *= k;

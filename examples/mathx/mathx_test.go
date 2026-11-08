@@ -190,6 +190,27 @@ func TestThrowingMethod(t *testing.T) {
 	if call.Symbol != "mathx::Vector::at" {
 		t.Errorf("CallError.Symbol = %q, want mathx::Vector::at", call.Symbol)
 	}
+
+	// A fallible method with no value to return: the generated signature is
+	// only an error, and a successful call has nothing else to report.
+	if err := v.Validate(); err != nil {
+		t.Errorf("Validate() on a non-zero vector = %v, want nil", err)
+	}
+	zero, err := NewVector(0, 0)
+	if err != nil {
+		t.Fatalf("NewVector(0, 0): %v", err)
+	}
+	defer zero.Close()
+	err = zero.Validate()
+	if err == nil {
+		t.Fatal("Validate() on the zero vector returned no error")
+	}
+	if !strings.Contains(err.Error(), "zero vector has no direction") {
+		t.Errorf("Validate() error = %q, want the exception's message", err)
+	}
+	if !errors.As(err, &call) || call.Symbol != "mathx::Vector::validate" {
+		t.Errorf("Validate() error = %v, want a CallError naming mathx::Vector::validate", err)
+	}
 }
 
 // TestPointByValue is the record case: Point is a 16-byte POD, so the Go value

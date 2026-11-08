@@ -35,6 +35,9 @@ int32_t cppgo_thunk_9e4411d8977c(const void * self, const double * ys, size_t n,
 /* cppgo_thunk_49993cda6560: mathx::Vector::norm() const */
 int32_t cppgo_thunk_49993cda6560(const void * self, double * cppgo_result);
 
+/* cppgo_thunk_2ceca75f5a00: mathx::Vector::validate() const */
+int32_t cppgo_thunk_2ceca75f5a00(const void * self);
+
 /* cppgo_thunk_00064a4bc112: mathx::Vector::x() const */
 int32_t cppgo_thunk_00064a4bc112(const void * self, double * cppgo_result);
 

@@ -113,6 +113,20 @@ extern "C" int32_t cppgo_thunk_49993cda6560(const void * self, double * cppgo_re
 	}
 }
 
+extern "C" int32_t cppgo_thunk_2ceca75f5a00(const void * self) {
+	cppgo_error_message.clear();
+	try {
+		static_cast<const ::mathx::Vector *>(self)->validate();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
 extern "C" int32_t cppgo_thunk_00064a4bc112(const void * self, double * cppgo_result) {
 	cppgo_error_message.clear();
 	try {

@@ -97,6 +97,7 @@ func (v *Vector) Y() (float64, error)      // shim
 func (v *Vector) Norm() (float64, error)   // may throw: shim
 func (v *Vector) Dot(ys []float64) (float64, error)
 func (v *Vector) At(index uint64) (float64, error) // throws: shim
+func (v *Vector) Validate() error          // void and throwing: shim
 func (v *Vector) Scale(k float64)          // noexcept: direct, no error
 func VectorDims() (int32, error)
 
@@ -144,6 +145,12 @@ The shim catches the exception, stores its `what()` on the calling thread, and
 returns a non-zero status. The generated binding reads that status, copies the
 message out and returns `*cppgo.CallError` wrapping it. `TestThrowingMethod`
 asserts both the text and the symbol.
+
+`validate()` is the same mechanism with no value: it throws `std::runtime_error`
+for the zero vector, so its Go signature is only `error`. That makes the pair
+`Scale` (void, `noexcept`, no error) and `Validate` (void, throws, only an
+error) the clearest reading of the rule that a call which cannot fail gets no
+error result.
 
 ### A POD by value
 

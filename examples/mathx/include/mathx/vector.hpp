@@ -62,6 +62,11 @@ public:
     // of a *cppgo.CallError.
     double at(std::size_t index) const;
 
+    // A fallible method with no value to return: it throws std::runtime_error
+    // for the zero vector, so its Go signature is only an error. It is the
+    // method-shaped counterpart of stats::histogram and the opposite of Scale.
+    void validate() const;
+
     // Out of line and noexcept: the only member the direct carrier can take.
     // The generated Go signature has no error result at all.
     void scale(double k) noexcept;

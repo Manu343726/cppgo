@@ -74,6 +74,8 @@ var (
 	cppgoSym_49993cda6560 uintptr
 	// _ZN5mathx6Vector5scaleEd
 	cppgoSym_5e3a9d471306 uintptr
+	// cppgo_thunk_2ceca75f5a00
+	cppgoSym_2ceca75f5a00 uintptr
 	// cppgo_thunk_00064a4bc112
 	cppgoSym_00064a4bc112 uintptr
 	// cppgo_thunk_250797b5199d
@@ -160,6 +162,7 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_9e4411d8977c", addr: &cppgoSym_9e4411d8977c, shim: true},
 		{name: "cppgo_thunk_49993cda6560", addr: &cppgoSym_49993cda6560, shim: true},
 		{name: "_ZN5mathx6Vector5scaleEd", addr: &cppgoSym_5e3a9d471306, shim: false},
+		{name: "cppgo_thunk_2ceca75f5a00", addr: &cppgoSym_2ceca75f5a00, shim: true},
 		{name: "cppgo_thunk_00064a4bc112", addr: &cppgoSym_00064a4bc112, shim: true},
 		{name: "cppgo_thunk_250797b5199d", addr: &cppgoSym_250797b5199d, shim: true},
 		{name: "cppgo_thunk_06a8bef46cac", addr: &cppgoSym_06a8bef46cac, shim: true},
@@ -425,6 +428,25 @@ func (v *Vector) At(index uint64) (float64, error) {
 	return cppgoResult, nil
 }
 
+// Validate calls mathx::Vector::validate.
+//
+// C++: mathx::Vector::validate() const, _ZNK5mathx6Vector8validateEv (thunk cppgo_thunk_2ceca75f5a00, not noexcept: an exception would unwind into Go), verified against libmathx.so
+func (v *Vector) Validate() error {
+	if v == nil || v.obj == nil {
+		return cppgo.ErrClosed
+	}
+	if err := cppgoOpen(""); err != nil {
+		return err
+	}
+	cppgo.ProbeStack()
+	cppgoStatus := cppgoCall_2ceca75f5a00(cppgoSym_2ceca75f5a00, v.cppgoAddr())
+	cppgo.KeepAlive(v)
+	if cppgoStatus != 0 {
+		return cppgoCallError("mathx::Vector::validate")
+	}
+	return nil
+}
+
 // Scale calls mathx::Vector::scale.
 //
 // C++: mathx::Vector::scale(double) noexcept, _ZN5mathx6Vector5scaleEd (direct, noexcept, not virtual, register class; the library exports the symbol), verified against libmathx.so
@@ -517,6 +539,9 @@ func cppgoCall_49993cda6560(fn uintptr, this uintptr, out unsafe.Pointer) int32
 
 // cppgoCall_5e3a9d471306 is the NOSPLIT trampoline for _ZN5mathx6Vector5scaleEd.
 func cppgoCall_5e3a9d471306(fn uintptr, this uintptr, a1 float64)
+
+// cppgoCall_2ceca75f5a00 is the NOSPLIT trampoline for cppgo_thunk_2ceca75f5a00.
+func cppgoCall_2ceca75f5a00(fn uintptr, this uintptr) int32
 
 // cppgoCall_00064a4bc112 is the NOSPLIT trampoline for cppgo_thunk_00064a4bc112.
 func cppgoCall_00064a4bc112(fn uintptr, this uintptr, out unsafe.Pointer) int32
