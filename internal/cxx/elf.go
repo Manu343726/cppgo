@@ -3,6 +3,7 @@ package cxx
 import (
 	"debug/elf"
 	"fmt"
+	"path/filepath"
 	"sort"
 )
 
@@ -36,4 +37,30 @@ func DefinedDynamicSymbols(path string) ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// Soname returns the DT_SONAME of an ELF shared object, or its base name when
+// the object declares none.
+//
+// It is what the generated shim is linked against and what the generated
+// package records: a shared object's DT_NEEDED entry takes the soname, so a
+// build directory never reaches the binary, and a deployment that keeps the
+// library and the shim together resolves it through $ORIGIN.
+func Soname(path string) (string, error) {
+	file, err := elf.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("cxx: reading the soname: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	values, err := file.DynString(elf.DT_SONAME)
+	if err != nil {
+		return "", fmt.Errorf("cxx: reading the dynamic section of %s: %w", path, err)
+	}
+	for _, value := range values {
+		if value != "" {
+			return value, nil
+		}
+	}
+	return filepath.Base(path), nil
 }

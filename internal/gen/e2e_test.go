@@ -69,6 +69,7 @@ func TestGeneratedPackageBuildsAndRuns(t *testing.T) {
 	shim := filepath.Join(out, ShimLibraryName("analytic"))
 	require.FileExists(t, shim)
 	assert.Equal(t, before, fileDigest(t, library), "the user's library must not change")
+	deployBeside(t, library, out)
 	assert.Empty(t, symbolsMatching(t, library, "cppgo"))
 	assert.NotEmpty(t, symbolsMatching(t, shim, "cppgo_last_error"), "the shim is the cppgo artifact")
 
@@ -138,6 +139,15 @@ func TestFixturePackagesCompile(t *testing.T) {
 			runGoEnv(t, goBinary, moduleDir, nil, "build", "./genpkg")
 		})
 	}
+}
+
+// deployBeside stages the default deployment: the user's library beside the
+// shim, which is what the generated Open resolves without any override.
+func deployBeside(t *testing.T, library, shimDir string) {
+	t.Helper()
+	data, err := os.ReadFile(library)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(shimDir, filepath.Base(library)), data, 0o755))
 }
 
 // requireEndToEndTools skips a test whose toolchain is absent, naming it.
@@ -227,6 +237,17 @@ func writeModule(t *testing.T, dir, repo string) error {
 	return os.WriteFile(filepath.Join(dir, "go.sum"), sum, 0o644)
 }
 
+// runGoEnvMayFail is runGoEnv for a command whose failure is the measurement.
+func runGoEnvMayFail(t *testing.T, goBinary, dir string, extra []string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(goBinary, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOWORK=off", "GOPROXY=off")
+	cmd.Env = append(cmd.Env, extra...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
 // runGoEnv runs the go tool in a throwaway module, with the environment a
 // consumer has: no network, no workspace, a replace directive instead of a
 // published module.
@@ -278,6 +299,9 @@ import (
 )
 
 func TestBindings(t *testing.T) {
+	// The programmatic override: the deployment shape that keeps the user's
+	// library somewhere other than beside the shim.
+	CppgoLibraryPath = os.Getenv("CPPGO_E2E_LIB_VAR")
 	if err := Open(os.Getenv("CPPGO_E2E_SHIM")); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -454,3 +478,131 @@ func TestMissingShim(t *testing.T) {
 	}
 }
 `
+
+// TestGeneratedPackageIsMovable is the deployment proof: the artifacts a run
+// produces carry no build path, so a moved tree still works, the default
+// co-located layout resolves the user's library beside the shim, and the two
+// overrides point at a library somewhere else.
+func TestGeneratedPackageIsMovable(t *testing.T) {
+	requireEndToEndTools(t)
+	repo, err := filepath.Abs("../..")
+	require.NoError(t, err)
+
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "project")
+	require.NoError(t, copyTree("testdata/project", project))
+	makeBin, err := exec.LookPath("make")
+	require.NoError(t, err)
+	runIn(t, project, makeBin, "library")
+	library := filepath.Join(project, "build", "libanalytic.so")
+
+	moduleDir := filepath.Join(tmp, "module")
+	out := filepath.Join(moduleDir, "analytic")
+	require.NoError(t, Generate(Config{
+		Headers: []string{filepath.Join(project, "include", "analytic", "analytic.hpp")},
+		Package: "analytic",
+		Library: library,
+		Out:     out,
+	}))
+	shim := filepath.Join(out, ShimLibraryName("analytic"))
+
+	// No build path in the generated source's load decisions, and no build
+	// path in the shim's NEEDED entry: the recorded name is the soname.
+	generated := readFileString(t, filepath.Join(out, GenFileName))
+	assert.Contains(t, generated, `cppgoUserLibrary = "libanalytic.so"`)
+	assert.NotContains(t, generated, `cppgoUserLibrary = "`+project)
+	assert.NotContains(t, generated, "CppgoLibraryPath = \""+project)
+	// The only line that may carry a build path is the recorded command, which
+	// is the input the user typed and what regenerates the package.
+	for _, line := range strings.Split(generated, "\n") {
+		if !strings.Contains(line, project) {
+			continue
+		}
+		assert.True(t, strings.HasPrefix(strings.TrimSpace(line), "//"),
+			"a build path may only appear in the recorded command: %q", line)
+	}
+	assert.Equal(t, []string{"libanalytic.so"}, neededLibraries(t, shim),
+		"the shim names the user's library by soname")
+
+	// The deployment: the shim and the user's library beside each other, with
+	// the project tree moved away so nothing can be found by its build path.
+	deploy := filepath.Join(tmp, "deploy")
+	require.NoError(t, os.MkdirAll(deploy, 0o755))
+	copyFile(t, shim, filepath.Join(deploy, filepath.Base(shim)))
+	copyFile(t, library, filepath.Join(deploy, "libanalytic.so"))
+	moved := project + ".moved"
+	require.NoError(t, os.Rename(project, moved))
+
+	require.NoError(t, writeModule(t, moduleDir, repo))
+	require.NoError(t, os.WriteFile(filepath.Join(out, "analytic_test.go"), []byte(e2eTestSource), 0o644))
+	deployed := filepath.Join(deploy, filepath.Base(shim))
+
+	// a. The default layout: the user's library beside the shim.
+	ran := runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=0", "CPPGO_E2E_SHIM=" + deployed},
+		"test", "-count=1", "-v", "-run", "^TestBindings$", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestBindings")
+
+	// b. The library moved away, found through the environment override.
+	elsewhere := filepath.Join(tmp, "elsewhere")
+	require.NoError(t, os.MkdirAll(elsewhere, 0o755))
+	movedLibrary := filepath.Join(elsewhere, "libanalytic.so")
+	require.NoError(t, os.Rename(filepath.Join(deploy, "libanalytic.so"), movedLibrary))
+	ran = runGoEnv(t, goTool(t), moduleDir, []string{
+		"CGO_ENABLED=0", "PPROBE=1",
+		"CPPGO_E2E_SHIM=" + deployed,
+		"CPPGO_LIBRARY_PATH=" + movedLibrary,
+	}, "test", "-count=1", "-v", "-run", "^TestBindings$", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestBindings")
+
+	// c. The library found through CppgoLibraryPath, set before Open.
+	ran = runGoEnv(t, goTool(t), moduleDir, []string{
+		"CGO_ENABLED=0",
+		"CPPGO_E2E_SHIM=" + deployed,
+		"CPPGO_E2E_LIB_VAR=" + movedLibrary,
+	}, "test", "-count=1", "-v", "-run", "^TestBindings$", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestBindings")
+
+	// d. Nothing to load: Open fails, and the message names the library.
+	ran, err = runGoEnvMayFail(t, goTool(t), moduleDir, []string{"CGO_ENABLED=0", "CPPGO_E2E_SHIM=" + deployed},
+		"test", "-count=1", "-v", "-run", "^TestBindings$", "./analytic")
+	require.Error(t, err, "the library is gone, so the package cannot open")
+	assert.Contains(t, ran, "libanalytic.so", "and the failure names the library it looked for")
+}
+
+// neededLibraries returns the DT_NEEDED entries of a shared object that are not
+// a C/C++ runtime, which is how "the shim names the user's library by soname"
+// is measured rather than assumed.
+func neededLibraries(t *testing.T, path string) []string {
+	t.Helper()
+	readelf, err := exec.LookPath("readelf")
+	require.NoError(t, err)
+	output, err := exec.Command(readelf, "-d", path).Output()
+	require.NoError(t, err)
+	var needed []string
+	for _, line := range strings.Split(string(output), "\n") {
+		if !strings.Contains(line, "(NEEDED)") {
+			continue
+		}
+		start := strings.Index(line, "[")
+		end := strings.LastIndex(line, "]")
+		if start < 0 || end <= start {
+			continue
+		}
+		name := line[start+1 : end]
+		if strings.HasPrefix(name, "libstdc++") || strings.HasPrefix(name, "libm.") ||
+			strings.HasPrefix(name, "libgcc_s") || strings.HasPrefix(name, "libc.") ||
+			strings.HasPrefix(name, "ld-linux") {
+			continue
+		}
+		needed = append(needed, name)
+	}
+	return needed
+}
+
+// copyFile copies one file, which is how the deployed artifacts are staged.
+func copyFile(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dst, data, 0o755))
+}

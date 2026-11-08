@@ -81,6 +81,7 @@ func TestStdFixtureEndToEnd(t *testing.T) {
 	}))
 	shim := filepath.Join(out, ShimLibraryName("stdx"))
 	require.FileExists(t, shim)
+	deployBeside(t, library, out)
 
 	// 3. The shim is legal C++ for both compilers, not merely for the one that
 	// built it.

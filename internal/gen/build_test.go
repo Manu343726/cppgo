@@ -78,21 +78,24 @@ func TestOptimisationAndStandard(t *testing.T) {
 	assert.False(t, hasLanguageStandard([]string{"-stdlib=libstdc++"}))
 }
 
-// TestReadableLibrary: only a file the linker can be handed is a library input;
-// a bare loader name leaves the shim's calls undefined on purpose.
-func TestReadableLibrary(t *testing.T) {
-	_, ok := readableLibrary("")
+// TestLinkableLibrary: only a file the linker can be handed is a library input,
+// and it is handed over as a directory plus a file name so the DT_NEEDED entry
+// is the soname rather than a build path. A bare loader name is not linkable.
+func TestLinkableLibrary(t *testing.T) {
+	_, _, ok := linkableLibrary("")
 	assert.False(t, ok)
-	_, ok = readableLibrary("libmathx")
+	_, _, ok = linkableLibrary("libmathx")
 	assert.False(t, ok)
-	_, ok = readableLibrary(filepath.Join(t.TempDir(), "absent.so"))
+	_, _, ok = linkableLibrary(filepath.Join(t.TempDir(), "absent.so"))
 	assert.False(t, ok)
 
-	real := filepath.Join(t.TempDir(), "libmathx.so")
+	dir := t.TempDir()
+	real := filepath.Join(dir, "libmathx.so")
 	require.NoError(t, os.WriteFile(real, []byte("\x7fELF"), 0o644))
-	path, ok := readableLibrary(real)
+	libraryDir, base, ok := linkableLibrary(real)
 	require.True(t, ok)
-	assert.True(t, filepath.IsAbs(path))
+	assert.Equal(t, dir, libraryDir)
+	assert.Equal(t, "libmathx.so", base)
 }
 
 // TestFirstDiagnostic parses the shapes g++ and clang++ print, and reports nil
@@ -251,7 +254,11 @@ func TestBuildShimCommand(t *testing.T) {
 		build := compile(t, library)
 		assert.Contains(t, build.Command, "-x")
 		assert.Contains(t, build.Command, "none")
-		assert.Contains(t, build.Command, library)
+		// The library is named, not pathed: the linker records its soname (or
+		// its file name) as DT_NEEDED, so no build directory reaches the shim.
+		assert.Contains(t, build.Command, "-L"+filepath.Dir(library))
+		assert.Contains(t, build.Command, "-l:"+filepath.Base(library))
+		assert.NotContains(t, build.Command, library)
 	})
 }
 

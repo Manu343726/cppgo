@@ -44,11 +44,17 @@ func TestGeneratedGoShape(t *testing.T) {
 		"&cppgo.CallError{Symbol: symbol, Err: err}",
 		"func Open(path string) error { return cppgoOpen(path) }",
 		"cppgoShimName = \"libcppgo_mathx.so\"",
-		"cppgoUserLibrary = \"libmathx\"",
 	} {
 		assert.Contains(t, gen, want)
 	}
 	assert.NotContains(t, gen, "cppgo.Handle", "generated code must not expose Handle")
+
+	// This fixture's -library is a bare loader name, which the linker cannot be
+	// given: there is no recorded soname and no override to point at one, and
+	// the loader must find the library itself.
+	assert.NotContains(t, gen, "CppgoLibraryPath")
+	assert.NotContains(t, gen, "CPPGO_LIBRARY_PATH")
+	assert.NotContains(t, gen, "cppgoUserLibrary")
 }
 
 // TestGeneratedAsmShape asserts the trampoline's non-negotiable rules: the

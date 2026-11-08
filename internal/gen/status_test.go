@@ -88,6 +88,7 @@ func TestStatusEndToEnd(t *testing.T) {
 	}))
 	shim := filepath.Join(out, ShimLibraryName("statusx"))
 	require.FileExists(t, shim)
+	deployBeside(t, library, out)
 
 	require.NoError(t, writeModule(t, moduleDir, repo))
 	require.NoError(t, os.WriteFile(filepath.Join(out, "status_test.go"), []byte(statusTestSource), 0o644))

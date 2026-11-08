@@ -67,11 +67,14 @@ func (m *packageModel) buildShim(dir string) (*shimBuild, error) {
 		args = append(args, "-O2")
 	}
 	args = append(args, "-o", out, ShimPath(dir, ShimSourceFileName))
-	// -x c++ above applies to every input after it; the user's shared object is
-	// a linker input, not a translation unit.
+	// -x c++ above applies to every input after it; a library is a linker
+	// input, not a translation unit.
 	args = append(args, "-x", "none")
-	if library, ok := readableLibrary(m.cfg.Library); ok {
-		args = append(args, library)
+	if dir, base, ok := linkableLibrary(m.cfg.Library); ok {
+		// The library is named, never pathed: the linker records its soname (or
+		// its file name) as the DT_NEEDED entry, so a build directory never
+		// reaches the shim and $ORIGIN finds the library beside it.
+		args = append(args, "-L"+dir, "-l:"+base)
 	}
 	args = append(args, "-Wl,-rpath,$ORIGIN")
 
@@ -139,22 +142,27 @@ func hasLanguageStandard(args []string) bool {
 	return false
 }
 
-// readableLibrary reports whether -library names a file the linker can be given
-// as an input. A bare loader name (or a header-only library, which has no
-// object at all) leaves the shim's calls to the user's symbols undefined, and
-// the generated Open resolves them by loading the user's library first.
-func readableLibrary(library string) (string, bool) {
+// linkableLibrary reports whether -library names a file the linker can be given
+// as an input, and returns its directory and file name.
+//
+// The directory goes on the linker's search path and the file name after -l:,
+// so the DT_NEEDED entry is the object's soname rather than the path it was
+// found at. A bare loader name (or a header-only library, which has no object
+// at all) is not linkable: the shim is then built with the user's symbols
+// undefined, which only resolves if the loader already has the library.
+func linkableLibrary(library string) (dir, base string, ok bool) {
 	if library == "" {
-		return "", false
+		return "", "", false
 	}
 	info, err := os.Stat(library)
 	if err != nil || info.IsDir() {
-		return "", false
+		return "", "", false
 	}
-	if abs, err := filepath.Abs(library); err == nil {
-		return abs, true
+	absolute, err := filepath.Abs(library)
+	if err != nil {
+		absolute = library
 	}
-	return library, true
+	return filepath.Dir(absolute), filepath.Base(absolute), true
 }
 
 // runCommand runs the shim's compile-and-link.

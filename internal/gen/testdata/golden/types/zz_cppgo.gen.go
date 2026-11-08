@@ -12,8 +12,8 @@ import (
 	"github.com/Manu343726/cppgo"
 )
 
-// Open loads the cppgo-built shim and the user's library it was linked against,
-// then resolves every symbol this package binds.
+// Open loads the cppgo-built shim and, when the package has one, the user's
+// library it was linked against, then resolves every symbol this package binds.
 //
 // path names the shim cppgo compiled beside this package. A path of "" uses the
 // name the package was generated with. It is safe to call Open more than once;
@@ -23,9 +23,6 @@ func Open(path string) error { return cppgoOpen(path) }
 const (
 	// cppgoShimName is the shim cppgo compiled beside this package.
 	cppgoShimName = "libcppgo_types.so"
-	// cppgoUserLibrary is the library the shim was linked against, empty for a
-	// header-only library whose shim is the whole binary.
-	cppgoUserLibrary = "libtypes"
 )
 
 // cppgoLibraries are the two objects a generated call reaches: the shim cppgo
@@ -190,20 +187,12 @@ func cppgoOpen(path string) error {
 	return nil
 }
 
-// cppgoLoad opens the user's library, then the shim, then resolves every
-// symbol from the object that carries it.
+// cppgoLoad opens the shim and resolves every symbol from the object that
+// carries it.
 func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 	loaded := &cppgoLibraries{}
-	if cppgoUserLibrary != "" {
-		user, err := cppgo.Open(cppgoUserLibrary)
-		if err != nil {
-			return nil, err
-		}
-		loaded.user = user
-	}
 	shim, err := cppgo.Open(shimPath)
 	if err != nil {
-		cppgoUnload(loaded)
 		return nil, fmt.Errorf("cppgo: open the shim %s: %w", shimPath, err)
 	}
 	loaded.shim = shim

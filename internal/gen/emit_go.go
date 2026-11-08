@@ -15,7 +15,13 @@ func (m *packageModel) emitGo() ([]byte, error) {
 	fmt.Fprintf(&b, "package %s\n\n", m.name)
 
 	usesUnsafe := m.usesUnsafe()
-	b.WriteString("import (\n\t\"fmt\"\n\t\"sync\"\n")
+	b.WriteString("import (\n\t\"fmt\"\n")
+	if m.libraryName != "" {
+		// Where the user's library is loaded from is a filesystem question at
+		// load time: beside the shim, or wherever the deployment points.
+		b.WriteString("\t\"os\"\n\t\"path/filepath\"\n")
+	}
+	b.WriteString("\t\"sync\"\n")
 	if usesUnsafe {
 		b.WriteString("\t\"unsafe\"\n")
 	}
@@ -80,27 +86,57 @@ func (m *packageModel) usesBool() bool {
 //
 // Two objects are loaded, in this order: the user's library, which carries the
 // direct symbols, and the shim cppgo compiled, which carries the thunks. The
-// shim names the user's library in its DT_NEEDED entry, so opening it brings
-// the library in as well; loading the library first is what makes the name
-// resolve to the object the Go side already holds.
+// shim names the user's library in its DT_NEEDED entry — by soname, never by
+// the path the build found it at — so opening the shim brings the library in as
+// well, and loading the library first is what makes the name resolve to the
+// object the Go side already holds.
+//
+// Nothing here is a build path. The default deployment keeps the two shared
+// objects together: the user's library beside the shim, found through $ORIGIN
+// and through the directory of the path Open was given. A deployment with
+// another layout sets CppgoLibraryPath or CPPGO_LIBRARY_PATH.
 func (m *packageModel) emitOpen(b *strings.Builder) {
 	b.WriteString(`
-// Open loads the cppgo-built shim and the user's library it was linked against,
-// then resolves every symbol this package binds.
+// Open loads the cppgo-built shim and, when the package has one, the user's
+// library it was linked against, then resolves every symbol this package binds.
 //
 // path names the shim cppgo compiled beside this package. A path of "" uses the
 // name the package was generated with. It is safe to call Open more than once;
 // the first successful call wins.
 func Open(path string) error { return cppgoOpen(path) }
+`)
 
+	if m.libraryName != "" {
+		b.WriteString(`
+// CppgoLibraryPath overrides where the user's library is loaded from, for a
+// deployment that does not keep it beside the shim. It must be set before the
+// first Open: the two objects are loaded once, and a later change is not
+// observed.
+//
+// The shim names the library by its soname, so a library that declares one is
+// found wherever this points. A library built without a soname is loaded from
+// the path here, and the shim still needs the loader to find it by name: keep
+// it beside the shim, or put its directory on LD_LIBRARY_PATH.
+var CppgoLibraryPath string
+`)
+	}
+
+	b.WriteString(`
 const (
 	// cppgoShimName is the shim cppgo compiled beside this package.
 	cppgoShimName = `)
 	fmt.Fprintf(b, "%q\n", ShimLibraryName(m.name))
-	b.WriteString(`	// cppgoUserLibrary is the library the shim was linked against, empty for a
-	// header-only library whose shim is the whole binary.
+	if m.libraryName != "" {
+		b.WriteString(`	// cppgoUserLibrary is the user's library by the name the shim names in its
+	// DT_NEEDED entry: its soname, or its file name when it declares none. It is
+	// never the path the package was generated at.
 	cppgoUserLibrary = `)
-	fmt.Fprintf(b, "%q\n", m.library)
+		fmt.Fprintf(b, "%q\n", m.libraryName)
+		b.WriteString(`	// cppgoLibraryPathEnv is the environment override, for a deployment that
+	// cannot set CppgoLibraryPath before Open.
+	cppgoLibraryPathEnv = "CPPGO_LIBRARY_PATH"
+`)
+	}
 	b.WriteString(`)
 
 // cppgoLibraries are the two objects a generated call reaches: the shim cppgo
@@ -152,20 +188,49 @@ func cppgoOpen(path string) error {
 	return nil
 }
 
-// cppgoLoad opens the user's library, then the shim, then resolves every
-// symbol from the object that carries it.
+`)
+
+	if m.libraryName != "" {
+		b.WriteString(`// cppgoUserLibraryPath is where the user's library is loaded from:
+// CPPGO_LIBRARY_PATH, then CppgoLibraryPath, then the directory the shim was
+// found in (the default deployment keeps the two objects together), then the
+// recorded name for the dynamic loader's own search.
+func cppgoUserLibraryPath(shimPath string) string {
+	if path := os.Getenv(cppgoLibraryPathEnv); path != "" {
+		return path
+	}
+	if CppgoLibraryPath != "" {
+		return CppgoLibraryPath
+	}
+	if dir := filepath.Dir(shimPath); dir != "" && dir != "." {
+		beside := filepath.Join(dir, cppgoUserLibrary)
+		if _, err := os.Stat(beside); err == nil {
+			return beside
+		}
+	}
+	return cppgoUserLibrary
+}
+
+`)
+	}
+	b.WriteString(`// cppgoLoad opens the shim and resolves every symbol from the object that
+// carries it.
 func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 	loaded := &cppgoLibraries{}
-	if cppgoUserLibrary != "" {
-		user, err := cppgo.Open(cppgoUserLibrary)
-		if err != nil {
-			return nil, err
-		}
+`)
+	if m.libraryName != "" {
+		b.WriteString(`	// The shim names the user's library in its DT_NEEDED entry, so opening the
+	// shim has already brought it in. A deployment that keeps the library
+	// somewhere else also gets an explicit handle, which is what a direct
+	// symbol is resolved from; a handle is not required, because the shim's own
+	// dependency graph covers the same symbols.
+	if user, err := cppgo.Open(cppgoUserLibraryPath(shimPath)); err == nil {
 		loaded.user = user
 	}
-	shim, err := cppgo.Open(shimPath)
+`)
+	}
+	b.WriteString(`	shim, err := cppgo.Open(shimPath)
 	if err != nil {
-		cppgoUnload(loaded)
 		return nil, fmt.Errorf("cppgo: open the shim %s: %w", shimPath, err)
 	}
 	loaded.shim = shim

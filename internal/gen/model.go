@@ -247,16 +247,20 @@ type binding struct {
 
 // packageModel is everything one generator run emits.
 type packageModel struct {
-	cfg      Config
-	mapper   *mapper
-	name     string
-	flags    []string
-	library  string
-	headers  []string
-	records  []*recordModel
-	bindings []*binding
-	verified string
-	warn     []string
+	cfg     Config
+	mapper  *mapper
+	name    string
+	flags   []string
+	library string
+	// libraryName is the recorded soname of the user's library: what the shim
+	// names in DT_NEEDED and what the generated package loads. It is a name,
+	// never a build path, which is what makes a generated package movable.
+	libraryName string
+	headers     []string
+	records     []*recordModel
+	bindings    []*binding
+	verified    string
+	warn        []string
 	// usesFree is true when a result is a heap copy that Go releases with
 	// cppgo_free.
 	usesFree bool
@@ -296,6 +300,10 @@ type builder struct {
 	// needs: a declaration with no visible definition is out of line only when
 	// the library exports its mangled name.
 	exported map[string]bool
+	// linkedName is the user library's soname (or its base name when it
+	// declares none): the DT_NEEDED entry the shim is linked with and the name
+	// the generated package records. Empty when there is no library to load.
+	linkedName string
 	// flags are the compilation flags the headers were parsed with. The shim is
 	// compiled with the same ones.
 	flags    []string
@@ -1350,18 +1358,19 @@ func (b *builder) model() *packageModel {
 		return displaySignature(b.bindings[i].sym) < displaySignature(b.bindings[j].sym)
 	})
 	return &packageModel{
-		cfg:      b.cfg,
-		mapper:   b.mapper,
-		name:     b.cfg.Package,
-		library:  b.cfg.Library,
-		headers:  b.cfg.Headers,
-		records:  records,
-		bindings: b.bindings,
-		verified: b.verified,
-		warn:     b.warnings,
-		flags:    b.flags,
-		usesFree: b.usesFree,
-		usesSpan: b.mapper.usesSpan,
+		cfg:         b.cfg,
+		mapper:      b.mapper,
+		name:        b.cfg.Package,
+		library:     b.cfg.Library,
+		libraryName: b.linkedName,
+		headers:     b.cfg.Headers,
+		records:     records,
+		bindings:    b.bindings,
+		verified:    b.verified,
+		warn:        b.warnings,
+		flags:       b.flags,
+		usesFree:    b.usesFree,
+		usesSpan:    b.mapper.usesSpan,
 	}
 }
 
@@ -1384,6 +1393,10 @@ func (m *packageModel) report() []string {
 // not a readable file (a bare loader name, or a header-only library with no
 // object at all) contributes nothing, and the declarations are then routed by
 // what the header itself shows.
+//
+// The library's soname is read here too, because it is what the generated shim
+// links against and what the generated Go records: a build path never reaches
+// either artifact.
 func (b *builder) loadExporteds() error {
 	info, err := os.Stat(b.cfg.Library)
 	if err != nil || info.IsDir() {
@@ -1396,6 +1409,9 @@ func (b *builder) loadExporteds() error {
 	b.exported = make(map[string]bool, len(names))
 	for _, name := range names {
 		b.exported[name] = true
+	}
+	if b.linkedName, err = cxx.Soname(b.cfg.Library); err != nil {
+		return fmt.Errorf("cppgo: %s: %w", b.cfg.Library, err)
 	}
 	return nil
 }
