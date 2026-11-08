@@ -126,7 +126,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		}
 		c.printGenUsage(c.stderr)
 	}
-	var headers, bind, exclude, instantiate, rename stringList
+	var headers, bind, exclude, instantiate, rename, status stringList
 	fs.Var(&headers, "header", "C++ header to bind; repeat for several")
 	packageName := fs.String("package", "", "Go package name")
 	library := fs.String("library", "", "the user's shared object the shim links against")
@@ -137,6 +137,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 	fs.Var(&exclude, "exclude", "remove a root; repeatable")
 	fs.Var(&instantiate, "instantiate", "concrete template specialization to emit; repeatable")
 	fs.Var(&rename, "rename", "<qualified signature>=<GoName>; repeatable")
+	fs.Var(&status, "status", "declaration whose int32 return is a status code; repeatable")
 	check := fs.Bool("check", checkMode, "report whether the generated files are up to date instead of writing them")
 	quiet := fs.Bool("q", false, "suppress the per-binding report and the confirmation message")
 	if err := fs.Parse(args); err != nil {
@@ -169,6 +170,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		Exclude:         exclude,
 		Instantiate:     instantiate,
 		Rename:          rename,
+		Status:          status,
 		Warnings:        c.stderr,
 	}
 	if !*quiet && !*check {
@@ -227,7 +229,8 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "                  [-library <file>] [-out <dir>] [-compile-commands <path>]")
 	fmt.Fprintln(w, "                  [-bind <qualified>]... [-exclude <qualified>]...")
 	fmt.Fprintln(w, "                  [-instantiate '<specialization>']...")
-	fmt.Fprintln(w, "                  [-rename '<signature>=<GoName>']... [-cxx <compiler>]")
+	fmt.Fprintln(w, "                  [-rename '<signature>=<GoName>']... [-status <qualified>]...")
+	fmt.Fprintln(w, "                  [-cxx <compiler>]")
 	fmt.Fprintln(w, "                  [-check] [-q]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "gen reads the C++ headers through libclang and writes:")
@@ -272,6 +275,9 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "        make the instantiation visible, e.g. 'template struct Box<int>;'")
 	fmt.Fprintln(w, "  -rename 'signature=GoName'")
 	fmt.Fprintln(w, "        resolve a Go name collision; repeatable")
+	fmt.Fprintln(w, "  -status qualified")
+	fmt.Fprintln(w, "        a declaration whose 32-bit return is a status code: the Go signature")
+	fmt.Fprintln(w, "        returns only an error, and a non-zero value is the failure; repeatable")
 	fmt.Fprintln(w, "  -cxx string")
 	fmt.Fprintln(w, "        C++ compiler to build the shim with (default g++, then clang++)")
 	fmt.Fprintln(w, "  -check")

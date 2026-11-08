@@ -174,18 +174,25 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 	b.WriteString("\tcppgo_error_message.clear();\n")
 	b.WriteString("\ttry {\n")
 	b.WriteString(m.stdLocals(binding))
-	if binding.StdResult {
+	switch {
+	case binding.StdResult:
 		result, err := m.stdResult(binding, call)
 		if err != nil {
 			return "", err
 		}
 		b.WriteString(result)
-	} else if binding.Out != nil {
+		b.WriteString("\t\treturn 0;\n")
+	case binding.statusResult:
+		// The callee's own return value is the status: 0 is success, anything
+		// else is the failure the Go side turns into an error.
+		fmt.Fprintf(&b, "\t\treturn %s;\n", call)
+	case binding.Out != nil:
 		fmt.Fprintf(&b, "\t\t%s\n", store())
-	} else {
+		b.WriteString("\t\treturn 0;\n")
+	default:
 		fmt.Fprintf(&b, "\t\t%s;\n", call)
+		b.WriteString("\t\treturn 0;\n")
 	}
-	b.WriteString("\t\treturn 0;\n")
 	b.WriteString("\t} catch (const std::exception &error) {\n")
 	b.WriteString("\t\tcppgo_error_message = error.what();\n")
 	b.WriteString("\t\treturn 1;\n")

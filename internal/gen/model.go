@@ -219,6 +219,10 @@ type binding struct {
 	// hasCallback is true when the signature takes a Go function: the call must
 	// reach C through runtime.cgocall, so C++ may call back into Go.
 	hasCallback bool
+	// statusResult is true when the declaration's 32-bit return is a status
+	// code from -status: the thunk returns the callee's own value and the Go
+	// side reports it as an error.
+	statusResult bool
 	// outPointer is true when the result travels through a heap allocation
 	// instead of a stack local, which a call that may run a callback requires:
 	// the callback may grow the goroutine stack, and a stack address handed to
@@ -283,8 +287,10 @@ type builder struct {
 	synthMembers []cxx.Symbol
 	// instantiateMatched tracks the -instantiate entries a record matched.
 	instantiateMatched []bool
-	verified           string
-	warnings           []string
+	// statusMatched tracks the -status entries a binding matched.
+	statusMatched []bool
+	verified      string
+	warnings      []string
 	// exported is the library's dynamic symbol table, read once, or nil when
 	// -library names no readable file. It is the evidence the carrier decision
 	// needs: a declaration with no visible definition is out of line only when
@@ -304,7 +310,12 @@ func build(cfg Config) (*packageModel, error) {
 	if !validGoPackage(cfg.Package) {
 		return nil, fmt.Errorf("cppgo: -package %q is not a valid Go package name", cfg.Package)
 	}
-	b := &builder{cfg: cfg, records: map[string]*recordModel{}, instantiateMatched: make([]bool, len(cfg.Instantiate))}
+	b := &builder{
+		cfg:                cfg,
+		records:            map[string]*recordModel{},
+		instantiateMatched: make([]bool, len(cfg.Instantiate)),
+		statusMatched:      make([]bool, len(cfg.Status)),
+	}
 	if err := b.load(); err != nil {
 		return nil, err
 	}
@@ -324,6 +335,11 @@ func build(cfg Config) (*packageModel, error) {
 	}
 	if err := b.buildBindings(); err != nil {
 		return nil, err
+	}
+	for i, entry := range b.cfg.Status {
+		if !b.statusMatched[i] {
+			return nil, fmt.Errorf("cppgo: -status %s: it names nothing this header declares", entry)
+		}
 	}
 	if err := b.applySelection(); err != nil {
 		return nil, err
@@ -740,6 +756,14 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		}
 	}
 	b.chooseCarrier(binding)
+	if b.statusNamed(sym) {
+		// The 32-bit return is the status, not a value: the Go signature keeps
+		// the error and loses the integer, and the thunk returns the callee's
+		// own code so a non-zero one is the failure.
+		if err := b.applyStatus(binding); err != nil {
+			return nil, err
+		}
+	}
 	if err := b.checkRegisters(binding); err != nil {
 		return nil, err
 	}
@@ -1211,6 +1235,41 @@ func (b *builder) chooseCarrier(binding *binding) {
 	} else {
 		binding.ErrorResult = binding.Carrier.shimCarried() && binding.Status
 	}
+}
+
+// statusNamed reports whether -status names this declaration, by qualified name
+// or by its full signature. It marks the entry as matched.
+func (b *builder) statusNamed(sym cxx.Symbol) bool {
+	for i, entry := range b.cfg.Status {
+		if entry == sym.QualifiedName || entry == displaySignature(sym) {
+			b.statusMatched[i] = true
+			return true
+		}
+	}
+	return false
+}
+
+// applyStatus turns a binding whose return is a status code into one that
+// reports an error instead of the integer. The return type has to be a 32-bit
+// integer: that is the width the contract names, and the width the thunk
+// returns.
+func (b *builder) applyStatus(binding *binding) error {
+	if binding.Result == nil || binding.Result.Kind == goVoid {
+		return fmt.Errorf("cppgo: -status %s: the declaration returns nothing, so there is no status to read", displaySignature(binding.sym))
+	}
+	if binding.Result.Kind != goInteger || binding.Result.Param.SizeBytes != 4 {
+		return fmt.Errorf("cppgo: -status %s: the return type is %s, and a status is a 32-bit integer", displaySignature(binding.sym), binding.Result.Param.Spelling)
+	}
+	binding.statusResult = true
+	binding.Status = true
+	binding.ErrorResult = true
+	// The value is the status: nothing is copied out and the Go result is the
+	// error alone.
+	binding.Result = nil
+	binding.StdResult = false
+	binding.Out = nil
+	binding.OutLocal = ""
+	return nil
 }
 
 // checkReentrant refuses the combinations the reentrant carrier cannot carry

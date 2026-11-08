@@ -79,6 +79,10 @@ type Config struct {
 	Instantiate []string
 	// Rename maps a qualified name or signature to a Go name.
 	Rename []string
+	// Status names the declarations whose 32-bit return is a status code, from
+	// -status. Their Go signature returns only an error: nothing is emitted for
+	// the integer, and a non-zero value is the failure.
+	Status []string
 	// CXX is the C++ compiler the shim is built with, from -cxx. Empty means
 	// g++, then clang++.
 	CXX string
@@ -271,6 +275,9 @@ func (c Config) invocation() string {
 	}
 	for _, rename := range c.Rename {
 		parts = append(parts, "-rename "+rename)
+	}
+	for _, status := range c.Status {
+		parts = append(parts, "-status "+status)
 	}
 	return strings.Join(parts, " ")
 }
