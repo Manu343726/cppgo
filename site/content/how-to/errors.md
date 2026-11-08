@@ -7,8 +7,8 @@ weight: 50
 A C++ library reports failure in more than one way: it throws, it returns a
 `std::error_code`, a status integer, an `std::optional`, a project-specific
 result type. A Go caller should not have to know which one it is looking at.
-This guide covers what the generated package does today, and marks the part
-that is designed and not shipped.
+This guide covers what the generated package does today, and marks the part that
+is designed and not shipped.
 
 The rule that shapes every generated signature:
 
@@ -20,35 +20,9 @@ zero result silently.
 
 ## Exceptions, today
 
-A declaration that is not `noexcept` is carried by a thunk, and the thunk wraps
-the call in `try`/`catch` — the call *and* the marshalling, because constructing
-a `std::string` or a `std::vector` can throw `std::bad_alloc` too. This is the
-generated code for `mathx::Vector::norm`
-([`examples/mathx/cppgo_shim/zz_cppgo_shim.cpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/cppgo_shim/zz_cppgo_shim.cpp)):
-
-```cpp
-extern "C" int32_t cppgo_thunk_49993cda6560(const void * self, double * cppgo_result) {
-	cppgo_error_message.clear();
-	try {
-		*cppgo_result = static_cast<const ::mathx::Vector *>(self)->norm();
-		return 0;
-	} catch (const std::exception &error) {
-		cppgo_error_message = error.what();
-		return 1;
-	} catch (...) {
-		cppgo_error_message = "unknown C++ exception";
-		return 1;
-	}
-}
-```
-
-The mechanism in four sentences: each thunk clears a thread-local message on
-entry; a caught exception copies `what()` into it; the shim exports it through
-`cppgo_last_error`; the generated binding reads it after a non-zero status and
-returns it.
-
-What the caller sees is a `*cppgo.CallError` naming the C++ declaration, wrapping
-a `*cppgo.NativeError` that carries the text:
+A C++ function or method that can throw becomes a Go call that returns an error.
+When it fails, the error is a `*cppgo.CallError` naming the C++ declaration,
+wrapping a `*cppgo.NativeError` that carries the library's message:
 
 ```console
 At(2): cppgo: mathx::Vector::at: Vector::at: index out of range
@@ -87,14 +61,10 @@ The generated Go signature drops the integer and returns only the error:
 
 ```go
 // Parse calls status::parse.
-//
-// C++: status::parse(const std::string &), _ZN6status5parseERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE (thunk cppgo_thunk_2e40c86383f2, standard-library type: the thunk constructs, copies and destroys it)
 func Parse(text string) error
 ```
 
-The thunk returns the callee's own code to Go, and Go treats any non-zero value
-as the failure. The conventions are pinned by `TestStatusConventionShape` and
-`TestStatusEndToEnd` in `internal/gen`.
+Any non-zero return is the failure.
 
 `-status` refuses two entries, because guessing would be worse than failing: a
 name that matches no declaration (`it names nothing this header declares`), and
@@ -104,11 +74,8 @@ out-parameter is the `out_param` convention below, not this one.
 
 ## What a full projection looks like (designed)
 
-The contract maps eight conventions to those same two Go shapes. Only the
-exception and status rows are wired into `cppgo gen` today. The shared projection
-(code, category, message) exists and is tested in `internal/errormap`, but the
-generator does not read it yet: there is no `-errors` flag, and a
-`cppgo.yaml` is not a generation input.
+The design maps eight conventions to those same two Go shapes. Only the exception
+and status rows work today.
 
 | C++ convention | Go result today | Go result, designed |
 |---|---|---|
@@ -128,34 +95,31 @@ lands, a library that returns `std::error_code` is refused at generation time,
 and the message says what to do: cross the failure as a scalar or a wrapper with
 a supported signature, or use `-status` when the convention is an integer.
 
-## The rule you cannot configure away
+## When your C++ cannot be bound safely
 
-**No exception can be supported without a C++ frame above the call.** A direct
-binding is `noexcept` by construction, and a C++ exception thrown with no C++
-frame above it terminates the process. That is measured three times in
-`internal/callback`, from a direct call, after a callback returned, and through a
-Go callback frame. It is why a throwing function is never assigned the direct
-carrier, even when its signature would fit the registers.
+**A C++ exception that nobody catches terminates the process.** cppgo catches the
+exceptions it can see, but it can only do that when the header that declares the
+throwing function can be included by the C++ side cppgo builds.
 
-The practical consequence: if your library's API throws and its headers cannot
-be included by the shim (a private implementation, a macro-only API), that call
-cannot be bound safely. The fix belongs in the library — a `noexcept` entry point
-that returns a status — not in the Go side.
+The practical consequence: if your library's API throws and its headers cannot be
+included that way (a private implementation, a macro-only API), that call cannot
+be bound safely. The fix belongs in the library — a `noexcept` entry point that
+returns a status — not in the Go side. The measurements behind this are in
+[Limits]({{< ref "explanation/limits.md" >}}#hard-limits) and
+[Architecture]({{< ref "explanation/architecture.md" >}}#exceptions-across-the-boundary).
 
 ## Callbacks and panics
 
-A Go function passed to C++ may panic. The panic does not unwind into C++: the
-dispatcher recovers it, zeroes the result, and the binding re-panics in Go when
-the foreign call returns. This is measured by `TestCallbackPanicIsCaptured` and
-`TestCallbackPanicReachesTheCaller` in `internal/callback`.
+A Go function passed to C++ may panic. The panic does not unwind into C++: it is
+captured, the result is zeroed, and the binding re-panics in Go when the foreign
+call returns.
 
-An exception *raised by* a callback falls outside the ABI, so a callback that
-wants to report a failure writes a status into its argument frame and the C++
-side checks it. That is the same rule as everywhere else: the C++ side catches,
-the Go side reads a status.
+A callback that wants to report a failure writes a status into its result and the
+C++ side checks it. An exception raised *by* a callback terminates the process:
+the same rule as everywhere else, applied to the reverse direction.
 
 ## Related
 
 - Every error type and its fields: [Runtime]({{< ref "reference/runtime.md" >}}).
 - What the generated signature looks like per declaration: [Generated API]({{< ref "reference/generated-api.md" >}}).
-- Why the shim exists at all: [Architecture]({{< ref "explanation/architecture.md" >}}).
+- Why the C++ side is built at all: [Architecture]({{< ref "explanation/architecture.md" >}}).
