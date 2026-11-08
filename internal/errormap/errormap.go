@@ -23,6 +23,7 @@
 package errormap
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strconv"
@@ -43,6 +44,10 @@ const (
 	KindErrorCode Kind = "error_code"
 	// KindExpected means the call returns std::expected<T,E> or tl::expected.
 	KindExpected Kind = "expected"
+	// KindOptional means the call returns std::optional<T>. By default an
+	// empty optional is not a failure and the Go call is (T, bool); a config
+	// entry with an absent message turns it into (T, error).
+	KindOptional Kind = "optional"
 	// KindStatus means the call returns a status int: zero is success.
 	KindStatus Kind = "status"
 	// KindErrno means the call reports failure through errno.
@@ -115,6 +120,12 @@ type Entry struct {
 	// Type is the optional projection: the C++ type of the error, when the
 	// generated Go error type is derived from it.
 	Type string `yaml:"type,omitempty"`
+	// Absent is the message an empty std::optional becomes. Empty (the
+	// default) means absence is not a failure and the Go call is (T, bool).
+	Absent string `yaml:"absent,omitempty"`
+	// Alternative is the std::variant alternative that carries the error.
+	// It is required for kind "variant" and meaningless for every other kind.
+	Alternative *int `yaml:"alternative,omitempty"`
 	// HasValue, ValueAccessor and ErrorAccessor name the members of a custom
 	// result type the generator could not infer.
 	HasValue      string `yaml:"has_value,omitempty"`
@@ -132,7 +143,14 @@ type Config struct {
 // Load parses a configuration file.
 func Load(data []byte) (*Config, error) {
 	var c Config
-	if err := yaml.Unmarshal(data, &c); err != nil {
+
+	// Unknown keys are rejected rather than ignored: a mistyped channel
+	// ("valuee:", "err:") would otherwise leave the entry with no channels at
+	// all, and an entry that names nothing is exactly what this file exists to
+	// prevent.
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("errormap: parsing config: %w", err)
 	}
 	for name, entry := range c.Errors {
@@ -148,8 +166,8 @@ func Load(data []byte) (*Config, error) {
 
 func (k Kind) valid() bool {
 	switch k {
-	case KindException, KindErrorCode, KindExpected, KindStatus, KindErrno,
-		KindOutParam, KindCustom, KindVariant:
+	case KindException, KindErrorCode, KindExpected, KindOptional, KindStatus,
+		KindErrno, KindOutParam, KindCustom, KindVariant:
 		return true
 	}
 	return false
@@ -169,6 +187,12 @@ type Rule struct {
 	Error int
 	// Projection is the C++ type of the error, when one was named.
 	Projection string
+	// Absent is the message an empty std::optional becomes; empty means the
+	// generated call is (T, bool).
+	Absent string
+	// Alternative is the std::variant alternative that carries the error, or
+	// -1 when the rule is not a variant.
+	Alternative int
 	// Configured reports whether the rule came from a config entry or from
 	// the declaration's own shape.
 	Configured bool
@@ -190,7 +214,7 @@ type Rule struct {
 // infer carries what the declaration alone says: the kind (exception, error
 // code, expected, a Result-shaped type) and whether it is fallible at all.
 func (c *Config) Resolve(sig Signature, infer Inference) (Rule, error) {
-	rule := Rule{Symbol: sig.Name, Value: -1, Error: -1, Kind: infer.Kind}
+	rule := Rule{Symbol: sig.Name, Value: -1, Error: -1, Alternative: -1, Kind: infer.Kind}
 
 	entry, configured := Entry{}, false
 	if c != nil {
@@ -198,11 +222,21 @@ func (c *Config) Resolve(sig Signature, infer Inference) (Rule, error) {
 	}
 
 	if !configured {
-		if !infer.Fallible {
-			return Rule{Symbol: sig.Name, Value: -1, Error: -1}, nil
+		switch {
+		case !infer.Fallible && infer.Kind == "":
+			// A call that cannot fail gets no error result at all.
+			return Rule{Symbol: sig.Name, Value: -1, Error: -1, Alternative: -1}, nil
+		case infer.Kind == "":
+			// The call can fail and the declaration does not say how. Silence
+			// here would be a failure dropped on the floor, which is the one
+			// thing this mapping may not do.
+			return Rule{}, fmt.Errorf(
+				"errormap: %s: the declaration can fail but states no error convention; add a config entry naming one (kind: out_param|status|errno|custom|variant, with its value and error channels)",
+				sig.Name)
+		default:
+			rule.Kind = infer.Kind
+			return rule, nil
 		}
-		rule.Kind = infer.Kind
-		return rule, nil
 	}
 
 	rule.Configured = true
@@ -227,6 +261,44 @@ func (c *Config) Resolve(sig Signature, infer Inference) (Rule, error) {
 				"errormap: %s: kind %q reports through the return value, not through %q",
 				sig.Name, entry.Kind, entry.Error)
 		}
+	case KindOptional:
+		if entry.Value != "" || entry.Error != "" {
+			return Rule{}, fmt.Errorf(
+				"errormap: %s: kind %q returns its value, or reports its absence through the return, so it takes no channels",
+				sig.Name, entry.Kind)
+		}
+	case KindVariant:
+		if entry.Alternative == nil {
+			return Rule{}, fmt.Errorf(
+				"errormap: %s: kind %q must name the error alternative (alternative: <index>)", sig.Name, entry.Kind)
+		}
+		if entry.Value != "" || entry.Error != "" {
+			return Rule{}, fmt.Errorf(
+				"errormap: %s: kind %q carries its value and its error in alternatives, so it takes no channels",
+				sig.Name, entry.Kind)
+		}
+	case KindOutParam:
+		if entry.Value == "" || entry.Error == "" {
+			return Rule{}, fmt.Errorf(
+				"errormap: %s: kind %q must name both a value channel and an error channel", sig.Name, entry.Kind)
+		}
+	}
+
+	// The two kind-specific fields are meaningless elsewhere, and a field
+	// that does nothing is the defect this validation exists to prevent.
+	if entry.Absent != "" && entry.Kind != KindOptional {
+		return Rule{}, fmt.Errorf(
+			"errormap: %s: absent is only meaningful for kind %q, not %q", sig.Name, KindOptional, entry.Kind)
+	}
+	if entry.Alternative != nil && entry.Kind != KindVariant {
+		return Rule{}, fmt.Errorf(
+			"errormap: %s: alternative is only meaningful for kind %q, not %q", sig.Name, KindVariant, entry.Kind)
+	}
+	if entry.Absent != "" {
+		rule.Absent = entry.Absent
+	}
+	if entry.Alternative != nil {
+		rule.Alternative = *entry.Alternative
 	}
 
 	// The value channel: where the result is written, when it is not the

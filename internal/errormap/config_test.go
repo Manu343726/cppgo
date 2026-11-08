@@ -168,6 +168,30 @@ errors:
 			want: `error channel "0" is parameter 0, which is not a pointer or reference`,
 		},
 		{
+			name: "an out_param entry with no channels",
+			yaml: `
+errors:
+  "ns::parse_point": {kind: out_param}
+`,
+			want: `ns::parse_point: kind "out_param" must name both a value channel and an error channel`,
+		},
+		{
+			name: "an unknown key",
+			yaml: `
+errors:
+  "ns::parse_point": {kind: out_param, valuee: 1, error: 2}
+`,
+			want: `field valuee not found`,
+		},
+		{
+			name: "a misspelled channel",
+			yaml: `
+errors:
+  "ns::parse_point": {kind: out_param, value: 1, err: 2}
+`,
+			want: `field err not found`,
+		},
+		{
 			name: "a symbol this package does not bind",
 			yaml: `
 errors:
@@ -192,6 +216,46 @@ errors:
 			want: `ns::open_file: kind "error_code" returns its value and its error, so it takes no channels`,
 		},
 		{
+			name: "absent outside an optional",
+			yaml: `
+errors:
+  "ns::open_file": {kind: error_code, absent: "gone"}
+`,
+			want: `ns::open_file: absent is only meaningful for kind "optional", not "error_code"`,
+		},
+		{
+			name: "an alternative outside a variant",
+			yaml: `
+errors:
+  "ns::open_file": {kind: error_code, alternative: 1}
+`,
+			want: `ns::open_file: alternative is only meaningful for kind "variant", not "error_code"`,
+		},
+		{
+			name: "a variant without an alternative",
+			yaml: `
+errors:
+  "ns::open_file": {kind: variant}
+`,
+			want: `ns::open_file: kind "variant" must name the error alternative (alternative: <index>)`,
+		},
+		{
+			name: "a variant with channels",
+			yaml: `
+errors:
+  "ns::open_file": {kind: variant, alternative: 1, error: 0}
+`,
+			want: `ns::open_file: kind "variant" carries its value and its error in alternatives, so it takes no channels`,
+		},
+		{
+			name: "an optional with channels",
+			yaml: `
+errors:
+  "ns::open_file": {kind: optional, error: 0}
+`,
+			want: `ns::open_file: kind "optional" returns its value, or reports its absence through the return, so it takes no channels`,
+		},
+		{
 			name: "a status kind reports through its return value",
 			yaml: `
 errors:
@@ -203,10 +267,13 @@ errors:
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// A malformed key is refused when the file is read; every other
+			// problem is refused when the entries are applied to the
+			// declarations. Either way it is one error and no output.
 			cfg, err := errormap.Load([]byte(tc.yaml))
-			require.NoError(t, err)
-
-			_, err = cfg.Apply(signatures(), infer)
+			if err == nil {
+				_, err = cfg.Apply(signatures(), infer)
+			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 		})
@@ -277,7 +344,7 @@ errors:
 // one whose parameters are unnamed, a negative channel index, and a nil config.
 func TestChannelAndReportEdges(t *testing.T) {
 	noParams := errormap.Signature{Name: "ns::reset", Returns: "bool"}
-	entry := errormap.Entry{Kind: errormap.KindOutParam, Value: "0"}
+	entry := errormap.Entry{Kind: errormap.KindCustom, Value: "0"}
 
 	cfg := &errormap.Config{Errors: map[string]errormap.Entry{"ns::reset": entry}}
 	_, err := cfg.Resolve(noParams, errormap.Inference{})
@@ -290,14 +357,14 @@ func TestChannelAndReportEdges(t *testing.T) {
 		Params:  []errormap.Param{{Pointer: true}},
 	}
 	cfg = &errormap.Config{Errors: map[string]errormap.Entry{
-		"ns::reset": {Kind: errormap.KindOutParam, Value: "out"},
+		"ns::reset": {Kind: errormap.KindCustom, Value: "out"},
 	}}
 	_, err = cfg.Resolve(unnamed, errormap.Inference{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `parameter "out" does not exist; the declaration takes 0:?`)
 
 	cfg = &errormap.Config{Errors: map[string]errormap.Entry{
-		"ns::reset": {Kind: errormap.KindOutParam, Value: "-1"},
+		"ns::reset": {Kind: errormap.KindCustom, Value: "-1"},
 	}}
 	_, err = cfg.Resolve(unnamed, errormap.Inference{})
 	require.Error(t, err)
@@ -330,4 +397,77 @@ errors:
 	require.NoError(t, err)
 	assert.Equal(t, 1, rule.Value, "out is parameter 1")
 	assert.Equal(t, 2, rule.Error, "status is parameter 2")
+}
+
+// TestOptionalAndVariantRules covers the two kind-specific fields: the message
+// an empty std::optional becomes, and the std::variant alternative that carries
+// the error. Both are config-only rules, never guesses.
+func TestOptionalAndVariantRules(t *testing.T) {
+	sig := errormap.Signature{Name: "ns::find", Returns: "std::optional<int>"}
+
+	// Absence is not a failure by default: the rule carries no message and
+	// the generated call is (T, bool).
+	rule, err := (&errormap.Config{}).Resolve(sig, errormap.Inference{Kind: errormap.KindOptional, Fallible: false})
+	require.NoError(t, err)
+	assert.Empty(t, rule.Absent)
+
+	cfg, err := errormap.Load([]byte(`
+errors:
+  "ns::find": {kind: optional, absent: "not found"}
+`))
+	require.NoError(t, err)
+
+	rule, err = cfg.Resolve(sig, errormap.Inference{Kind: errormap.KindOptional})
+	require.NoError(t, err)
+	assert.Equal(t, "not found", rule.Absent)
+
+	variant := errormap.Signature{Name: "ns::find", Returns: "std::variant<int, std::error_code>"}
+	cfg, err = errormap.Load([]byte(`
+errors:
+  "ns::find": {kind: variant, alternative: 1}
+`))
+	require.NoError(t, err)
+
+	rule, err = cfg.Resolve(variant, errormap.Inference{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, rule.Alternative)
+	assert.Equal(t, errormap.KindVariant, rule.Kind)
+}
+
+// TestFallibleWithoutConventionIsAnError is the rule the mapping may not break:
+// a declaration that can fail and does not say how is a generation error, not a
+// call whose failure becomes a zero value.
+func TestFallibleWithoutConventionIsAnError(t *testing.T) {
+	sig := errormap.Signature{
+		Name:    "ns::parse_point",
+		Returns: "bool",
+		Params:  []errormap.Param{{Name: "text"}, {Name: "out", Pointer: true}, {Name: "status", Pointer: true}},
+	}
+
+	// bool + out parameters says nothing about failure: fallible, no kind.
+	rule, err := (&errormap.Config{}).Resolve(sig, errormap.Inference{Fallible: true})
+	require.Error(t, err)
+	assert.Empty(t, rule.Kind)
+	assert.Contains(t, err.Error(),
+		"ns::parse_point: the declaration can fail but states no error convention")
+	assert.Contains(t, err.Error(), "kind: out_param|status|errno|custom|variant")
+
+	// The same declaration with an entry is fine, and the entry is the only
+	// thing that changed.
+	cfg, err := errormap.Load([]byte(`
+errors:
+  "ns::parse_point": {kind: out_param, value: 1, error: 2}
+`))
+	require.NoError(t, err)
+
+	rule, err = cfg.Resolve(sig, errormap.Inference{Fallible: true})
+	require.NoError(t, err)
+	assert.Equal(t, errormap.KindOutParam, rule.Kind)
+
+	// And the genuinely non-fallible case still produces no error result.
+	rule, err = (&errormap.Config{}).Resolve(
+		errormap.Signature{Name: "ns::twice", Returns: "double"}, errormap.Inference{})
+	require.NoError(t, err)
+	assert.Empty(t, rule.Kind)
+	assert.Contains(t, rule.Report(), "no error channel")
 }
