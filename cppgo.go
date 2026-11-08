@@ -96,7 +96,7 @@ func (l *Library) Close() error {
 // Symbol resolves name to the address of the foreign function or variable.
 //
 // The address points into the loaded library and has no Go pointer semantics,
-// so it must not be stored anywhere the collector traces; uintptr is the only
+// so it must not be stored anywhere the collector traces. uintptr is the only
 // safe carrier.
 //
 // Returns a *SymbolError wrapping ErrClosed once Close has run, or the loader's
@@ -117,7 +117,7 @@ func (l *Library) Symbol(name string) (uintptr, error) {
 	return addr, nil
 }
 
-// MustSymbol is Symbol for generated initialisation code, which has no error
+// MustSymbol is Symbol for generated initialization code, which has no error
 // path. It panics with the *SymbolError, because a symbol missing from the
 // library the program was built against is a broken deployment rather than a
 // runtime condition.

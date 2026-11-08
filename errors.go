@@ -81,7 +81,7 @@ func (e *ExtractError) Unwrap() error { return e.Err }
 var ErrInsecureCache = errors.New("cache path is not a private directory")
 
 // NativeError is a failure the foreign library reported through the
-// cppgo_last_error convention. Its message is the C string verbatim; a generated
+// cppgo_last_error convention. Its message is the C string verbatim. A generated
 // wrapper adds the symbol name on top, as a CallError.
 type NativeError struct {
 	// Message is the text the foreign library stored, without the trailing
