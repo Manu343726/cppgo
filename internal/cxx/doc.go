@@ -1,41 +1,40 @@
-// Package cxx introspects C++ declarations through libclang and answers the two
-// questions the code generator cannot answer on its own:
+// Package cxx introspects C++ declarations through libclang: it produces the
+// mangled symbol of a declaration, decides whether that symbol is in the compiled
+// library, and reports the layout, access and template information the generator
+// needs to emit a binding.
 //
-//   - what is the mangled symbol of this declaration, and
-//   - does that symbol actually exist in the compiled library?
-//
-// The second question is the important one. A member function that is defined
-// inside its class definition (an inline accessor, a ctor written in the header)
-// is implicitly inline and emits **no dynamic symbol**. Binding it produces a
-// trampoline that fails at load time. The generator must refuse those, with an
-// actionable message. This package has to tell the difference between:
-//
-//	Vector::norm()          declared in the header, defined in the .cpp  -> symbol
-//	Vector::x() const       defined inside the class                    -> no symbol
-//
-// See Symbol.HasOutOfLineBody and Project for how that is determined.
+// It is the parsing half of the generator layer, with internal/gen and cmd/cppgo.
+// The runtime never imports it: libclang is a generation-time tool.
 //
 // # No cgo
 //
-// libclang is loaded at run time with purego's dlopen/dlsym wrappers. There is
-// no import "C" anywhere in the package, and it builds with CGO_ENABLED=0.
-// libclang's C API passes several C structs by value and returns others through
-// a hidden pointer (see the inventory on libclangFuncs for every call and its
-// class). This layer therefore needs an FFI that understands the SysV AMD64
-// aggregate rules. The struct fields are uintptr for a reason documented on
-// CXString, because libclang tags some cursors with small integers.
+// libclang is loaded at run time with purego's dlopen/dlsym wrappers, so there is
+// no import "C" in this package and it builds with CGO_ENABLED=0. libclang's C
+// API passes several C structs by value and returns others through a hidden
+// pointer, which is why this layer needs an FFI that understands the SysV AMD64
+// aggregate rules; the inventory above libclangFuncs lists every call and its
+// class. The pointer words of those structs are uintptr rather than
+// unsafe.Pointer because libclang tags some cursors with small integers, and a Go
+// pointer field holding 0x1 makes the runtime abort the process with "bad pointer
+// in frame" (see CXString).
 //
-// Symbols are cross-checked against the library itself. DefinedDynamicSymbols
-// reads the ELF dynamic symbol table, and the tests assert that what the model
-// calls "has an out-of-line body" is exactly what `nm -D --defined-only` shows.
+// # The symbol question
+//
+// A member defined inside its class definition is implicitly inline and a library
+// emits no dynamic symbol for it, so a direct call fails at load time and the
+// binding has to go through a generated thunk. Symbol carries that evidence in
+// HasOutOfLineBody, which Project computes by parsing the header and the sources
+// that include it. The answer is cross-checked against the library itself:
+// DefinedDynamicSymbols reads the ELF dynamic symbol table, and the tests assert
+// that "has an out-of-line body" is exactly what `nm -D --defined-only` shows.
 //
 // # Compilation flags
 //
-// A translation unit is only meaningfully parsed with the flags it was
-// compiled with. Without them a header fails to find its own includes.
-// Discover implements clangd's resolution order. See the documentation of
-// Discover for the exact steps and for which source won.
+// A translation unit only parses meaningfully with the flags it was compiled
+// with; without them a header cannot find its own includes. Discover follows
+// clangd's resolution order and records which rule produced the flags, so a
+// surprising parse can be traced back to its source.
 //
-// When libclang is absent every entry point returns an error wrapping
-// ErrLibclangNotFound so the caller can degrade to the shim mode.
+// Load returns an error wrapping ErrLibclangNotFound when the library cannot be
+// located, and a caller uses that to degrade to the shim-only mode.
 package cxx

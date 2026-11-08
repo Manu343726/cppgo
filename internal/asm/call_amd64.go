@@ -6,18 +6,18 @@ import "unsafe"
 
 // Call invokes the foreign function at fn with the arguments in a.
 //
-// The integer result comes back from RAX and the floating point result from
-// XMM0. A caller uses whichever one its signature says. When a signature has
-// both (it should not), the integer result is the RAX value.
+// The integer result comes back in RAX and the floating point result in XMM0,
+// and a caller reads whichever one its signature names. When a signature has
+// both, the integer result is the RAX value.
 //
-// a must not be nil and fn must not be nil. Call never grows the Go stack, and
-// the caller owns the stack guarantee. Call cppgo.ProbeStack first if the
-// foreign function may use more than a few hundred bytes of stack.
+// a must not be nil: Call panics on it. fn is not checked, and a nil one faults.
+// Call never grows the Go stack, so the stack guarantee is the caller's: run
+// cppgo.ProbeStack from the same goroutine first, and before forming any pointer
+// into its frame, because the probe may move it.
 //
-// Call is a thin wrapper around the assembly trampoline so that the trampoline
-// itself stays a few instructions long while remaining covered by tests and by
-// the coverage gate (an assembly-only function carries no Go coverage
-// counters). The compiler inlines it.
+// The Go function is a thin wrapper so the trampoline itself stays a few
+// instructions long and still appears in coverage, which an assembly-only
+// function does not. The compiler inlines it.
 func Call(fn unsafe.Pointer, a *Args) (uintptr, float64) {
 	if a == nil {
 		panic("cppgo: asm.Call: nil Args")
@@ -25,7 +25,7 @@ func Call(fn unsafe.Pointer, a *Args) (uintptr, float64) {
 	return call(fn, a)
 }
 
-// call is implemented in call_amd64.s.
+// call is implemented in call_amd64.s: the trampoline itself.
 //
 //go:noescape
 func call(fn unsafe.Pointer, a *Args) (r uintptr, f float64)

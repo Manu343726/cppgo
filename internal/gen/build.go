@@ -11,10 +11,11 @@ import (
 )
 
 // ShimLibraryName is the shared object cppgo compiles the generated shim into.
+//
 // It is written beside the generated Go package and linked against the user's
 // library, which it names in its DT_NEEDED entry. The generated Open loads the
-// user's library first and the shim second. A shim symbol is therefore always
-// resolvable, and a missing symbol is a build error the message names.
+// user's library first and the shim second, so that soname resolves to the object
+// the Go side already holds.
 func ShimLibraryName(pkg string) string { return "libcppgo_" + pkg + ".so" }
 
 // findCompiler resolves the C++ compiler the shim is built with: -cxx when it
