@@ -116,6 +116,10 @@ package is excluded.
 
 - The site lives in `site/` and follows four sections: tutorials, how-to guides,
   reference and explanation. A new page belongs to exactly one of them.
+- The project's rules for documentation live in
+  `.agents/skills/extra/documentation-rules.md`. They extend the vendored
+  documentation skills and win over their text: user documentation says what a
+  feature does, and it is not reflective.
 - Every claim about behaviour is backed by a test name, a command and its
   output, or a file and its line. A number carries how it was obtained.
 - A page that describes an API is written after the change that alters it, in
@@ -124,6 +128,22 @@ package is excluded.
   changes is a new record that supersedes the old one.
 - Build the site with the pinned image and check that it reports no errors and no
   warnings before you open the pull request.
+
+## Developer documentation
+
+[`docs/dev/`](docs/dev/README.md) holds what the manual deliberately does not:
+
+| Document | Contents |
+|---|---|
+| [`benchmarks.md`](docs/dev/benchmarks.md) | the measurement methodology and every number the manual's Performance page quotes |
+| [`evidence.md`](docs/dev/evidence.md) | which test pins which claim, the fixtures, the known defects |
+| [`layout.md`](docs/dev/layout.md) | the repository layout, the runtime/generator split, the generated files |
+| [`process.md`](docs/dev/process.md) | the project's own CI, the pinned image, coverage, the site build, releases |
+| [`decisions.md`](docs/dev/decisions.md) | the history, the decision records, the rejected alternatives, the status of designed work |
+
+`DESIGN.md` is the design contract the code is held to, and `docs/adr/` holds one
+decision record per decision, never edited after acceptance. Where the contract
+and the manual disagree about what exists, the code and its tests decide.
 
 ## Reporting issues
 
