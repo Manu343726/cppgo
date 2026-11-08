@@ -1,6 +1,6 @@
 +++
 title = "The CLI"
-description = "cppgo gen, check, version and help: every flag, what goes to stdout and stderr, and the exit code each failure produces."
+description = "cppgo gen, check, version and help: every flag the v4 generator accepts, what goes to stdout and stderr, and the exit code each failure produces."
 weight = 30
 +++
 
@@ -10,8 +10,8 @@ $ cppgo <command> [flags]
 
 | command | does |
 |---|---|
-| `gen` | reads the package, resolves every binding, writes the generated files |
-| `check` | regenerates in memory and compares with disk; writes nothing |
+| `gen` | reads the headers, writes the Go package and the shim sources, compiles the shim |
+| `check` | regenerates in memory and compares with disk; writes nothing, builds nothing |
 | `version` | prints the generator version |
 | `help` | prints the top-level usage, or one command's usage |
 
@@ -21,43 +21,55 @@ $ cppgo <command> [flags]
 ## `cppgo gen`
 
 ```console
-$ cppgo gen -dir <pkgdir> [-out <outdir>] [-check] [-q] [-force] [-compile-commands <path>]
+$ cppgo gen -header <path> [-header <path>]... -package <name> \
+      [-library <file>] [-out <dir>] [-compile-commands <path>] \
+      [-bind <qualified>]... [-exclude <qualified>]... \
+      [-instantiate '<specialization>']... \
+      [-rename '<signature>=<GoName>']... [-status <qualified>]... \
+      [-cxx <compiler>] [-check] [-q]
 ```
 
 | flag | default | meaning |
 |---|---|---|
-| `-dir <dir>` | `.` | package directory holding the `//cppgo:` directives. Required in practice; must exist and be a directory |
-| `-out <dir>` | `-dir` | where to write. When it differs from `-dir`, the rewritten source becomes `zz_cppgo_stub.go`; when it is `-dir`, the input is rewritten in place |
-| `-check` | `false` | report whether the generated files are up to date instead of writing them |
+| `-header <path>` | required, repeatable | the C++ header to bind |
+| `-package <name>` | | the Go package name |
+| `-library <file>` | | your shared object: the shim is linked against it, and a readable file is cross-checked against every direct binding. Omit it for a header-only library |
+| `-out <dir>` | `.` | where the Go, assembly and shim sources are written, and where the shim is compiled |
+| `-compile-commands <path>` | discovered | a `compile_commands.json` (or its directory) for the header's flags |
+| `-bind <qualified>` | every declaration | a root to keep; repeatable |
+| `-exclude <qualified>` | | a root to drop; repeatable |
+| `-instantiate '<spec>'` | | a concrete template specialisation to emit; repeatable |
+| `-rename '<sig>=<GoName>'` | | resolve a Go name collision; repeatable |
+| `-status <qualified>` | | a declaration whose 32-bit return is a status code; repeatable |
+| `-cxx <compiler>` | `g++`, then `clang++` | the compiler that builds the shim |
+| `-check` | `false` | report whether the files are up to date instead of writing |
 | `-q` | `false` | suppress the per-binding report and the confirmation message |
-| `-force` | `false` | downgrade a validation failure to a warning, for a binding you accept. The generated file records it as `NOT VALIDATED` |
-| `-compile-commands <path>` | discovered | a `compile_commands.json`, or the directory holding it, to take the header's flags from instead of discovering them |
 
 Output:
 
-- **stdout** — the per-binding report, one line per binding, unless `-q`.
-  Format: qualified C++ name, mangled name, the tier that answered, then any
-  notes. See [the report]({{< ref "manual/validation.md" >}}).
+- **stdout** — the per-binding report, one line per binding, then the shim
+  build line, unless `-q`. Format: signature, carrier, symbol, reason. See
+  [the report]({{< ref "manual/validation.md" >}}).
 - **stderr** — warnings (`cppgo: warning: ...`) and the error that stopped the
   run (`cppgo gen: ...`). Always printed, `-q` or not.
 
 ```console
-$ cppgo gen -dir ./bindings/mathx
-mathx::Vector::Vector       mangled _ZN5mathx6VectorC1Edd      abi from compile_commands.json; note: the object is allocated in Go storage owned by this package (16 bytes, alignment 8) and released by //cppgo:dtor
-mathx::Vector::norm         mangled _ZNK5mathx6Vector4normEv    abi from compile_commands.json
+$ cppgo gen -header include/mathx/vector.hpp -package mathx \
+      -library build/libmathx.so -out ./mathx
+mathx::Vector::scale(double) noexcept        direct _ZN5mathx6Vector5scaleEd     noexcept, out of line, not virtual, register class
+mathx::Vector::norm() const                  thunk  cppgo_thunk_49993cda6560     not noexcept: an exception would unwind into Go
+cppgo: built mathx/libcppgo_mathx.so with /usr/bin/g++
 ```
-
-`-dir` names the package; `-out` names the destination. Passing both the same
-value is the common case, and it is what "rewrites in place" means.
 
 ## `cppgo check`
 
 ```console
-$ cppgo check -dir <pkgdir> [-out <outdir>] [-q]
+$ cppgo check -header <path> [-header <path>]... -package <name> \
+      [-library <file>] [-out <dir>] [-q]
 ```
 
-Regenerates in memory and compares byte for byte with the files on disk. It
-writes nothing.
+Regenerates the sources in memory and compares them byte for byte with the files
+on disk. It writes nothing and builds nothing.
 
 | result | output | exit |
 |---|---|---|
@@ -66,12 +78,12 @@ writes nothing.
 | generation error | `cppgo check: <error>` on stderr | `1` |
 | bad command line | `cppgo check: ...` plus usage on stderr | `2` |
 
-The comparison covers every file the run would write, including the rewritten
-source. That is why editing a body in place without regenerating fails the
-check: the body is not what the generator would emit.
+The comparison covers the generated sources, not the compiled
+`libcppgo_<package>.so`: the shim is a build artefact, verified by compiling it,
+never by comparing bytes.
 
-`check` also accepts `-check`, `-force` and `-compile-commands` because it is the
-same flag set; `-check` is already true.
+`check` also accepts `-check`, `-q` and the same manifest flags because it is
+the same flag set; `-check` is already true.
 
 ## `cppgo version`
 
@@ -108,19 +120,8 @@ stderr and exits 2.
 | code | name | when |
 |---|---|---|
 | `0` | ok | the command succeeded; for `check`, everything is up to date |
-| `1` | error | generation or verification failed: a bad binding, a missing header, a stale file |
-| `2` | usage | the command line was wrong: missing command, unknown command, unknown flag, extra argument, empty `-dir`, `-dir` not a directory |
-
-A missing `-dir` directory (as opposed to a path that is a file) exits 1, because
-it is an I/O failure rather than a syntax error. `-dir ""` exits 2: the command
-line itself asked for something impossible.
-
-## The subcommand dispatch
-
-`main` is one statement — `os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))` — and
-`run` carries all the logic, which is what makes the CLI testable: every
-subcommand, flag, message and exit code is exercised through the two writers
-instead of the process streams.
+| `1` | error | generation or verification failed: a refused construct, a missing header, a shim that does not compile, a stale file |
+| `2` | usage | the command line was wrong: missing command, unknown command, unknown flag, extra argument, empty `-out`, missing `-header` |
 
 `cppgo` with no arguments prints `cppgo: missing command` and the usage on
 stderr, then exits 2. An unknown command prints `cppgo: unknown command "x"`,
@@ -129,12 +130,13 @@ the usage, and exits 2. An extra positional argument after the flags prints
 
 ## What the generator needs on the machine
 
-- **libclang**, for any package with `//cppgo:header`. Without it the run fails
-  with `cxx: libclang not found (...)`; see [installation]({{< ref
+- **libclang**, always. Without it the run fails with
+  `cxx: libclang not found (...)`; see [installation]({{< ref
   "manual/installation.md" >}}).
-- **the header and the sources that include it**, so out-of-line definitions can
-  be distinguished from inline ones.
-- **no C++ compiler**. It never compiles anything; the `.so` is yours to build.
+- **a C++ compiler** for `gen`, because `gen` compiles the shim. `check` does
+  not need one: it writes and builds nothing.
+- **the headers**, and a compilation database when they have includes of their
+  own.
 
 Next: back to the [manual]({{< ref "manual/_index.md" >}}) or the
 [tutorials]({{< ref "tutorials/_index.md" >}}).
