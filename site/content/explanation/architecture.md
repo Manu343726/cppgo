@@ -4,31 +4,29 @@ description: "How cppgo works: the artefacts it produces, and one call from Go t
 weight: 20
 ---
 
-This is the how-it-works page. Everything a user needs in order to *use* cppgo is
-on the other pages — [Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}})
-to start, the [how-to guides]({{< ref "how-to/_index.md" >}}) for a task,
-[Reference]({{< ref "reference/_index.md" >}}) to look something up. This page
-explains the machinery behind them, and the passages that used to sit in the
-user pages live here now.
+This is the how-it-works page: it explains the mechanism behind the API. What
+you need in order to *use* cppgo is on the other pages — start with
+[Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}}), use the
+[how-to guides]({{< ref "how-to/_index.md" >}}) for a task, and
+[Reference]({{< ref "reference/_index.md" >}}) to look something up.
 
-cppgo is two products that ship together: a **runtime** that Go programs link,
-and a **generator** that writes and compiles the C++ side. Everything else in
-this page follows from that split and from the three artefacts one generation
-produces.
+cppgo is two parts that ship together: a **runtime** that Go programs link, and
+a **generator** that writes and builds the C++ side. Everything else in this page
+follows from that split and from the three artefacts one generation produces.
 
-## Two layers
+## Two parts
 
-| Layer | Package | Owns | Depends on |
-|---|---|---|---|
-| runtime | `github.com/Manu343726/cppgo` (repository root) | dynamic loading, symbol resolution, the C ABI trampolines, the reentrant carrier, stack probing, foreign-object storage, wire helpers, error types, the callback table | the standard library, `internal/asm`, `internal/rtl`, `internal/callback`, `purego` |
-| generator | `internal/gen`, `internal/cxx`, `cmd/cppgo` | parsing C++ through libclang, flag discovery, binding selection, carrier routing, emitting Go, assembly and the shim, and compiling the shim | anything, including libclang and a C++ compiler |
+The **runtime** is what a generated package imports: dynamic loading, symbol
+resolution, the calls into C++, the callback support, the error types. It needs
+no C++ compiler and no C++ parser.
 
-The runtime **never imports `internal/cxx`**, directly or transitively, and has
-no libclang dependency. That is a test, not a convention:
-`TestRuntimeHasNoGeneratorDependency` in the root package runs `go list -deps`
-and fails when `internal/cxx`, `cmd/cppgo` or `internal/gen` appears in the
-runtime's dependency graph. A program built with a generated package needs no
-libclang and no C++ compiler; it needs the two shared objects at run time.
+The **generator** is the command: it parses the headers, selects the
+declarations, decides how each one is called, emits the Go and the C++, and
+builds the C++ side. It is the only part that needs libclang and a C++
+compiler.
+
+A program built with a generated package needs neither. It needs the two shared
+objects at run time.
 
 ## Three artefacts
 
@@ -64,9 +62,8 @@ your header + your compilation configuration
 | `cppgo_shim/zz_cppgo_shim.cpp` | the thunks themselves, one per non-direct binding |
 | `libcppgo_<package>.so` | the shim, compiled by cppgo and linked against your library |
 
-The first four are sources, and the examples commit them because an example is
-teaching material and the command in the file banner reproduces them. The `.so`
-is a build artefact. Nothing in this list is written into your library.
+The first four are sources you commit with your project. The `.so` is a build
+output. Nothing in this list is written into your library.
 
 *NOSPLIT* is a Go assembly attribute: it tells the runtime not to grow the
 goroutine's stack at that point, which is what makes it legal to switch to a
@@ -156,15 +153,21 @@ returns it.
 
 **No exception can be supported without a C++ frame above the call.** A direct
 binding is `noexcept` by construction, and a C++ exception thrown with no C++
-frame above it terminates the process. That is measured three times in
-`internal/callback`, from a direct call, after a callback returned, and through a
-Go callback frame. It is why a throwing function is never assigned the direct
-carrier, even when its signature would fit the registers.
+frame above it terminates the process. It is why a throwing function is never
+assigned the direct carrier, even when its signature would fit the registers.
 
 The practical consequence for a user is on
 [Report failures from C++ to Go]({{< ref "how-to/errors.md" >}}): an API that
 throws and whose headers the shim cannot include cannot be bound safely, and the
 fix belongs in the library.
+
+**A status-code convention.** Some libraries report failure as a 32-bit return
+code instead of an exception. A declaration named with `-status` is generated as
+a call whose status **is** the error channel: the C++ side returns the callee's
+own code to Go, and Go treats any non-zero value as the failure. The Go
+signature drops the integer and keeps only the error. A `-status` entry that
+names no declaration, or whose declaration returns a value rather than an
+integer, is a generation error.
 
 ## Values, copies, and the layout check
 
@@ -236,28 +239,24 @@ The user-facing steps are in
 the program the compiler would see when it is given the same include paths and
 language standard. The configuration comes from `compile_commands.json` or
 `.clangd`. cppgo rebases a database's relative include paths against the entry's
-own `directory`, because libclang resolves a relative path against *cppgo's*
+own `directory`, because libclang resolves a relative path against cppgo's
 working directory, which is a different tree: the parse then succeeds while
-seeing a different program. `TestRebaseArgs` in `internal/gen` pins the rebase.
+seeing a different program.
 
 **The libclang floor.** The generator needs libclang 20 or newer. It reads the
 offset of base-class subobjects through `clang_getOffsetOfBase`, which libclang
 19 does not export, so a tree built against 19 fails at load time with
-`undefined symbol: clang_getOffsetOfBase`. The CI image pins clang 22
-(`ARG CLANG_VERSION=22` in the
-[Dockerfile](https://github.com/Manu343726/cppgo/blob/main/Dockerfile)).
+`undefined symbol: clang_getOffsetOfBase`.
 
 **Selection.** A header is the unit of selection: every public declaration in it,
 plus the type closure of every bound signature. `-bind` and `-exclude` narrow
-the set, and an entry that names nothing is an error. The single list of
-constructs this build does not emit is `rejectUnimplemented` in
-`internal/gen/reject.go`; each entry names the construct and the fix, which is
-what [Limits]({{< ref "explanation/limits.md" >}}) tabulates.
+the set, and an entry that names nothing is an error. A construct this build does
+not support is refused with a message naming it and the fix, which is what
+[Limits]({{< ref "explanation/limits.md" >}}) tabulates.
 
 **Determinism.** The same inputs produce byte-identical Go and C++. Bindings are
-sorted by qualified name, a thunk's name is a stable hash of the qualified
-signature, and the golden files under `internal/gen/testdata` are the unit-level
-equivalent of `cppgo check`.
+sorted by qualified name, and a thunk's name is a stable hash of the qualified
+signature.
 
 **The report.** One line per binding, then the compiler:
 
@@ -372,20 +371,6 @@ The shim must be linked with `-Wl,-rpath,$ORIGIN` for the sibling to be found.
 cppgo passes that flag when it builds the shim; a user library that has its own
 siblings has to pass it too.
 
-Measured on the real `embed.FS` path, with a demo program built
-`CGO_ENABLED=0` (ADR-0003):
-
-```console
-$ XDG_CACHE_HOME=/tmp/…/demo-cache ./demo
-loaded /tmp/…/demo-cache/cppgo/ae667028…924bf1/libcppgo_embed_main.so
-cppgo_embed_main_add(2, 3) = 10
-$ stat -c '%A %n' demo-cache/cppgo demo-cache/cppgo/*
-drwx------ demo-cache/cppgo
-drwx------ demo-cache/cppgo/ae667028…924bf1
--rw------- demo-cache/cppgo/ae667028…924bf1/libcppgo_embed_dep.so
--rw------- demo-cache/cppgo/ae667028…924bf1/libcppgo_embed_main.so
-```
-
 The task, the override and what embedding does not buy are in
 [Embed the C++ side in the Go binary]({{< ref "how-to/embed.md" >}}).
 
@@ -407,25 +392,9 @@ Three consequences are structural:
 - a panic inside the callback is captured, the result is zeroed, and the binding
   re-panics in Go when the foreign call returns. It never unwinds into C++.
 
-## Where the code lives
-
-| Path | Contents |
-|---|---|
-| [`cppgo.go`](https://github.com/Manu343726/cppgo/blob/main/cppgo.go), [`loadfs.go`](https://github.com/Manu343726/cppgo/blob/main/loadfs.go), [`object.go`](https://github.com/Manu343726/cppgo/blob/main/object.go), [`reentrant.go`](https://github.com/Manu343726/cppgo/blob/main/reentrant.go) | the runtime package the generated code imports: `Open`, `OpenFS`, foreign storage, the reentrant carrier |
-| [`internal/asm`](https://github.com/Manu343726/cppgo/blob/main/internal/asm) | the NOSPLIT call trampolines and the stack probe |
-| [`internal/callback`](https://github.com/Manu343726/cppgo/blob/main/internal/callback) | C++→Go callbacks through `runtime.cgocallback` |
-| [`internal/cxx`](https://github.com/Manu343726/cppgo/blob/main/internal/cxx) | libclang, reached through `purego` |
-| [`internal/gen`](https://github.com/Manu343726/cppgo/blob/main/internal/gen) | selection, carrier routing, the Go/asm/shim emitters, the shim compile |
-| [`internal/errormap`](https://github.com/Manu343726/cppgo/blob/main/internal/errormap) | the error projection and its configuration (not consumed by the generator yet) |
-| [`internal/shim`](https://github.com/Manu343726/cppgo/blob/main/internal/shim) | the construct matrix, measured against a real compiler |
-| [`cmd/cppgo`](https://github.com/Manu343726/cppgo/blob/main/cmd/cppgo) | the command line |
-| [`examples/`](https://github.com/Manu343726/cppgo/blob/main/examples) | `mathx` and `stats`, each with its own build and tests |
-| [`site/`](https://github.com/Manu343726/cppgo/blob/main/site) | the Hugo sources of the documentation site |
-| [`docs/adr/`](https://github.com/Manu343726/cppgo/blob/main/docs/adr) | the decision records |
-
 ## Related
 
 - Why the split exists: [Why cppgo exists]({{< ref "explanation/why.md" >}}).
 - Every carrier, construct and cost: [Carriers and the construct table]({{< ref "explanation/carriers.md" >}}).
+- What a call costs: [Performance]({{< ref "explanation/benchmarks.md" >}}).
 - What the mechanisms stop at: [Limits]({{< ref "explanation/limits.md" >}}).
-- The decisions and their alternatives: [Design decisions]({{< ref "explanation/decisions.md" >}}).

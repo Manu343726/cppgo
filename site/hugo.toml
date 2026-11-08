@@ -26,7 +26,6 @@ disableKinds = ["taxonomy", "term", "RSS", "sitemap", "robotsTXT", "404"]
   # Links the sidebar offers beside the four quadrants. Source lives on the
   # public mirror; the board is the project's Forgejo, which needs an account.
   repo = "https://github.com/Manu343726/cppgo"
-  design = "https://github.com/Manu343726/cppgo/blob/main/DESIGN.md"
   issues = "https://git.manu343726.com/manu343726/cppgo/issues"
 
 [markup]
