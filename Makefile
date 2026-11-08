@@ -37,7 +37,7 @@ GREEN  := \033[1;32m
 YELLOW := \033[1;33m
 RESET  := \033[0m
 
-.PHONY: help build test test-race test-nocgo cover cover-gate bench lint fmt fmt-check \
+.PHONY: help build test test-race test-nocgo cover cover-gate bench benchmarks lint fmt fmt-check \
         examples site clean clean-examples tidy verify
 
 ## ---------------------------------------------------------------------------
@@ -107,6 +107,9 @@ cover-gate: ## Enforce the statement-coverage threshold (regenerates the profile
 
 bench: ## Run all benchmarks (-benchmem); results are the ones quoted in the docs
 	CGO_ENABLED=0 $(GO) test -run '^$$' -bench . -benchmem $(GO_PKGS)
+
+benchmarks: ## Run the cppgo vs cgo vs plain-Go comparison suite in benchmarks/ (not a gate)
+	$(MAKE) -C benchmarks bench
 
 lint: ## go vet, then golangci-lint when installed
 	CGO_ENABLED=0 $(GO) vet $(GO_PKGS)
