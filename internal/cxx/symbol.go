@@ -253,6 +253,9 @@ type Symbol struct {
 	// DefFile and DefLine locate the out-of-line definition, when there is one.
 	DefFile string
 	DefLine int
+	// Comment is the raw doc comment the declaration carries, empty when it has
+	// none. The generator turns it into the Go doc comment.
+	Comment string
 }
 
 // isDeleted and isDefaulted read the special-member flags, but only for the
@@ -456,6 +459,7 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 	}
 	sym.IsConst, sym.IsVirtual, sym.IsStatic = e.l.qualifiers(cursor, sym.Kind)
 	sym.DeclFile, sym.DeclLine = e.l.locationValues(loc)
+	sym.Comment = e.l.comment(cursor)
 
 	if e.l.f.isCursorDefinition(cursor) != 0 {
 		// A definition inside the class definition is implicitly inline and
@@ -549,6 +553,9 @@ func mergeInto(into *Symbol, from Symbol) {
 	}
 	if into.Parent == "" {
 		into.Parent = from.Parent
+	}
+	if into.Comment == "" {
+		into.Comment = from.Comment
 	}
 	if into.Access == AccessNone {
 		into.Access = from.Access
@@ -855,6 +862,16 @@ func (l *Libclang) pointee(surface CXType) *Param {
 	}
 	p := l.param(inner)
 	return &p
+}
+
+// comment returns the raw doc comment attached to a declaration, or "" when it
+// has none. The text is exactly what the source says; normalising it for the Go
+// documentation is the generator's job.
+func (l *Libclang) comment(cursor CXCursor) string {
+	if l.f.cursorRawComment == nil {
+		return ""
+	}
+	return l.str(l.f.cursorRawComment(cursor))
 }
 
 // paramNames fills each parameter's declared name from the function cursor's

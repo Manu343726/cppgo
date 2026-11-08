@@ -114,13 +114,16 @@ type recordModel struct {
 	// New<Type>() and Clone() are generated only when they are true.
 	DefaultConstructible bool
 	CopyConstructible    bool
+	// Comment is the C++ doc comment, normalised by the Go emitter.
+	Comment string
 }
 
 // fieldModel is one exported field of a mirrored record.
 type fieldModel struct {
-	GoName string
-	Type   *goType
-	Offset int64
+	GoName  string
+	Type    *goType
+	Offset  int64
+	Comment string
 }
 
 // goParam is one visible parameter of the Go API.
@@ -454,6 +457,7 @@ func (b *builder) buildRecords() error {
 			Align:                rec.AlignBytes,
 			DefaultConstructible: rec.IsDefaultConstructible,
 			CopyConstructible:    rec.IsCopyConstructible,
+			Comment:              rec.Comment,
 		}
 		model.Mirrored = b.mirrorable(rec)
 		if !model.Mirrored {
@@ -470,9 +474,10 @@ func (b *builder) buildRecords() error {
 				continue
 			}
 			model.Fields = append(model.Fields, &fieldModel{
-				GoName: exportName(field.Name),
-				Type:   mirrorFieldType(field.Type),
-				Offset: field.OffsetBytes,
+				GoName:  exportName(field.Name),
+				Type:    mirrorFieldType(field.Type),
+				Offset:  field.OffsetBytes,
+				Comment: field.Comment,
 			})
 		}
 		b.records[rec.QualifiedName] = model

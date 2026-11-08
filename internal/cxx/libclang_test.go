@@ -155,6 +155,7 @@ func fakeLibclangSource() string {
 		"clang_isCursorDefinition", "clang_Cursor_isFunctionInlined",
 		"clang_getCursorSemanticParent", "clang_getCursorDefinition",
 		"clang_Cursor_getMangling", "clang_isVirtualBase", "clang_Cursor_getArgument",
+		"clang_Cursor_getRawCommentText",
 		"clang_Cursor_getStorageClass", "clang_CXXMethod_isStatic",
 		"clang_CXXMethod_isVirtual", "clang_CXXMethod_isConst",
 		"clang_CXXMethod_isDefaulted", "clang_CXXMethod_isDeleted",

@@ -345,9 +345,12 @@ func (m *packageModel) emitMirroredType(b *strings.Builder, record *recordModel)
 	for _, field := range record.Fields {
 		offsets = append(offsets, fmt.Sprintf("%s at offset %d", field.GoName, field.Offset))
 	}
-	fmt.Fprintf(b, "// %s is %s: a POD, %d bytes, %s.\n", record.GoName, record.CxxName, record.Size, strings.Join(offsets, ", "))
+	fmt.Fprintf(b, "%s\n", docBlock(record.GoName, fmt.Sprintf("%s is %s: a POD, %d bytes, %s.", record.GoName, record.CxxName, record.Size, strings.Join(offsets, ", ")), record.Comment))
 	fmt.Fprintf(b, "type %s struct {\n", record.GoName)
 	for _, field := range record.Fields {
+		if doc := commentLines(field.Comment); doc != "" {
+			fmt.Fprintf(b, "%s", indentLines(doc, "\t"))
+		}
 		fmt.Fprintf(b, "\t%s %s\n", field.GoName, field.Type.Go)
 	}
 	b.WriteString("}\n\n")
@@ -361,7 +364,7 @@ func (m *packageModel) emitMirroredType(b *strings.Builder, record *recordModel)
 
 // emitOpaqueType writes the Go value that owns C++ storage.
 func (m *packageModel) emitOpaqueType(b *strings.Builder, record *recordModel) {
-	fmt.Fprintf(b, "// %s is %s. The object belongs to C++; obj is where it lives.\n", record.GoName, record.CxxName)
+	fmt.Fprintf(b, "%s\n", docBlock(record.GoName, fmt.Sprintf("%s is %s. The object belongs to C++; obj is where it lives.", record.GoName, record.CxxName), record.Comment))
 	fmt.Fprintf(b, "type %s struct {\n\tobj *cppgo.Object\n}\n\n", record.GoName)
 	fmt.Fprintf(b, `// cppgoAddr is the object address handed to C++, or 0 for a nil or closed
 // value.
@@ -758,9 +761,11 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 }
 
 // emitBindingDoc writes the description and the one evidence line every binding
-// carries.
+// carries. The C++ doc comment is the Go doc comment; the generated contract
+// sentence leads when the header wrote none, or when its comment does not open
+// with the Go identifier.
 func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, description string) {
-	fmt.Fprintf(b, "\n// %s\n", description)
+	fmt.Fprintf(b, "\n%s\n", docBlock(binding.GoName, description, binding.sym.Comment))
 	mangled := binding.sym.Mangled
 	if mangled == "" {
 		mangled = "synthesized"

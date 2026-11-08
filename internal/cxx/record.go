@@ -98,6 +98,8 @@ type Field struct {
 	BitWidth int
 	// IsAnonymous is true for an unnamed member (an anonymous struct or union).
 	IsAnonymous bool
+	// Comment is the member's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // Base is one base class of a record, with the access it was inherited under
@@ -202,6 +204,8 @@ type Record struct {
 	// DeclFile and DeclLine locate the definition.
 	DeclFile string
 	DeclLine int
+	// Comment is the record's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // StaticField is one static data member. It is a value that belongs to the
@@ -220,6 +224,8 @@ type StaticField struct {
 	// Mangled is the symbol of the definition, or empty when libclang has none
 	// (a template pattern's static member is spelled per instantiation).
 	Mangled string
+	// Comment is the member's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // memberTemplate is a member function template kept for on-demand
@@ -243,6 +249,8 @@ type Enumerator struct {
 	UnsignedValue uint64
 	// IsUnsigned reports which of the two readings is the type's own.
 	IsUnsigned bool
+	// Comment is the enumerator's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // Enum is one enum definition. It carries the underlying integer type and the
@@ -267,6 +275,8 @@ type Enum struct {
 	// DeclFile and DeclLine locate the definition.
 	DeclFile string
 	DeclLine int
+	// Comment is the definition's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // recordExtractor walks one translation unit and turns record and enum
@@ -365,6 +375,7 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 		AlignBytes:    -1,
 	}
 	rec.DeclFile, rec.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
+	rec.Comment = e.l.comment(cursor)
 
 	pattern, isSpecialization := e.l.specialization(cursor)
 	if isSpecialization {
@@ -780,6 +791,7 @@ func (e *recordExtractor) synthesizeMember(cursor CXCursor, rec *Record, sub sub
 	member.IsConst, member.IsVirtual, member.IsStatic = e.l.qualifiers(cursor, kind)
 	member.IsNoExcept = !member.ExceptionSpec.CanThrow()
 	member.DeclFile, member.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
+	member.Comment = e.l.comment(cursor)
 
 	funcType := e.l.f.getCursorType(cursor)
 	if kind == Constructor || kind == Destructor {
@@ -816,6 +828,7 @@ func (e *recordExtractor) collectStaticField(cursor CXCursor) StaticField {
 		Access:  e.l.access(cursor),
 		IsConst: e.l.f.isConstQualifiedType(typ) != 0,
 		Mangled: e.l.str(e.l.f.cursorMangling(cursor)),
+		Comment: e.l.comment(cursor),
 	}
 }
 
@@ -1350,6 +1363,7 @@ func (e *recordExtractor) collectField(cursor CXCursor) Field {
 		IsBitField:  e.l.f.cursorIsBitField(cursor) != 0,
 		IsAnonymous: e.l.f.cursorIsAnonymous(cursor) != 0,
 		OffsetBytes: -1,
+		Comment:     e.l.comment(cursor),
 	}
 	if bits := e.l.f.cursorOffsetOfField(cursor); bits >= 0 {
 		field.OffsetBytes = bits / 8
@@ -1392,6 +1406,7 @@ func (e *recordExtractor) collectEnum(cursor CXCursor) Enum {
 		IsScoped:       e.l.f.enumDeclIsScoped(cursor) != 0,
 		Underlying:     e.l.param(e.l.f.getEnumDeclIntegerType(cursor)),
 		ConstantsKnown: true,
+		Comment:        e.l.comment(cursor),
 	}
 	enum.DeclFile, enum.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
 	_ = e.l.visit(cursor, func(child, parent CXCursor) int32 {
@@ -1401,6 +1416,7 @@ func (e *recordExtractor) collectEnum(cursor CXCursor) Enum {
 				Value:         e.l.f.getEnumConstantValue(child),
 				UnsignedValue: e.l.f.getEnumConstantUnsignedValue(child),
 				IsUnsigned:    enum.Underlying.Unsigned,
+				Comment:       e.l.comment(child),
 			})
 		}
 		return visitContinue
@@ -1461,6 +1477,9 @@ func mergeRecord(into *Record, from Record) {
 	}
 	if into.DeclFile == "" {
 		into.DeclFile, into.DeclLine = from.DeclFile, from.DeclLine
+	}
+	if into.Comment == "" {
+		into.Comment = from.Comment
 	}
 	into.IsTemplateSpecialization = into.IsTemplateSpecialization || from.IsTemplateSpecialization
 	into.HasVirtualFunction = into.HasVirtualFunction || from.HasVirtualFunction

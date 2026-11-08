@@ -349,6 +349,7 @@ type libclangFuncs struct {
 	cursorMangling       func(CXCursor) CXString
 	isVirtualBase        func(CXCursor) int32
 	cursorGetArgument    func(CXCursor, uint32) CXCursor
+	cursorRawComment     func(CXCursor) CXString
 
 	// Methods and linkage.
 	getCursorStorageClass        func(CXCursor) int32
@@ -454,6 +455,7 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_Cursor_getMangling", &f.cursorMangling},
 		{"clang_isVirtualBase", &f.isVirtualBase},
 		{"clang_Cursor_getArgument", &f.cursorGetArgument},
+		{"clang_Cursor_getRawCommentText", &f.cursorRawComment},
 		{"clang_Cursor_getStorageClass", &f.getCursorStorageClass},
 		{"clang_CXXMethod_isStatic", &f.methodIsStatic},
 		{"clang_CXXMethod_isVirtual", &f.methodIsVirtual},
