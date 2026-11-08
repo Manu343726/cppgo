@@ -1,9 +1,10 @@
-# stats — a large `[]float64`, in both directions
+# stats, a large  `[]float64`, in both directions
 
-This is the case a Go program actually calls out to C++ for: arithmetic over a
-big slice of numbers. Every function takes its data as `(pointer, length)` —
-which is what a Go slice already is — and the result is written into a buffer
-the caller owns, so nothing is copied or marshalled in either direction.
+This is the case a Go program actually calls out to C++ for. Arithmetic over a
+big slice of numbers. Every function takes its data as `(pointer, length)`, 
+which is what a Go slice already is, and the result is written into a buffer
+the caller owns. No copy or marshalling happens
+in either direction.
 
 The header is the source of truth. `cppgo gen` reads it, decides per function
 whether the call can go straight to the library or needs the shim, writes the Go
@@ -54,11 +55,11 @@ cppgo: built libcppgo_stats.so with /usr/bin/g++
 ```
 
 Four functions are `noexcept` and defined out of line, so their mangled symbols
-are in `libstats.so` and the trampoline calls them directly. `histogram` is not
-`noexcept`, so it is a shim call. Two consequences are visible in the Go API:
+are in `libstats.so` and the trampoline calls them directly. `histogram` omits
+`noexcept`, and the call goes through the shim. Two consequences are visible in the Go API:
 
 - `Mean`, `Stddev`, `CountAbove` and `DataPointer` return **no error**. A call
-  that cannot fail does not get an always-nil error in Go.
+  that cannot fail gets no error in Go.
 - `Histogram` returns **only** an `error`. It has no status return in C++ and
   none appears in Go.
 
@@ -86,7 +87,7 @@ if xs[0] != 100 { /* not the same memory */ }
 
 The pointer that arrived is the pointer that left, and writing through it
 changes the Go slice, because it is Go memory. `TestHistogramWritesThroughTheSlice`
-does the same for the output direction: the counts appear in the caller's
+does the same for the output direction. The counts appear in the caller's
 `bins`, and a second call starts from zero because the C++ `std::fill` cleared
 that same array.
 
@@ -134,37 +135,36 @@ with the library paths in the environment. One run:
 | `CountAbove`, 1 048 576 | 1.595 ms | 2.299 ms | 0.69x |
 | `DataPointer` (the call itself) | 43.16 ns | 2.13 ns | 20x slower |
 
-**Read the ratios, not the nanoseconds.** The absolute values are a property of
+**Read the ratios.** The absolute values are a property of
 the clock the run happened at, of the machine's power profile and of whatever
-else was running. This run was not taken at a pinned clock, so its nanoseconds
-are not comparable with the numbers in the project's design document, which were
-measured at 964.8 MHz with boost disabled. The ratios and the per-element cost
+else was running. This run used an unpinned clock. Its nanoseconds do not compare
+with the design document's numbers, which were measured at 964.8 MHz with boost
+disabled. The ratios and the per-element cost
 are what travel.
 
 What the rows mean:
 
 - **The crossing is a constant, and that is the point.** 43 ns is ~86% of the
   50 ns an 8-element `Mean` costs, and 0.001% of the 3.35 ms a million-element
-  one costs. Per element at n = 1 048 576 it is 0.04 ns. That is the argument
-  for the shape "one call over the slice": the boundary does not scale, the data
-  does.
+  one costs. Per element at n = 1 048 576 it is 0.04 ns. That is the argument for the shape "one call over the slice". The boundary stays
+  constant and the data scales.
 - **At a million elements the two arms are the same code in a different
   compiler.** `Mean` runs at ~3.2 ns per element in both arms, and `Stddev` at
-  ~6.4 ns: those are the arithmetic, not the boundary. The million-element
+  ~6.4 ns. Those are the arithmetic. The million-element
   `Mean` gap is 1%, which is run-to-run noise.
-- **`CountAbove` is ~1.4x faster on the C++ side**, and that is a compiler
-  difference, not a boundary one: the C++ compiler vectorises the
-  compare-and-count loop at `-O2`, the Go compiler does not. It is included
+- **`CountAbove` is ~1.4x faster on the C++ side.** That is a compiler
+  difference. The C++ compiler vectorises the
+  compare-and-count loop at `-O2`. The Go compiler leaves it scalar. It is included
   precisely because it is the kind of thing that makes calling out to C++ worth
   it.
 - **`Histogram` crosses through the shim and is still not slower.** The shim is
-  one extra C++ frame; at a million elements the loop dominates it completely.
+  one extra C++ frame. At a million elements the loop dominates it completely.
 - **A call per element would be a disaster.** At 43 ns of crossing, one call per
   element over a million elements is 43 ms of boundary alone, several times the
-  whole bulk call. The example binds the loop, not the accessor.
+  whole bulk call. The example binds the loop.
 
-`B/op` and `allocs/op` are zero in every arm: a slice crossing the boundary
-allocates nothing, in either direction.
+`B/op` and `allocs/op` are zero in every arm. A slice crossing the boundary
+makes no allocation, in either direction.
 
 The raw output of the run above:
 
@@ -212,15 +212,14 @@ build/cppgo check -header include/stats/stats.hpp -package stats -library build/
 ```
 
 The pure-Go implementations the tests and benchmarks compare against are in
-[`stats_test.go`](stats_test.go) — `goMean`, `goStddev`, `goCountAbove`,
-`goHistogram` — so the comparison is against code you can read, not a number in
-this file.
+[`stats_test.go`](stats_test.go), `goMean`, `goStddev`, `goCountAbove`,
+`goHistogram`. The comparison is against code you can read.
 
 ## Where the shared objects come from at run time
 
 The generated package loads `libstats.so` first and then `libcppgo_stats.so`.
-The shim names the user's library in its `DT_NEEDED` entry by soname, which is
-why the Makefile links with `-Wl,-soname,libstats.so`; loading the library first
+The shim names the user's library in its `DT_NEEDED` entry by soname. That is
+why the Makefile links with `-Wl,-soname,libstats.so`. Loading the library first
 is what makes that name resolve to the object the process already holds. The
 test sets the two paths with `CppgoLibraryPath` and `Open`, and
 `CPPGO_STATS_LIB` / `CPPGO_STATS_SHIM` are what the Makefile passes it.
