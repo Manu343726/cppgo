@@ -332,15 +332,21 @@ Rules that the API shape follows:
   function templates** as patterns (`Record.MemberTemplates`) plus the concrete instantiations the
   manifest names (`Project.InstantiateMember`). A member function template without an instantiation
   is not bindable, and the error names the `-instantiate` entry to add.
-- **Template specialisations are records read through their pattern.** libclang does not expose the
-  instantiated definition's cursor children and may defer its layout, so the model instantiates the
-  pattern's fields and members with the template arguments and reads the specialisation type for
-  whatever layout it can provide. `Record.LayoutKnown` says which case applies: **true** → the Go
-  type is the mirrored struct (fields at their offsets, compile-time assertions); **false** → the
-  same type is opaque with field accessors. Either way the record's fields, members, operators,
-  static data and nested types are in the model; a member template is present as its pattern until
-  an instantiation is named. A specialisation reached only through a field's type is built from that
-  type, so `BoxHolder` makes `Box<double>` part of the API.
+- **Template specialisations have a precedence: full, partial, primary.** A **full explicit
+  specialisation** (`template <> struct Q<int> { … }`) has its own definition cursor, so its fields,
+  constructors, destructor, methods (with their manglings), static data, nested records and enums,
+  bases and layout are read from **its own body**; it is never synthesised from the primary. A
+  **partial specialisation** (`template <typename T> struct Q<T *> { … }`) is a pattern with its own
+  cursor: an instantiation selects the best match by arity, then by the number of argument components
+  that are not a bare parameter (more specific wins), ties in declaration order, and synthesises from
+  that partial with both its parameters and the remaining ones substituted. An instantiation with no
+  matching partial synthesises from the **primary**. Only these two cases synthesise: libclang emits
+  no definition cursor for an implicit instantiation. `Record.LayoutKnown` says which case applies:
+  **true** → the Go type is the mirrored struct (fields at their offsets, compile-time assertions);
+  **false** → the same type is opaque with field accessors. Either way the record's fields, members,
+  operators, static data and nested types are in the model; a member template is present as its
+  pattern until an instantiation is named. A specialisation reached only through a field's type is
+  built from that type, so `BoxHolder` makes `Box<double>` part of the API.
 - **`New<Type>()` and `Clone()` are promised only when the model can classify the record.**
   `Record.IsDefaultConstructible` is true for a non-deleted zero-argument constructor, or no
   user-declared constructor and every field trivially constructible: a scalar, pointer, enum, a
@@ -572,10 +578,12 @@ reached through a one-line C++ wrapper with a representable signature.
 - A **nested type** is the outer Go name followed by its own: `mathx::Operators::Entry` →
   `OperatorsEntry`, `mathx::Box<int>::Inner` → `BoxIntInner`; deeper nesting concatenates in order.
   A nested **enum** is a type too: `mathx::Box<int>::Kind` → `BoxIntKind`, with constants
-  `<EnumName><Enumerator>` (`BoxIntKindA`, `BoxIntKindB`). Its underlying type and initializers are
-  taken from the instantiation; when an initializer is neither a literal nor a template parameter
-  the model reports `Enum.ConstantsKnown == false` and the generated enum carries no constants (an
-  explicit specialisation supplies them). A collision needs `-rename`.
+  `<EnumName><Enumerator>` (`BoxIntKindA`, `BoxIntKindB`). Its underlying type and initializers come
+  from the body that defines the instantiation: a full explicit specialisation's own enumerators, a
+  matched partial's, or the primary's. When an initializer is neither a literal nor a template
+  parameter the model reports `Enum.ConstantsKnown == false` and the generated enum carries no
+  constants; a constant is never taken from a body the instantiation does not use. A collision needs
+  `-rename`.
 - A **conversion operator** is named after its target Go type: `operator int` → `Int()`,
   `operator double` → `Float64()`, `operator std::string` → `String()`, `operator bool` → `Bool()`;
   a record or pointer target is `As<RecordName>` (`operator mathx::Vector` → `AsVector`). A collision
