@@ -346,6 +346,7 @@ type libclangFuncs struct {
 	getCursorDefinition  func(CXCursor) CXCursor
 	cursorMangling       func(CXCursor) CXString
 	isVirtualBase        func(CXCursor) int32
+	cursorGetArgument    func(CXCursor, uint32) CXCursor
 
 	// Methods and linkage.
 	getCursorStorageClass        func(CXCursor) int32
@@ -442,6 +443,7 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_getCursorDefinition", &f.getCursorDefinition},
 		{"clang_Cursor_getMangling", &f.cursorMangling},
 		{"clang_isVirtualBase", &f.isVirtualBase},
+		{"clang_Cursor_getArgument", &f.cursorGetArgument},
 		{"clang_Cursor_getStorageClass", &f.getCursorStorageClass},
 		{"clang_CXXMethod_isStatic", &f.methodIsStatic},
 		{"clang_CXXMethod_isVirtual", &f.methodIsVirtual},

@@ -73,6 +73,10 @@ const (
 
 // Param is one parameter of a signature, its result, or a field of a record.
 type Param struct {
+	// Name is the parameter's declared name, empty when the declaration
+	// omitted it or when the value is a result. It is what lets the generator
+	// name the Go parameter the way the C++ header did.
+	Name string
 	// Spelling is the type as written in the source, from libclang:
 	// "const double *", "std::size_t", "Vector".
 	Spelling string
@@ -230,6 +234,12 @@ type Symbol struct {
 	// HasSret is true when the result is a record returned indirectly, through
 	// a hidden pointer in the first integer argument slot.
 	HasSret bool
+	// IsCopyConstructor is true for a copy constructor: Clone() is generated
+	// from it, not a New<Type> factory.
+	IsCopyConstructor bool
+	// IsMoveConstructor is true for a move constructor, which is not exposed
+	// separately because Go has no rvalue overload.
+	IsMoveConstructor bool
 
 	// DeclFile and DeclLine locate the declaration that was found.
 	DeclFile string
@@ -473,6 +483,13 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 		for i := uint32(0); i < uint32(n); i++ {
 			sym.Params = append(sym.Params, e.l.param(e.l.f.getArgType(funcType, i)))
 		}
+		e.l.paramNames(cursor, sym.Params)
+	}
+	if sym.Kind == Constructor {
+		// A copy constructor is Clone(), not a factory, and a move
+		// constructor is not exposed separately: Go has no rvalue overload.
+		sym.IsCopyConstructor = e.l.f.constructorIsCopyConstructor(cursor) != 0
+		sym.IsMoveConstructor = e.l.f.constructorIsMoveConstructor(cursor) != 0
 	}
 	sym.IsOperator, sym.Operator, sym.IsConversion = operatorInfo(e.l.str(e.l.f.getCursorSpelling(cursor)), sym.Result)
 	e.add(sym)
@@ -532,6 +549,8 @@ func mergeInto(into *Symbol, from Symbol) {
 	}
 	into.IsVariadic = into.IsVariadic || from.IsVariadic
 	into.IsTemplate = into.IsTemplate || from.IsTemplate
+	into.IsCopyConstructor = into.IsCopyConstructor || from.IsCopyConstructor
+	into.IsMoveConstructor = into.IsMoveConstructor || from.IsMoveConstructor
 	if into.ExceptionSpec == ExceptionUnspecified && from.ExceptionSpec != ExceptionUnspecified {
 		into.ExceptionSpec = from.ExceptionSpec
 	}
@@ -822,6 +841,21 @@ func (l *Libclang) pointee(surface CXType) *Param {
 	}
 	p := l.param(inner)
 	return &p
+}
+
+// paramNames fills each parameter's declared name from the function cursor's
+// argument declarations, so the generated Go signature uses the names the C++
+// header used. A declaration that omitted a name yields "", and a cursor whose
+// arguments libclang does not expose leaves them all empty; the generator then
+// invents a name.
+func (l *Libclang) paramNames(cursor CXCursor, params []Param) {
+	for i := range params {
+		arg := l.f.cursorGetArgument(cursor, uint32(i))
+		if !l.cursorIsValid(arg) {
+			continue
+		}
+		params[i].Name = l.str(l.f.getCursorSpelling(arg))
+	}
 }
 
 // isUnsignedKind reports whether an integer type kind is unsigned.
