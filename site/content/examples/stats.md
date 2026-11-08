@@ -1,22 +1,27 @@
 +++
 title = "stats: bulk data"
-description = "Arithmetic over a million-element []float64: (pointer, length) in both directions, a pointer-identity check that proves nothing was copied, and an int32_t status turned into a Go error."
+description = "Arithmetic over a large []float64: (pointer, length) in both directions, a pointer-identity check that proves nothing was copied, and a 32-bit status turned into a Go error with -status."
 weight = 20
 +++
 
 **Repository path:** [`examples/stats/`](https://github.com/Manu343726/cppgo/tree/main/examples/stats)
 
-`stats` is the case a Go program actually calls out to C++ for: arithmetic over a
-large `[]float64`. Every function takes its data as `(pointer, length)`, and the
-ones that produce bulk output write it into a buffer the caller owns, so nothing
-is copied or marshalled in either direction.
+**Audience:** you want the shape a Go program actually calls out to C++ for —
+arithmetic over a large `[]float64` — rather than one small class.
 
-```console
-$ cd examples/stats
-$ make            # build libstats.so, generate, test, vet
-$ make check      # prove the committed generated files are up to date
-$ make bench      # C++ call against the pure-Go equivalent
-```
+<div class="callout">
+<span class="callout-title">This package is being regenerated</span>
+<p>
+The <code>examples/</code> directory on <code>main</code> still holds the v3
+package. Issue #4 regenerates it against the v4 emitter. The command, the report
+and the generated API on this page come from the v4 generator run against the
+header below.
+</p>
+</div>
+
+Every function takes its data as `(pointer, length)`, and the one that produces
+bulk output writes into a buffer the caller owns, so nothing is copied or
+marshalled in either direction.
 
 ## The header
 
@@ -28,6 +33,7 @@ each one):
 ```cpp
 namespace stats {
 
+using std::int32_t;
 using std::size_t;
 
 double mean(const double *xs, size_t n);
@@ -51,71 +57,79 @@ int32_t histogram(const double *xs, size_t n,
 extern "C" const char *cppgo_last_error();
 ```
 
-Everything except `cppgo_last_error` is a normal C++ function defined out of line
-in `src/stats.cpp`. The `extern "C"` accessor is the status convention's other
-half: on failure, `histogram` returns non-zero and leaves a message for
-`cppgo_last_error()`, which the generated wrapper turns into a Go `error`.
+Everything except `cppgo_last_error` is a normal C++ function defined out of
+line in `src/stats.cpp`.
 
-`data_pointer` looks pointless — it returns its argument. It is there to *prove*
-something in a test: the pointer that arrives is the pointer that left, so the
-slice was not copied.
+## Generate
 
-## The directives
+The header declares `cppgo_last_error` itself, which is the library's own status
+accessor. The generator would bind it as an ordinary function and collide with
+the accessor the shim defines, so the invocation excludes it and names
+`histogram` as a status function:
 
-<span class="filename">examples/stats/stats.go</span>
-
-```go
-//cppgo:library libstats
-//cppgo:header include/stats/stats.hpp
-
-//cppgo:function stats::mean
-func Mean(xs []float64) float64
-
-//cppgo:function stats::stddev
-func Stddev(xs []float64) float64
-
-//cppgo:function stats::count_above
-func CountAbove(xs []float64, threshold float64) int
-
-//cppgo:function stats::data_pointer
-func DataPointer(xs []float64) *float64
-
-//cppgo:function stats::histogram
-func Histogram(xs, bins []float64, lo, hi float64) error
+```console
+$ g++ -std=c++17 -O2 -fPIC -shared -Wl,-soname,libstats.so \
+      -Iinclude -Iinclude/stats -o build/libstats.so src/stats.cpp
+$ cppgo gen -header include/stats/stats.hpp -package stats \
+      -library build/libstats.so -out ./stats \
+      -status stats::histogram -exclude cppgo_last_error
+stats::count_above(const double *, size_t, double) thunk  cppgo_thunk_9d4ab55408c1   not noexcept: an exception would unwind into Go
+stats::data_pointer(const double *, size_t)  thunk  cppgo_thunk_f6b67dec6101    not noexcept: an exception would unwind into Go
+stats::histogram(const double *, size_t, double *, size_t, double, double) thunk  cppgo_thunk_2f7a0df214c2   not noexcept: an exception would unwind into Go
+stats::mean(const double *, size_t)          thunk  cppgo_thunk_a7638858c2ce    not noexcept: an exception would unwind into Go
+stats::stddev(const double *, size_t)        thunk  cppgo_thunk_a0b464f80aef    not noexcept: an exception would unwind into Go
+cppgo: built stats/libcppgo_stats.so with /usr/bin/g++
 ```
 
-What crosses is worth reading off the signatures: a `[]float64` is two integer
-arguments (pointer, length), a `float64` is one argument in an XMM register, and
-a function that declares **only** an `error` result is read as an integer
-status. [Register assignment]({{< ref "manual/calling-convention.md" >}}) has the
-full table and the exhaustion limit.
+Every function is a thunk because none is `noexcept`: they can throw, so the
+shim catches and the Go signature reports. The generated API is:
 
-`Histogram` declares only `error`, and the C++ function returns `int32_t`, so the
-integer is read as the **status**: `0` is `nil`, anything else becomes an error
-whose message comes from `cppgo_last_error`. That is the direct ABI mode's only
-error channel, and this example is the working version of it.
+```go
+func Open(path string) error
+func CountAbove(xs []float64, threshold float64) (uint64, error)
+func DataPointer(xs []float64) (*float64, error)
+func Histogram(xs []float64, bins []float64, lo float64, hi float64) error
+func Mean(xs []float64) (float64, error)
+func Stddev(xs []float64) (float64, error)
+```
+
+`Histogram` returns only `error`, not `(int32, error)`, because `-status` named
+it: the C++ `int32_t` is the failure channel, and 0 is `nil`.
 
 ## The call site
 
-From [`examples/stats/stats_test.go`](https://github.com/Manu343726/cppgo/blob/main/examples/stats/stats_test.go)
-and the benchmark:
-
 ```go
-if got := Mean([]float64{1, 2, 3, 4}); !close(got, 2.5) {
-	t.Errorf("Mean = %v, want 2.5", got)
+xs := []float64{1, 2, 3, 4}
+
+mean, err := stats.Mean(xs) // 2.5
+if err != nil {
+	log.Fatal(err)
 }
 
-// The output crosses as (pointer, length) too: the counts go straight into
-// the caller's slice.
 bins := make([]float64, 16)
-if err := Histogram(xs, bins, 0, 1); err != nil {
-	t.Fatal(err)
+if err := stats.Histogram(xs, bins, 0, 5); err != nil {
+	log.Fatal(err)
 }
 
 // Same memory, not a copy.
-if DataPointer(xs) != &xs[0] {
-	t.Error("the slice was copied on the way in")
+p, err := stats.DataPointer(xs)
+if err != nil {
+	log.Fatal(err)
 }
+if p != &xs[0] {
+	log.Fatal("the slice was copied on the way in")
+}
+```
+
+`DataPointer` looks pointless — it returns its argument. It is there to *prove*
+something in a test: the pointer that arrives is the pointer that left, so the
+slice was not copied.
+
+The `Histogram` status is the other half: the shim copies the message the
+library stored, and the generated wrapper turns a non-zero status into an error:
+
+```
+cppgo: stats::histogram: histogram: nbins must be positive
 ```
 
 ## What it teaches
@@ -125,41 +139,31 @@ if DataPointer(xs) != &xs[0] {
   intermediate representation: C++ reads Go's backing array.
 - **The direction is symmetric.** Input and output both cross as borrowed
   pointers; results are written where the caller can see them, not returned.
-- **A pointer identity check is the proof.** `data_pointer` is the only way to
+- **A pointer identity check is the proof.** `DataPointer` is the only way to
   demonstrate "not copied" from the outside, and it is worth having in a test
   when the whole point of the binding is throughput.
-- **A status is not a value.** `histogram` returns `int32_t` and the Go binding
-  declares only `error`, so the wrapper reads `EAX`, checks it, and calls
-  `LastError` on failure. No out-parameter is needed for the status because the
-  status *is* the return.
-- **Empty slices are legal.** `Mean(nil)` is `(null, 0)` on the wire and the C++
-  side returns 0, which the tests assert.
+- **`-status` removes the integer.** `histogram` returns `int32_t` and the Go
+  signature is `error` alone. The status *is* the return, so no out-parameter is
+  needed for it.
+- **Infrastructure is not API.** The library's own `cppgo_last_error` is
+  excluded, not bound: it is the accessor the shim and the status convention
+  use.
 
 ## The benchmark
 
-`make bench` runs [`examples/stats/stats_bench_test.go`](https://github.com/Manu343726/cppgo/blob/main/examples/stats/stats_bench_test.go),
-which compares each function against a pure-Go implementation over the same
-memory. Two sizes matter and they answer different questions:
+The example's benchmark harness compares each function against a pure-Go
+implementation over the same memory; it is part of the #4 regeneration. This
+page does **not** quote its results: they were not measured for this page, and
+they depend on your CPU, compiler and Go version.
 
-- **8 elements** — the cost is the crossing (the Asm trampoline plus the
-  wrapper). Compare it with the project's 13.9 ns figure, and remember the clock
-  caveat on [benchmarks]({{< ref "project/benchmarks.md" >}}).
+Two sizes matter and answer different questions:
+
+- **8 elements** — the cost is the crossing (the trampoline plus the wrapper).
+  Compare it with the project's 15.9 ns figure, and remember the clock caveat on
+  [benchmarks]({{< ref "project/benchmarks.md" >}}).
 - **a million elements** — the cost is memory bandwidth; the crossing is noise.
   That is precisely why the slice is passed as `(pointer, length)` and not
   copied.
-
-This page does **not** quote the benchmark's results: they were not measured for
-this page, and they depend on your CPU, compiler and Go version. Run it:
-
-```console
-$ cd examples/stats
-$ make bench
-```
-
-Read the `cppgo` and `go` arms of each sub-benchmark. The difference at
-`n=8` is the boundary; at `n=1048576` the two should be close, because the
-arithmetic dominates. If they are not, the C++ loop is not doing what you think
-— usually because it is not vectorisable as written.
 
 Next: the [manual]({{< ref "manual/_index.md" >}}) for the rules behind all of
 this.

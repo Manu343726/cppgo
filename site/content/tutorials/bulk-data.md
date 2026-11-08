@@ -1,6 +1,6 @@
 +++
 title = "Bulk data"
-description = "Slices cross as (pointer, length). How to bind a routine over []float64, why a call per element is the wrong shape, and where the length has to sit in the C++ signature."
+description = "Slices cross as (pointer, length) without a copy; std::vector results are copied into a fresh Go slice. How to bind a routine over []float64, why a call per element is the wrong shape, and where the length has to sit in the C++ signature."
 weight = 30
 +++
 
@@ -8,17 +8,19 @@ A `[]float64` is contiguous memory. Crossing the boundary once and letting C++
 loop over all of it is the shape that makes the FFI disappear; crossing once per
 element is the shape that makes it dominate.
 
+**Audience:** you have a class working and now you need arrays, strings, or a
+result that does not fit in one register.
+
 ## The wrong shape first
 
 Suppose `Vector` had an accessor:
 
 ```cpp
-double Vector::at(std::size_t i) const;   // out of line
+double at(std::size_t i) const;   // out of line
 ```
 
 ```go
-//cppgo:method at
-func (v Vector) At(i int64) float64
+func (v *Vector) At(i uint64) (float64, error)
 ```
 
 Calling it in a loop is correct, and it is what the Go type system invites:
@@ -26,94 +28,59 @@ Calling it in a loop is correct, and it is what the Go type system invites:
 ```go
 sum := 0.0
 for i := 0; i < 10_000_000; i++ {
-	sum += data.At(int64(i))
+	n, err := data.At(uint64(i))
+	if err != nil {
+		return err
+	}
+	sum += n
 }
 ```
 
-On the CPU described in [benchmarks]({{< ref "project/benchmarks.md" >}}) —
-8-core x86-64, pinned to **964 MHz** — the trampoline measured **13.9 ns** per
-call (~13 cycles; the nanoseconds are inflated by the clock, so treat them as a
-frozen-CPU figure). Ten million calls at 13.9 ns is about **139 ms** of boundary
-alone, before the C++ function does any work, and it also forces the loop to stay
-scalar: each `at` is an opaque call the compiler cannot vectorise across.
+On the machine in [benchmarks]({{< ref "project/benchmarks.md" >}}) a direct call
+measured **15.9 ns** (2026-11-08, `go test -bench . -benchtime 200000x`); a thunk
+adds a C++ frame on top. Ten million calls is boundary time spent before the
+C++ function does any work, and it also forces the loop to stay scalar: each
+`At` is an opaque call the compiler cannot vectorise across.
 
-The 13.9 ns is not the objection by itself — the objection is the shape. A
-per-element API hands the C++ compiler one element at a time and forbids every
-optimisation that needs to see the array.
+The nanoseconds are not the objection by themselves — the objection is the
+shape. A per-element API hands the C++ compiler one element at a time and
+forbids every optimisation that needs to see the array.
 
-## The right shape
+## The right shape: a borrowed slice
 
-Bind the routine, not the accessor. A dot product over two buffers:
-
-<span class="filename">include/mathx/bulk.hpp</span>
+Bind the routine, not the accessor. The `mathx` fixture does both directions:
 
 ```cpp
-#pragma once
+// mathx::Vector — this is already in the header the tutorial uses.
+double dot(const double *ys, std::size_t n) const;
 
-#include <cstddef>
-
-namespace mathx {
-
-// y[i] += alpha * x[i], for i in [0, min(x_len, y_len)).
-void saxpy(double alpha,
-           const double *x, std::size_t x_len,
-           double *y, std::size_t y_len);
-
-// sum(xs[i] * ys[i]) for i in [0, min(xs_len, ys_len)).
-double dot(const double *xs, std::size_t xs_len,
-           const double *ys, std::size_t ys_len);
-
-} // namespace mathx
-```
-
-<span class="filename">src/bulk.cpp</span>
-
-```cpp
-#include "mathx/bulk.hpp"
-
-namespace mathx {
-
-void saxpy(double alpha, const double *x, std::size_t x_len,
-           double *y, std::size_t y_len) {
-    const std::size_t n = x_len < y_len ? x_len : y_len;
-    for (std::size_t i = 0; i < n; ++i) {
-        y[i] += alpha * x[i];
-    }
-}
-
-double dot(const double *xs, std::size_t xs_len,
-           const double *ys, std::size_t ys_len) {
-    const std::size_t n = xs_len < ys_len ? xs_len : ys_len;
-    double sum = 0.0;
-    for (std::size_t i = 0; i < n; ++i) {
-        sum += xs[i] * ys[i];
-    }
-    return sum;
-}
-
-} // namespace mathx
+// A free function over two buffers.
+void saxpy(double a, const double *x, double *y, std::size_t n);
 ```
 
 ```go
-//cppgo:function mathx::saxpy
-func Saxpy(alpha float64, x, y []float64)
-
-//cppgo:function mathx::dot
-func Dot(xs, ys []float64) float64
+func (v *Vector) Dot(ys []float64) (float64, error)
+func Saxpy(a float64, x []float64, y []float64) error
 ```
 
-Each Go slice spends **two** C++ parameters, at its own position: pointer, then
-length. That is why `saxpy` takes `x, x_len, y, y_len` and not a single shared
-`n` — the arguments are assigned to `RDI`, `RSI`, `RDX`, `RCX` in declaration
-order, and a `double` takes an XMM slot instead of an integer one
-([register assignment]({{< ref "manual/calling-convention.md" >}}) has the whole
-table).
+Each Go slice becomes **two C++ parameters at its own position**: the pointer,
+then the length. That is why `saxpy` takes `x, x_len` and `y, y_len` — the
+arguments occupy `RDI`, `RSI`, `RDX`, `RCX` in declaration order, and a `double`
+takes an XMM slot instead of an integer one ([register
+assignment]({{< ref "manual/calling-convention.md" >}}) has the whole table).
 
-A C++ signature `saxpy(double, const double *, double *, std::size_t)` with one
-shared `n` does **not** match: it has four parameters, the Go declaration
-describes five, and the generator reports the arity mismatch. Pass the length
-beside each pointer, or take `x []float64, n int64` and let the C++ side carry a
-separate `size_t`.
+The generated wrapper for `Saxpy` does one more thing: it checks that the slices
+that share a length really do, because the C++ side takes one `n` for both:
+
+```go
+if len(x) != len(y) {
+	return fmt.Errorf("cppgo: mathx::saxpy: the slices must have the same length, got %d and %d", len(x), len(y))
+}
+```
+
+A C++ signature with one shared `n` and two pointers is a legitimate API; the
+generated binding is where the invariant is enforced, because the C++ compiler
+cannot see the second slice's Go length.
 
 ## Call it
 
@@ -122,82 +89,78 @@ x := make([]float64, 1<<20)
 y := make([]float64, 1<<20)
 // fill x ...
 
-mathx.Saxpy(2.5, x, y)
-fmt.Println(mathx.Dot(x, y))
+if err := mathx.Saxpy(2.5, x, y); err != nil {
+	log.Fatal(err)
+}
+fmt.Println(y[0], y[1])
 ```
 
 One foreign call each. The C++ loop runs over the whole buffer, and the compiler
-is free to vectorise it.
+is free to vectorise it. Nothing was copied on the way in: C++ reads and writes
+Go's backing array.
 
 ## The rules that come with a borrowed pointer
 
-`Ptr` returns a pointer to the slice's backing array, and `nil` when the slice is
-empty. The generated wrapper passes it with `uintptr(len(s))` and then calls
-`KeepAlive`:
+The wrapper passes `cppgo.Ptr(slice)` and `uint64(len(slice))`, then
+`cppgo.KeepAlive(...)` after the call:
 
-```go
-cppgoRet := cppgo__Z... (cppgoSymSaxpy, alpha, cppgo.Ptr(x), uintptr(len(x)),
-	cppgo.Ptr(y), uintptr(len(y)))
-cppgo.KeepAlive(x, y)
-```
-
-- **The callee must not keep the pointer.** It is only valid for the duration of
-  the call. A C++ function that stores the pointer in a member and reads it later
-  is reading memory Go may have reused.
+- **The callee must not keep the pointer.** It is valid only for the duration of
+  the call. A C++ function that stores it in a member and reads it later is
+  reading memory Go may have reused.
 - **The caller owns the buffer.** C++ writes into it; it does not allocate or
   free it.
-- **An empty slice is `(nil, 0)`.** That is a legal pointer/length pair, and the
-  C++ side must handle `n == 0` without dereferencing. It also means you cannot
-  distinguish an empty slice from a nil slice at the boundary — both are zero.
-- **KeepAlive is not optional in hand-written code.** Generated wrappers emit it;
-  if you write a binding yourself, call `cppgo.KeepAlive(s)` after the
-  trampoline returns.
+- **An empty slice is `(nil, 0)`.** That is a legal pair, and the C++ side must
+  handle `n == 0` without dereferencing. It also means an empty slice and a nil
+  slice are indistinguishable at the boundary.
+- **The wrapper's `KeepAlive` is what keeps the memory reachable** until the call
+  returns. A hand-written binding must do the same.
 
-## Returning a buffer
+## Results that are not one register
 
-A function cannot return a `[]float64`: the C++ side cannot allocate Go memory,
-and the generated wrapper rejects a slice result. The two shapes that work are:
+Two shapes produce a new Go value:
 
-1. **write into a caller buffer** (`saxpy` above), or
-2. **return a pointer and a length through out-parameters**, then copy in Go —
-   which is only worth it when the C++ side already owns the storage.
+- **`std::vector<T>`** is copied out into a fresh slice. The C++ object lives and
+  dies inside the thunk; the Go slice does not alias it:
 
-For a result that Go must own, the first shape is almost always right: allocate
-`make([]float64, n)` and pass it in.
+  ```cpp
+  std::vector<double> window(std::size_t n);
+  ```
 
-## Strings are the same pair
+  ```go
+  func Window(n uint64) ([]float64, error)
+  ```
 
-A Go `string` crosses as `const char *` plus `size_t`, with the same rules:
+  Measured: `Window(4)` returns four values and `Window(0)` returns an empty,
+  non-nil slice (`TestGeneratedPackageBuildsAndRuns`).
 
-```cpp
-std::size_t count_zeros(const char *s, std::size_t n);
-```
+- **`std::string`** is copied in and out the same way:
 
-```go
-//cppgo:function stats::count_zeros
-func CountZeros(s string) int64
-```
+  ```go
+  func Describe(prefix string, value float64) (string, error)
+  ```
 
-The bytes are **not** NUL-terminated. A C++ function that expects a C string
-needs an explicit terminator in a `[]byte` you own, for example
-`append(buf, 0)` and pass the slice.
+The difference matters for the contract: a `[]float64` **parameter** is
+borrowed, so C++ sees Go's memory; a `[]float64` **result** is copied, so Go
+owns the result. A function that must write into storage the caller already owns
+should take a `double *` and a length instead of returning a `std::vector`.
 
 ## Measuring the difference
 
 Do not take the arithmetic above as a benchmark of your workload: it isolates
-the boundary, and the C++ loop's cost depends on what it does per element. Write
-a Go benchmark and run it. The first example assumes the `At` accessor from the
-top of this page, which the `Vector` tutorial deliberately does not bind; the
-second is the shape you want.
+the boundary, and the C++ loop's cost depends on what it does per element. The
+first benchmark below assumes the `At` accessor from the top of this page, which
+the generated `Vector` deliberately does not have; the second binds the loop.
+Write a Go benchmark and run it:
 
 ```go
 func BenchmarkAtLoop(b *testing.B) {
-	v, _ := mathx.New(3, 4)
-	defer v.Destroy()
+	v, _ := mathx.NewVector(3, 4)
+	defer v.Close()
 	for i := 0; i < b.N; i++ {
 		sum := 0.0
 		for j := 0; j < 1024; j++ {
-			sum += v.At(int64(j))
+			n, _ := v.At(uint64(j))
+			sum += n
 		}
 		_ = sum
 	}
@@ -205,23 +168,22 @@ func BenchmarkAtLoop(b *testing.B) {
 
 func BenchmarkDot(b *testing.B) {
 	xs := make([]float64, 1024)
-	ys := make([]float64, 1024)
 	for i := 0; i < b.N; i++ {
-		_ = mathx.Dot(xs, ys)
+		_, _ = mathx.Dot(xs)
 	}
 }
 ```
 
 The gap you see will be the gap between "the compiler can vectorise" and "the
-compiler cannot", and it will be much larger than 13.9 ns per 1024 elements. Run
-it on your machine; the numbers in this site are one frozen CPU, and they are
-there to show the order of magnitude of the crossing, not your throughput.
+compiler cannot", and it will be much larger than one trampoline per kilobyte.
+Run it on your machine; the numbers on this site are one frozen CPU, and they
+show the order of magnitude of the crossing, not your throughput.
 
 ## Concurrency
 
 Two goroutines may pass **different** buffers to the same function at the same
-time: nothing is shared. Two goroutines writing the **same** buffer need the
-same synchronisation they would need in C++, because cppgo adds none.
+time: nothing is shared. Two goroutines writing the **same** buffer need the same
+synchronisation they would need in C++, because cppgo adds none.
 
-Next: [when the generator refuses]({{< ref
-"tutorials/when-generation-refuses.md" >}}).
+Next: [when generation refuses]({{< ref "tutorials/when-generation-refuses.md"
+>}}).

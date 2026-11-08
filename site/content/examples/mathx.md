@@ -1,21 +1,28 @@
 +++
 title = "mathx: a class"
-description = "The direct ABI mode on one small class: out-of-line definitions, C1/D1 constructors, const members, a slice parameter, a static member, and an inline member the generator refuses."
+description = "The v4 generator on one small class: the whole header bound in one run, constructor and Close, const members, a noexcept member that takes the direct carrier, an inline member that used to be refused, and a static member."
 weight = 10
 +++
 
 **Repository path:** [`examples/mathx/`](https://github.com/Manu343726/cppgo/tree/main/examples/mathx)
 
-`mathx` is a two-double `Vector` with a deliberately small surface: exactly the
-constructs the direct ABI mode supports, plus one it does not, left in place so
-the refusal can be reproduced.
+**Audience:** you want to see a complete v4 package beside its C++ header.
 
-```console
-$ cd examples/mathx
-$ make          # build libmathx.so, generate, test, vet
-$ make check    # prove the committed generated files are up to date
-$ make inline-demo   # watch cppgo refuse an inline member
-```
+<div class="callout">
+<span class="callout-title">This package is being regenerated</span>
+<p>
+The <code>examples/</code> directory on <code>main</code> still holds the v3
+package (Go declarations with directives). Issue #4 regenerates it against the
+v4 emitter and updates its <code>Makefile</code>. The report and the generated
+API on this page come from the v4 generator run against the header below, not
+from the committed v3 package.
+</p>
+</div>
+
+`mathx` is a two-double `Vector` with a deliberately small surface: a
+constructor and destructor, `const` accessors, a slice parameter, a mutator, a
+static member, and one member defined inside the class body. That last one is the
+interesting difference from v3: v4 **binds** it, through a thunk.
 
 ## The header
 
@@ -24,6 +31,12 @@ The class, with the file's longer comments trimmed:
 <span class="filename">examples/mathx/include/mathx/vector.hpp</span>
 
 ```cpp
+#pragma once
+
+#include <cstddef>
+
+namespace mathx {
+
 class Vector {
 public:
     Vector(double x, double y);
@@ -39,135 +52,131 @@ public:
 
     static int dims();
 
-    // Defined inside the class definition, therefore implicitly inline: the
-    // library exports no symbol for it and cppgo refuses to bind it.
+    // Defined inside the class definition, therefore implicitly inline.
     double norm_squared() const { return x_ * x_ + y_ * y_; }
 
 private:
     double x_;
     double y_;
 };
+
+} // namespace mathx
 ```
 
-Every member cppgo binds is **declared here and defined out of line** in
-`src/vector.cpp`. That split is the requirement, not a style: a member defined
-inside the class body is implicitly inline, so the compiler emits no dynamic
-symbol and `dlsym` has nothing to find. `norm_squared` is the counter-example.
+Everything except `norm_squared` is declared here and defined out of line in
+`src/vector.cpp`. `norm_squared` has no out-of-line symbol; the generated shim
+includes the header, so the body is compiled into the shim and the call is
+reachable anyway.
 
-The class is 16 bytes and its layout is private. cppgo learns the size from
-libclang, not from Go, and hands the constructor that many bytes to construct
-into.
+## Generate
 
-## The directives
+```console
+$ g++ -std=c++17 -O2 -fPIC -shared -Wl,-soname,libmathx.so \
+      -Iinclude -Iinclude/mathx -o build/libmathx.so src/vector.cpp
+$ cppgo gen -header include/mathx/vector.hpp -package mathx \
+      -library build/libmathx.so -out ./mathx
+mathx::Vector::Vector(const mathx::Vector &) thunk  cppgo_thunk_91550e9d2148     no mangled symbol
+mathx::Vector::Vector(double, double)        thunk  cppgo_thunk_7d8c482bce3e     not noexcept: an exception would unwind into Go
+mathx::Vector::dims()                        thunk  cppgo_thunk_f4eaab93874e     not noexcept: an exception would unwind into Go
+mathx::Vector::dot(const double *, std::size_t) const thunk  cppgo_thunk_9e4411d8977c     not noexcept: an exception would unwind into Go
+mathx::Vector::norm() const                  thunk  cppgo_thunk_49993cda6560     not noexcept: an exception would unwind into Go
+mathx::Vector::norm_squared() const          thunk  cppgo_thunk_e20f0cad04a6     not noexcept: an exception would unwind into Go
+mathx::Vector::scale(double)                 thunk  cppgo_thunk_768b5ea045a0     not noexcept: an exception would unwind into Go
+mathx::Vector::x() const                     thunk  cppgo_thunk_00064a4bc112     not noexcept: an exception would unwind into Go
+mathx::Vector::y() const                     thunk  cppgo_thunk_250797b5199d     not noexcept: an exception would unwind into Go
+mathx::Vector::~Vector()                     thunk  cppgo_thunk_06a8bef46cac     not noexcept: an exception would unwind into Go
+cppgo: built mathx/libcppgo_mathx.so with /usr/bin/g++
+```
 
-<span class="filename">examples/mathx/mathx.go</span>
+Read the reasons. `norm_squared` is a thunk because the library exports no
+symbol for an inline body; `scale` is a thunk because the header does not say
+`noexcept`. A v4 package whose header marked `scale` `noexcept` would report it
+`direct` instead — the carrier follows the declaration.
+
+The copy constructor reports `no mangled symbol` because the example defines no
+copy constructor and the implicitly-declared one is not exported. `Clone` still
+works: the thunk copies the object as C++.
+
+## The generated API
 
 ```go
-//cppgo:library libmathx
-//cppgo:header include/mathx/vector.hpp
-
-//cppgo:class mathx::Vector
-type Vector cppgo.Handle
-
-//cppgo:ctor
-func New(x, y float64) (Vector, error)
-
-//cppgo:dtor
-func (v Vector) Destroy()
-
-//cppgo:method x
-func (v Vector) X() float64
-
-//cppgo:method y
-func (v Vector) Y() float64
-
-//cppgo:method norm
-func (v Vector) Norm() float64
-
-//cppgo:method dot
-func (v Vector) Dot(ys []float64) float64
-
-//cppgo:method scale
-func (v Vector) Scale(k float64)
-
-//cppgo:function mathx::Vector::dims
-func Dims() int32
+func Open(path string) error
+func NewVector(x float64, y float64) (*Vector, error)
+func (v *Vector) Close() error
+func (v *Vector) Clone() (*Vector, error)
+func (v *Vector) Dot(ys []float64) (float64, error)
+func (v *Vector) Norm() (float64, error)
+func (v *Vector) NormSquared() (float64, error)
+func (v *Vector) Scale(k float64) error
+func (v *Vector) X() (float64, error)
+func (v *Vector) Y() (float64, error)
+func VectorDims() (int32, error)
 ```
 
-(`cppgo gen` has already rewritten this file in the repository: each declaration
-above has a one-line body delegating to its wrapper. The directives are what you
-write; the bodies are what the generator adds.)
+Two decisions worth noticing:
 
-Four decisions worth noticing:
-
-- **`Vector` is a defined type over `cppgo.Handle`**, so the receiver *is* the
-  object pointer.
-- **`Dot` takes `[]float64`**, not a pointer and a length: the wrapper expands it
-  to `(pointer, length)` and the C++ side already declares `const double *` plus
-  `std::size_t`.
-- **`X`, `Y`, `Norm` and `Dot` are `const`**, and their symbols carry `K`
-  (`_ZNK5mathx6Vector1xEv`). `Scale` is not, and does not.
-- **`Dims` is a static member**, so it is bound with `//cppgo:function`, not
-  `//cppgo:method`: it has no `this`.
+- **`Dims` is `VectorDims`**, a package function. A static member has no `this`,
+  so it is not a method.
+- **`NormSquared` exists.** In v3 this was the example's counter-example: an
+  inline member the generator refused. In v4 it is an ordinary thunk-carried
+  method, and the package contains no hole where the member used to be.
 
 ## The call site
 
-From [`examples/mathx/mathx_test.go`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/mathx_test.go):
+From the generated package, run end to end:
 
 ```go
-v, err := New(3, 4)
+if err := mathx.Open("./mathx/libcppgo_mathx.so"); err != nil {
+	log.Fatal(err)
+}
+v, err := mathx.NewVector(3, 4)
 if err != nil {
-	t.Fatalf("New(3, 4): %v", err)
+	log.Fatal(err)
 }
-defer v.Destroy()
+defer v.Close()
 
-if got := v.Norm(); got != 5 {
-	t.Errorf("Norm() = %v, want 5", got)
+n, err := v.Norm()          // 5
+d, err := v.Dot([]float64{2, 1}) // 3*2 + 4*1 = 10
+if err := v.Scale(2); err != nil {
+	log.Fatal(err)
 }
-
-// A slice crosses as (pointer, length): 3*2 + 4*1 = 10.
-if got := v.Dot([]float64{2, 1}); got != 10 {
-	t.Errorf("Dot([2 1]) = %v, want 10", got)
-}
-
-v.Scale(2)
-if got := v.X(); got != 6 {
-	t.Errorf("X() after Scale(2) = %v, want 6", got)
-}
+x, err := v.X()             // 6
+sq, err := v.NormSquared()  // 6*6 + 8*8 = 100
 ```
 
-The tests also check the lifetime from the outside: `New` adds one entry to the
-generated storage registry and `Destroy` removes it, which is the only way to see
-the release because the handle is a `uintptr`.
+```console
+$ go run .
+5 <nil>
+10 <nil>
+6 <nil>
+100 <nil>
+```
+
+The full program printed more than the excerpt (it also printed the two
+`error` values and `VectorDims` → `2 <nil>`); the numbers are the ones above.
 
 ## What it teaches
 
-- **The out-of-line rule, with a working counter-example.** `make inline-demo`
-  copies the package to `build/inline-demo/`, appends a binding for
-  `norm_squared`, and asserts that `cppgo gen` fails with a message mentioning
-  *no symbol*. That is the generator behaving as designed, not an example that
-  broke.
-- **Constructor and destructor symbols are `C1`/`D1`**, chosen by libclang, never
-  by a mangled name guessed in Go. The report prints them.
-- **`this` is the first integer argument and a slice is two more** — pointer,
-  then length — not a copy. Which slot each argument takes is in [register
-  assignment]({{< ref "manual/calling-convention.md" >}}).
-- **A static member is not a method.** One directive changes the whole shape of
-  the call.
-- **Objects are independent.** Two `New` calls return two handles and two
-  distinct objects; nothing is shared between them.
+- **The header is the API.** One run bound the constructor, the destructor, the
+  copy constructor, every accessor, the slice method, the mutator, the static
+  member and the inline member. Nothing was declared in Go.
+- **The carrier follows the C++ declaration.** `scale` is not `noexcept` in this
+  header, so it returns an error; that is a fact about the header, not a choice
+  the Go caller makes. Marking it `noexcept` moves it to the direct carrier and
+  removes the error.
+- **An inline body is no longer a refusal.** The shim includes the header, so
+  the body is compiled into the shim and `NormSquared` is reachable.
+- **A static member is a function, not a method.** `VectorDims()`, not
+  `v.Dims()`.
+- **A slice crosses as (pointer, length).** `Dot` takes `[]float64`; the header
+  already declares the `const double *` and the `std::size_t`, and the wrapper
+  pairs them.
 
 ## Numbers
 
-This page quotes no benchmark numbers for the example, because they depend on
-your machine and your compiler. The project-level numbers for the crossing itself
-— with the clock caveat — are on [benchmarks]({{< ref "project/benchmarks.md"
->}}). This example's suite is correctness-only; the `stats` example next door is
-the one with a benchmark harness:
-
-```console
-$ cd examples/mathx
-$ make
-```
+This page quotes no benchmark numbers for the example: they depend on your
+machine and your compiler. The project-level numbers for the crossing itself —
+with the clock caveat — are on [benchmarks]({{< ref "project/benchmarks.md"
+>}}). The `stats` example next door is the one with bulk data and a status code.
 
 Next: [stats]({{< ref "examples/stats.md" >}}).
