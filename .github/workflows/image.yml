@@ -61,9 +61,18 @@ jobs:
       - name: Recipe tag
         # The recipe's content address. Not the commit's sha: that one only exists after
         # the commit is made, which would force a second commit to point `ci.yml` at the
-        # image its own tree produces.
+        # image its own tree produces. `ci.yml`'s `image` job computes the same string from
+        # the same file; the two must stay identical, and each says so.
         id: recipe
-        run: echo "tag=recipe-$(sha256sum Dockerfile | cut -c1-12)" >>"$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          tag="recipe-$(sha256sum Dockerfile | cut -c1-12)"
+          case "${tag}" in
+            recipe-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *) echo "::error::cannot compute the recipe tag from ./Dockerfile (got '${tag}')" >&2; exit 1 ;;
+          esac
+          echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
+          echo "recipe tag: ${tag}"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3

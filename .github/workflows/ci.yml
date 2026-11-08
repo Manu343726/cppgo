@@ -79,8 +79,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -eu
+          set -euo pipefail
+          # The same string `.github/workflows/image.yml` publishes. One recipe, one
+          # address; if the two ever disagree the wait below times out instead of running
+          # the gate in a different environment.
           tag="recipe-$(sha256sum Dockerfile | cut -c1-12)"
+          case "${tag}" in
+            recipe-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *) echo "::error::cannot compute the recipe tag from ./Dockerfile (got '${tag}')" >&2; exit 1 ;;
+          esac
           ref="${IMAGE}:${tag}"
           echo "ref=${ref}" >>"${GITHUB_OUTPUT}"
           echo "the recipe of this tree is ${ref}"
