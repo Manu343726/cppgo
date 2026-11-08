@@ -12,30 +12,27 @@ import (
 	"github.com/Manu343726/cppgo/internal/gen"
 )
 
-// writePackage materialises a small but complete cppgo input package in a
-// fresh directory and returns its path.
-func writePackage(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	src := `// Package mathx is a sample binding package.
-package mathx
-
-//cppgo:library libmathx
-
-// AddI64 adds two integers.
-//
-//cppgo:external add_i64
-func AddI64(a, b int64) int64
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "mathx.go"), []byte(src), 0o644))
-	return dir
-}
+// header is the fixture header, relative to this package's directory.
+var header = filepath.Join("..", "..", "internal", "gen", "testdata", "mathx", "vector.hpp")
 
 // exec runs the CLI and returns its exit code and streams.
 func exec(args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	code := run(args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
+}
+
+// mustExec runs the CLI and requires success.
+func mustExec(t *testing.T, args ...string) (string, string) {
+	t.Helper()
+	code, stdout, stderr := exec(args...)
+	require.Equal(t, exitOK, code, "cppgo %v: %s", args, stderr)
+	return stdout, stderr
+}
+
+// manifest is the minimal command line for the mathx fixture.
+func manifest(out string) []string {
+	return []string{"gen", "-header", header, "-package", "mathx", "-library", "libmathx", "-out", out}
 }
 
 func TestRunNoArguments(t *testing.T) {
@@ -123,54 +120,44 @@ func TestGenHelpFlag(t *testing.T) {
 }
 
 func TestGenWritesFiles(t *testing.T) {
-	dir := writePackage(t)
 	out := t.TempDir()
+	stdout, stderr := mustExec(t, manifest(out)...)
+	assert.Contains(t, stdout, "thunk", "the report names the carriers")
+	// The fixture has no compilation database, so the generator warns that the
+	// flags are an assumption. A warning is not a failure.
+	assert.NotContains(t, stderr, "cppgo gen:")
 
-	code, stdout, stderr := exec("gen", "-dir", dir, "-out", out)
-	require.Equal(t, exitOK, code, stderr)
-	assert.Empty(t, stdout)
-	assert.Empty(t, stderr)
-
-	for _, name := range []string{gen.GenFileName, gen.AsmFileName, gen.ShimFileName, gen.SourceFileName} {
+	for _, name := range []string{gen.GenFileName, gen.AsmFileName, gen.ShimHeaderFileName, gen.ShimSourceFileName} {
 		data, err := os.ReadFile(filepath.Join(out, name))
 		require.NoError(t, err, name)
 		assert.NotEmpty(t, data, name)
 	}
 }
 
-func TestGenInPlace(t *testing.T) {
-	dir := writePackage(t)
-
-	code, _, stderr := exec("gen", "-dir", dir)
-	require.Equal(t, exitOK, code, stderr)
-
-	// The input file is rewritten in place and still holds the directive.
-	data, err := os.ReadFile(filepath.Join(dir, "mathx.go"))
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "//cppgo:external add_i64")
-	assert.Contains(t, string(data), "return cppgoCallAddI64(a, b)")
-	assert.NoFileExists(t, filepath.Join(dir, gen.SourceFileName))
+func TestGenQuiet(t *testing.T) {
+	out := t.TempDir()
+	args := append(manifest(out), "-q")
+	stdout, stderr := mustExec(t, args...)
+	assert.Empty(t, stdout)
+	assert.NotContains(t, stderr, "cppgo gen:")
 }
 
 func TestCheckUpToDate(t *testing.T) {
-	dir := writePackage(t)
 	out := t.TempDir()
-	require.Equal(t, exitOK, mustExec(t, "gen", "-dir", dir, "-out", out))
+	require.Equal(t, exitOK, mustGen(t, manifest(out)...))
 
-	code, stdout, stderr := exec("check", "-dir", dir, "-out", out)
+	code, stdout, stderr := exec("check", "-header", header, "-package", "mathx", "-library", "libmathx", "-out", out)
 	assert.Equal(t, exitOK, code)
 	assert.Contains(t, stdout, "generated files are up to date")
-	assert.Empty(t, stderr)
+	assert.NotContains(t, stderr, "cppgo check:")
 }
 
 func TestCheckStale(t *testing.T) {
-	dir := writePackage(t)
 	out := t.TempDir()
-	require.Equal(t, exitOK, mustExec(t, "gen", "-dir", dir, "-out", out))
-
+	require.Equal(t, exitOK, mustGen(t, manifest(out)...))
 	require.NoError(t, os.WriteFile(filepath.Join(out, gen.GenFileName), []byte("// tampered\n"), 0o644))
 
-	code, stdout, stderr := exec("check", "-dir", dir, "-out", out)
+	code, stdout, stderr := exec("check", "-header", header, "-package", "mathx", "-library", "libmathx", "-out", out)
 	assert.Equal(t, exitError, code)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "out of date")
@@ -178,70 +165,85 @@ func TestCheckStale(t *testing.T) {
 }
 
 func TestCheckMissingFiles(t *testing.T) {
-	dir := writePackage(t)
-	code, _, stderr := exec("check", "-dir", dir, "-out", t.TempDir())
+	code, _, stderr := exec("check", "-header", header, "-package", "mathx", "-library", "libmathx", "-out", t.TempDir())
 	assert.Equal(t, exitError, code)
 	assert.Contains(t, stderr, "out of date")
 }
 
 func TestCheckQuiet(t *testing.T) {
-	dir := writePackage(t)
 	out := t.TempDir()
-	require.Equal(t, exitOK, mustExec(t, "gen", "-dir", dir, "-out", out))
+	require.Equal(t, exitOK, mustGen(t, manifest(out)...))
 
-	code, stdout, stderr := exec("check", "-dir", dir, "-out", out, "-q")
+	code, stdout, stderr := exec("check", "-header", header, "-package", "mathx", "-library", "libmathx", "-out", out, "-q")
 	assert.Equal(t, exitOK, code)
 	assert.Empty(t, stdout)
-	assert.Empty(t, stderr)
+	assert.NotContains(t, stderr, "cppgo check:")
 }
 
 func TestGenCheckFlagEqualsCheckCommand(t *testing.T) {
-	dir := writePackage(t)
 	out := t.TempDir()
-	require.Equal(t, exitOK, mustExec(t, "gen", "-dir", dir, "-out", out))
+	require.Equal(t, exitOK, mustGen(t, manifest(out)...))
 
-	code, stdout, _ := exec("gen", "-dir", dir, "-out", out, "-check")
+	args := append(manifest(out), "-check")
+	code, stdout, _ := exec(args...)
 	assert.Equal(t, exitOK, code)
 	assert.Contains(t, stdout, "up to date")
 }
 
-func TestGenGenerationError(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "bad.go"), []byte("package bad\n\n//cppgo:external x\nfunc X()\n"), 0o644))
-
-	code, stdout, stderr := exec("gen", "-dir", dir)
-	assert.Equal(t, exitError, code)
-	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "cppgo gen:")
-	assert.Contains(t, stderr, "missing //cppgo:library")
+func TestGenManifestErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"missing package", []string{"gen", "-header", header, "-library", "l"}, "not a valid Go package name"},
+		{"missing library", []string{"gen", "-header", header, "-package", "p"}, "-library is required"},
+		{"missing header file", []string{"gen", "-header", "nope.hpp", "-package", "p", "-library", "l"}, "nope.hpp"},
+		{"unmatched bind", []string{"gen", "-header", header, "-package", "p", "-library", "l", "-bind", "mathx::Nope"}, "names nothing"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			code, stdout, stderr := exec(tc.args...)
+			assert.Equal(t, exitError, code)
+			assert.Empty(t, stdout)
+			assert.Contains(t, stderr, tc.want)
+		})
+	}
 }
 
-func TestGenMissingDir(t *testing.T) {
-	code, stdout, stderr := exec("gen", "-dir", filepath.Join(t.TempDir(), "nope"))
-	assert.Equal(t, exitError, code)
-	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "cppgo gen:")
-}
-
-func TestGenPathIsNotADirectory(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "file.go")
-	require.NoError(t, os.WriteFile(file, []byte("package x\n"), 0o644))
-
-	code, stdout, stderr := exec("gen", "-dir", file)
+func TestGenMissingHeader(t *testing.T) {
+	code, stdout, stderr := exec("gen", "-package", "p", "-library", "l")
 	assert.Equal(t, exitUsage, code)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "is not a directory")
+	assert.Contains(t, stderr, "-header is required")
 }
 
-func TestGenEmptyDirFlag(t *testing.T) {
-	code, stdout, stderr := exec("gen", "-dir", "")
+func TestGenEmptyOut(t *testing.T) {
+	code, stdout, stderr := exec("gen", "-header", header, "-package", "p", "-library", "l", "-out", "")
 	assert.Equal(t, exitUsage, code)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "-dir must not be empty")
+	assert.Contains(t, stderr, "-out must not be empty")
+}
+
+func TestGenBindFiltersTheReport(t *testing.T) {
+	out := t.TempDir()
+	stdout, _ := mustExec(t, "gen", "-header", header, "-package", "mathx", "-library", "libmathx", "-out", out, "-bind", "mathx::Vector")
+	assert.Contains(t, stdout, "mathx::Vector::norm")
+	assert.NotContains(t, stdout, "mathx::saxpy")
+}
+
+func TestGenRename(t *testing.T) {
+	out := t.TempDir()
+	mustExec(t, "gen", "-header", header, "-package", "mathx", "-library", "libmathx", "-out", out,
+		"-rename", "mathx::Vector::norm=Norm2")
+	data, err := os.ReadFile(filepath.Join(out, gen.GenFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "func (v *Vector) Norm2() (float64, error)")
 }
 
 func TestGenUnknownFlag(t *testing.T) {
-	code, stdout, stderr := exec("gen", "-bogus")
+	code, stdout, stderr := exec("gen", "-header", header, "-package", "p", "-library", "l", "-bogus")
 	assert.Equal(t, exitUsage, code)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "flag provided but not defined")
@@ -249,7 +251,7 @@ func TestGenUnknownFlag(t *testing.T) {
 }
 
 func TestGenUnexpectedArgument(t *testing.T) {
-	code, stdout, stderr := exec("gen", "extra")
+	code, stdout, stderr := exec("gen", "-header", header, "-package", "p", "-library", "l", "extra")
 	assert.Equal(t, exitUsage, code)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, `unexpected argument "extra"`)
@@ -263,30 +265,23 @@ func TestCheckUnknownFlag(t *testing.T) {
 }
 
 func TestCheckUnexpectedArgument(t *testing.T) {
-	code, _, stderr := exec("check", "extra")
+	code, _, stderr := exec("check", "-header", header, "-package", "p", "-library", "l", "extra")
 	assert.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr, `cppgo check: unexpected argument "extra"`)
 }
 
-func TestCheckMissingDir(t *testing.T) {
-	code, _, stderr := exec("check", "-dir", filepath.Join(t.TempDir(), "nope"))
-	assert.Equal(t, exitError, code)
-	assert.Contains(t, stderr, "cppgo check:")
-}
-
 func TestGenOutputPathUnwritable(t *testing.T) {
-	dir := writePackage(t)
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
 
-	code, stdout, stderr := exec("gen", "-dir", dir, "-out", filepath.Join(blocker, "sub"))
+	code, stdout, stderr := exec("gen", "-header", header, "-package", "mathx", "-library", "libmathx", "-out", filepath.Join(blocker, "sub"))
 	assert.Equal(t, exitError, code)
-	assert.Empty(t, stdout)
+	_ = stdout
 	assert.Contains(t, stderr, "cppgo gen:")
 }
 
-// mustExec runs the CLI and requires success, returning the exit code.
-func mustExec(t *testing.T, args ...string) int {
+// mustGen requires a successful gen and returns its exit code.
+func mustGen(t *testing.T, args ...string) int {
 	t.Helper()
 	code, _, stderr := exec(args...)
 	require.Equal(t, exitOK, code, "cppgo %v: %s", args, stderr)

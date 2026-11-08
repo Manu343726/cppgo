@@ -402,3 +402,54 @@ func anyDisplayNameMatches(names []string, fragments ...string) bool {
 	}
 	return false
 }
+
+// TestParamNames checks that the declared parameter names reach the model: the
+// generator names its Go parameters after them instead of inventing a0, a1.
+func TestParamNames(t *testing.T) {
+	tu := recordFixture(t)
+
+	dot, ok := tu.Lookup("mathx::Vector::dot")
+	require.True(t, ok)
+	require.Len(t, dot.Params, 2)
+	assert.Equal(t, "ys", dot.Params[0].Name)
+	assert.Equal(t, "n", dot.Params[1].Name)
+
+	add, ok := tu.Lookup("mathx::add")
+	require.True(t, ok)
+	require.Len(t, add.Params, 2)
+	assert.Equal(t, "a", add.Params[0].Name)
+	assert.Equal(t, "b", add.Params[1].Name)
+
+	// A member with no parameters has none to name, and the result carries no
+	// name even when the declaration spells one.
+	norm, ok := tu.Lookup("mathx::Vector::norm")
+	require.True(t, ok)
+	assert.Empty(t, norm.Params)
+	assert.Empty(t, norm.Result.Name)
+}
+
+// TestSpecialMemberIdentity checks the copy/move flags the emitter needs to
+// tell Clone() from a New<Type> factory and to leave move constructors out.
+func TestSpecialMemberIdentity(t *testing.T) {
+	tu := recordFixture(t)
+
+	classify := func(name string) (copyCtor, moveCtor bool) {
+		for _, sym := range tu.Lookups(name) {
+			copyCtor = copyCtor || sym.IsCopyConstructor
+			moveCtor = moveCtor || sym.IsMoveConstructor
+		}
+		return copyCtor, moveCtor
+	}
+
+	copyCtor, moveCtor := classify("mathx::SmallCopy::SmallCopy")
+	assert.True(t, copyCtor, "SmallCopy(const SmallCopy &) is a copy constructor")
+	assert.False(t, moveCtor)
+
+	copyCtor, moveCtor = classify("mathx::SmallMove::SmallMove")
+	assert.False(t, copyCtor)
+	assert.True(t, moveCtor, "SmallMove(SmallMove &&) is a move constructor")
+
+	copyCtor, moveCtor = classify("mathx::Vector::Vector")
+	assert.False(t, copyCtor, "the two-argument constructor is a factory")
+	assert.False(t, moveCtor)
+}

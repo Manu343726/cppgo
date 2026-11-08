@@ -1,152 +1,230 @@
 package gen
 
 import (
-	"go/parser"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
-// resolveSrc maps a type expression written as source text.
-func resolveSrc(t *testing.T, src string) (*typeInfo, error) {
-	t.Helper()
-	expr, err := parser.ParseExpr(src)
-	require.NoError(t, err)
-	return resolveType(expr)
+// testMapper is a mapper with the two record shapes the type tests need.
+func testMapper() *mapper {
+	return &mapper{records: map[string]*recordModel{
+		"mathx::Vector": {GoName: "Vector", CxxName: "mathx::Vector"},
+		"mathx::Point":  {GoName: "Point", CxxName: "mathx::Point", Mirrored: true},
+	}}
 }
 
-// TestTypeMatrix pins the whole Go -> C mapping in one place.
-func TestTypeMatrix(t *testing.T) {
+// integerParam builds an integer parameter of the given width.
+func integerParam(size int64, unsigned bool, clang string) cxx.Param {
+	return cxx.Param{Kind: cxx.TypeInteger, Spelling: clang, ClangKind: clang, SizeBytes: size, Unsigned: unsigned}
+}
+
+// pointerParam builds a pointer or reference parameter.
+func pointerParam(pointee cxx.Param, spelling, clang string) cxx.Param {
+	return cxx.Param{Kind: cxx.TypePointer, Spelling: spelling, ClangKind: "Pointer", SizeBytes: 8, Ptr: true, Pointee: &pointee}
+}
+
+// TestMapInteger checks every width and the LP64 guard.
+func TestMapInteger(t *testing.T) {
+	m := testMapper()
 	cases := []struct {
-		goType string
-		kind   kind
-		slot   string
-		size   int
-		cType  string
+		name     string
+		param    cxx.Param
+		want     string
+		wantC    string
+		wantErr  string
+		unsigned bool
 	}{
-		{"int8", kindInt, "int64", 8, "int8_t"},
-		{"int16", kindInt, "int64", 8, "int16_t"},
-		{"int32", kindInt, "int64", 8, "int32_t"},
-		{"rune", kindInt, "int64", 8, "int32_t"},
-		{"int64", kindInt, "int64", 8, "int64_t"},
-		{"int", kindInt, "int64", 8, "int64_t"},
-		{"uint8", kindInt, "uint64", 8, "uint8_t"},
-		{"byte", kindInt, "uint64", 8, "uint8_t"},
-		{"uint16", kindInt, "uint64", 8, "uint16_t"},
-		{"uint32", kindInt, "uint64", 8, "uint32_t"},
-		{"uint64", kindInt, "uint64", 8, "uint64_t"},
-		{"uint", kindInt, "uint64", 8, "uint64_t"},
-		{"uintptr", kindInt, "uintptr", 8, "uint64_t"},
-		{"float32", kindFloat, "float32", 4, "float"},
-		{"float64", kindFloat, "float64", 8, "double"},
-		{"bool", kindBool, "int64", 8, "int32_t"},
-		{"string", kindString, "", 0, "const char*"},
-		{"[]float64", kindSlice, "", 0, "double*"},
-		{"[]byte", kindSlice, "", 0, "uint8_t*"},
-		{"[]int32", kindSlice, "", 0, "int32_t*"},
-		{"*int32", kindPointer, "unsafe.Pointer", 8, "int32_t*"},
-		{"*Point", kindPointer, "unsafe.Pointer", 8, "Point*"},
-		{"cppgo.Handle", kindHandle, "unsafe.Pointer", 8, "void*"},
-		{"error", kindError, "", 0, "int32_t"},
+		{"int8", integerParam(1, false, "SChar"), "int8", "int8_t", "", false},
+		{"uint8", integerParam(1, true, "UChar"), "uint8", "uint8_t", "", true},
+		{"int16", integerParam(2, false, "Short"), "int16", "int16_t", "", false},
+		{"uint16", integerParam(2, true, "UShort"), "uint16", "uint16_t", "", true},
+		{"int32", integerParam(4, false, "Int"), "int32", "int32_t", "", false},
+		{"uint32", integerParam(4, true, "UInt"), "uint32", "uint32_t", "", true},
+		{"int64", integerParam(8, false, "Long"), "int64", "int64_t", "", false},
+		{"uint64", integerParam(8, true, "ULong"), "uint64", "uint64_t", "", true},
+		{"long not lp64", integerParam(4, false, "Long"), "", "", "LP64", false},
+		{"bad width", integerParam(3, false, "Int"), "", "", "no Go value type", false},
+		{"bool", cxx.Param{Kind: cxx.TypeInteger, Spelling: "bool", ClangKind: "Bool", SizeBytes: 1}, "bool", "bool", "", false},
 	}
 	for _, tc := range cases {
-		t.Run(tc.goType, func(t *testing.T) {
-			info, err := resolveSrc(t, tc.goType)
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mapped, err := m.mapType(tc.param)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
 			require.NoError(t, err)
-			assert.Equal(t, tc.kind, info.kind)
-			assert.Equal(t, tc.slot, info.slot)
-			assert.Equal(t, tc.size, info.size)
-			assert.Equal(t, tc.cType, info.cType)
-			assert.Equal(t, tc.size, info.align())
+			assert.Equal(t, tc.want, mapped.Go)
+			assert.Equal(t, tc.wantC, mapped.C)
+			assert.Equal(t, tc.unsigned, mapped.Param.Unsigned && mapped.Kind != goBool)
 		})
 	}
 }
 
-func TestTypeMatrixElements(t *testing.T) {
-	str, err := resolveSrc(t, "string")
-	require.NoError(t, err)
-	assert.Equal(t, "byte", str.elemGo)
-	assert.Equal(t, "char", str.elemC)
-
-	slice, err := resolveSrc(t, "[]float32")
-	require.NoError(t, err)
-	assert.Equal(t, "float32", slice.elemGo)
-	assert.Equal(t, "float", slice.elemC)
-	assert.Equal(t, "[]float32", slice.goType)
-
-	ptr, err := resolveSrc(t, "*Point")
-	require.NoError(t, err)
-	assert.Equal(t, "Point", ptr.elemGo)
-	assert.Equal(t, "Point", ptr.named)
-	assert.Equal(t, "*Point", ptr.goType)
-
-	builtin, err := resolveSrc(t, "*int32")
-	require.NoError(t, err)
-	assert.Empty(t, builtin.named)
-
-	handle, err := resolveSrc(t, "cppgo.Handle")
-	require.NoError(t, err)
-	assert.Equal(t, "cppgo.Handle", handle.goType)
-}
-
-func TestResolveParentheses(t *testing.T) {
-	info, err := resolveSrc(t, "(*int32)")
-	require.NoError(t, err)
-	assert.Equal(t, "int32_t*", info.cType)
-
-	info, err = resolveSrc(t, "(float64)")
-	require.NoError(t, err)
-	assert.Equal(t, kindFloat, info.kind)
-}
-
-func TestResolveTypeErrors(t *testing.T) {
-	cases := map[string]string{
-		"[4]float64":       "only slices ([]T) cross the boundary",
-		"interface{}":      "use cppgo.Handle to pass an opaque C++ object",
-		"any":              "use cppgo.Handle to pass an opaque C++ object",
-		"func()":           "callbacks from C++ into Go are not supported",
-		"map[string]int":   "unsupported type",
-		"chan int":         "unsupported type",
-		"struct{ X int }":  "unsupported type",
-		"[]string":         "only slices of numeric builtin types",
-		"[]*int":           "only slices of numeric builtin types",
-		"[]Point":          "only slices of numeric builtin types",
-		"[][]byte":         "only slices of numeric builtin types",
-		"**int":            "only pointers to builtin or named types",
-		"*[]int":           "only pointers to builtin or named types",
-		"*string":          "a pointer to string has no C representation",
-		"*error":           "a pointer to error has no C representation",
-		"*cppgo.Handle":    "pass cppgo.Handle directly",
-		"*time.Time":       "only pointers to builtin types and to types of the bound package",
-		"complex128":       "unsupported type complex128",
-		"Celsius":          "unsupported type Celsius",
-		"time.Time":        "unsupported type time.Time",
-		"interface{ M() }": "unsupported type",
-		"*(*int)":          "only pointers to builtin or named types",
-		"[]complex64":      "only slices of numeric builtin types",
-		"map[int]int":      "unsupported type",
-		"<-chan *Point":    "unsupported type",
-		"[]interface{}":    "only slices of numeric builtin types",
-		"func(int) bool":   "callbacks from C++ into Go",
-		"[3]byte":          "arrays must be passed as pointers",
-		"[]bool":           "only slices of numeric builtin types",
-		"[]error":          "only slices of numeric builtin types",
-		"*[]byte":          "only pointers to builtin or named types",
+// TestMapFloat checks float, double and the unrepresentable long double.
+func TestMapFloat(t *testing.T) {
+	m := testMapper()
+	cases := []struct {
+		name    string
+		param   cxx.Param
+		want    string
+		wantErr string
+	}{
+		{"float", cxx.Param{Kind: cxx.TypeFloat, Spelling: "float", ClangKind: "Float", SizeBytes: 4, Float: true}, "float32", ""},
+		{"double", cxx.Param{Kind: cxx.TypeFloat, Spelling: "double", ClangKind: "Double", SizeBytes: 8, Float: true}, "float64", ""},
+		{"long double", cxx.Param{Kind: cxx.TypeFloat, Spelling: "long double", ClangKind: "LongDouble", SizeBytes: 16, Float: true}, "", "long double"},
+		{"long double 8", cxx.Param{Kind: cxx.TypeFloat, Spelling: "long double", ClangKind: "LongDouble", SizeBytes: 8, Float: true}, "", "long double"},
+		{"bad float", cxx.Param{Kind: cxx.TypeFloat, Spelling: "half", ClangKind: "Half", SizeBytes: 2, Float: true}, "", "long double"},
 	}
-	for src, want := range cases {
-		t.Run(src, func(t *testing.T) {
-			_, err := resolveSrc(t, src)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), want)
-			assert.Contains(t, err.Error(), "unsupported type")
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mapped, err := m.mapType(tc.param)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, mapped.Go)
 		})
 	}
 }
 
-func TestASCIICoverageIsNotNeededForErrors(t *testing.T) {
-	// The rejection message quotes the supported types back to the user.
-	err := unsupportedType(mustExpr(t, "complex128"))
-	assert.Contains(t, err.Error(), "int8/16/32/64")
-	assert.Contains(t, err.Error(), "cppgo.Handle")
+// TestMapPointer checks scalar pointers, record pointers and the two ways a
+// record pointer is represented.
+func TestMapPointer(t *testing.T) {
+	m := testMapper()
+	double := cxx.Param{Kind: cxx.TypeFloat, Spelling: "double", ClangKind: "Double", SizeBytes: 8, Float: true}
+	cases := []struct {
+		name     string
+		param    cxx.Param
+		wantGo   string
+		wantC    string
+		wantErr  string
+		wantKind goKind
+	}{
+		{
+			name:     "scalar pointer",
+			param:    pointerParam(double, "double *", "Pointer"),
+			wantGo:   "*float64",
+			wantC:    "double *",
+			wantKind: goPointer,
+		},
+		{
+			name: "const scalar pointer",
+			param: func() cxx.Param {
+				constDouble := double
+				constDouble.IsConst = true
+				return pointerParam(constDouble, "const double *", "Pointer")
+			}(),
+			wantGo:   "*float64",
+			wantC:    "const double *",
+			wantKind: goPointer,
+		},
+		{
+			name: "opaque record pointer",
+			param: pointerParam(
+				cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Vector", ClangKind: "Record", SizeBytes: 16, RecordName: "mathx::Vector"},
+				"mathx::Vector *", "Pointer"),
+			wantGo:   "*Vector",
+			wantC:    "void *",
+			wantKind: goPointer,
+		},
+		{
+			name: "mirrored record pointer",
+			param: pointerParam(
+				cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Point", ClangKind: "Record", SizeBytes: 16, RecordName: "mathx::Point"},
+				"mathx::Point *", "Pointer"),
+			wantGo:   "*Point",
+			wantC:    "void *",
+			wantKind: goPointer,
+		},
+		{
+			name:    "void pointer",
+			param:   pointerParam(cxx.Param{Kind: cxx.TypeVoid, Spelling: "void", ClangKind: "Void"}, "void *", "Pointer"),
+			wantErr: "void pointers",
+		},
+		{
+			name:    "pointer libclang did not describe",
+			param:   cxx.Param{Kind: cxx.TypePointer, Spelling: "mystery *", Ptr: true},
+			wantErr: "cannot be mapped",
+		},
+		{
+			name:    "nullptr",
+			param:   cxx.Param{Kind: cxx.TypePointer, Spelling: "std::nullptr_t", ClangKind: "NullPtr", Ptr: true},
+			wantErr: "nullptr_t",
+		},
+		{
+			name: "unknown record",
+			param: pointerParam(
+				cxx.Param{Kind: cxx.TypeRecord, Spelling: "ns::Missing", ClangKind: "Record", RecordName: "ns::Missing"},
+				"ns::Missing *", "Pointer"),
+			wantErr: "not part of the generated API",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mapped, err := m.mapType(tc.param)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantGo, mapped.Go)
+			assert.Equal(t, tc.wantC, mapped.C)
+			assert.Equal(t, tc.wantKind, mapped.Kind)
+		})
+	}
+}
+
+// TestMapRecord checks a mirrored record by value and the two failures.
+func TestMapRecord(t *testing.T) {
+	m := testMapper()
+	point := cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Point", ClangKind: "Record", SizeBytes: 16, RecordName: "mathx::Point"}
+	mapped, err := m.mapType(point)
+	require.NoError(t, err)
+	assert.Equal(t, goRecord, mapped.Kind)
+	assert.Equal(t, "Point", mapped.Go)
+
+	vector := cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Vector", ClangKind: "Record", SizeBytes: 16, RecordName: "mathx::Vector"}
+	_, err = m.mapType(vector)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "opaque record by value")
+
+	_, err = m.mapType(cxx.Param{Kind: cxx.TypeRecord, Spelling: "ns::Unknown", ClangKind: "Record", RecordName: "ns::Unknown"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not part of the generated API")
+}
+
+// TestMapUnsupported covers the kinds phase 2b owns, which must name themselves.
+func TestMapUnsupported(t *testing.T) {
+	m := testMapper()
+	cases := map[string]cxx.Param{
+		"enum values":  {Kind: cxx.TypeEnum, Spelling: "mathx::Axis", ClangKind: "Enum"},
+		"array values": {Kind: cxx.TypeArray, Spelling: "int[4]", ClangKind: "ConstantArray"},
+		"this type":    {Kind: cxx.TypeOther, Spelling: "__int128", ClangKind: "Int128"},
+		"void":         {Kind: cxx.TypeVoid, Spelling: "void", ClangKind: "Void"},
+	}
+	for want, param := range cases {
+		mapped, err := m.mapType(param)
+		if want == "void" {
+			require.NoError(t, err)
+			assert.Equal(t, goVoid, mapped.Kind)
+			continue
+		}
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), want)
+	}
 }

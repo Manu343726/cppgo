@@ -1,8 +1,6 @@
 package gen
 
 import (
-	"go/ast"
-	"go/parser"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,49 +8,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// banner is the generated-file marker as it appears in a written file.
-const banner = GeneratedBanner + "\n\n"
-
-// writePkg materialises a package directory from a name -> contents map.
-func writePkg(t *testing.T, files map[string]string) string {
-	t.Helper()
-	dir := t.TempDir()
-	for name, body := range files {
-		path := filepath.Join(dir, name)
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+// mathxConfig is the canonical fixture run: the header is named relative to the
+// package directory so the generated invocation comment and the shim include
+// are stable.
+func mathxConfig() Config {
+	return Config{
+		Headers: []string{"testdata/mathx/vector.hpp"},
+		Package: "mathx",
+		Library: "libmathx",
+		Out:     ".",
 	}
-	return dir
 }
 
-// mustParse parses a directory that is expected to be valid.
-func mustParse(t *testing.T, dir string) *packageInfo {
-	t.Helper()
-	pkg, err := parsePackage(dir)
-	require.NoError(t, err)
-	return pkg
+// fixtureConfig is a run over another fixture directory.
+func fixtureConfig(dir, header string) Config {
+	return Config{
+		Headers: []string{filepath.Join("testdata", dir, header)},
+		Package: dir,
+		Library: "lib" + dir,
+		Out:     ".",
+	}
 }
 
-// testFunc parses a single //cppgo:external declaration and returns its model.
-func testFunc(t *testing.T, decl string) *Func {
-	t.Helper()
-	dir := writePkg(t, map[string]string{
-		"x.go": "package x\n\n//cppgo:library libx\n\n//cppgo:external sym\n" + decl + "\n",
-	})
-	pkg := mustParse(t, dir)
-	require.Len(t, pkg.Funcs, 1)
-	return pkg.Funcs[0]
-}
-
-// testSig parses a declaration and computes its calling convention.
-func testSig(t *testing.T, decl string) *signature {
-	t.Helper()
-	sig, err := buildSignature(testFunc(t, decl))
-	require.NoError(t, err)
-	return sig
-}
-
-// renderMap runs the generator and returns its files by name.
+// renderMap renders a configuration and returns its files by name.
 func renderMap(t *testing.T, cfg Config) map[string]string {
 	t.Helper()
 	outs, err := Render(cfg)
@@ -64,16 +42,34 @@ func renderMap(t *testing.T, cfg Config) map[string]string {
 	return m
 }
 
-// mustExpr parses a type expression.
-func mustExpr(t *testing.T, src string) ast.Expr {
+// findBinding returns the binding with the given Go name.
+func findBinding(t *testing.T, m *packageModel, name string) *binding {
 	t.Helper()
-	expr, err := parser.ParseExpr(src)
-	require.NoError(t, err)
-	return expr
+	for _, binding := range m.bindings {
+		if binding.GoName == name {
+			return binding
+		}
+	}
+	require.FailNowf(t, "binding not found", "%s is not in the model", name)
+	return nil
 }
 
-// readFileString reads a file as a string.
-func readFileString(dir, name string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(dir, name))
-	return string(data), err
+// findRecord returns the record with the given Go name.
+func findRecord(t *testing.T, m *packageModel, name string) *recordModel {
+	t.Helper()
+	for _, record := range m.records {
+		if record.GoName == name {
+			return record
+		}
+	}
+	require.FailNowf(t, "record not found", "%s is not in the model", name)
+	return nil
+}
+
+// readFileString reads a golden file.
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(data)
 }

@@ -1,221 +1,192 @@
 package gen
 
 import (
+	"go/parser"
+	"go/token"
+	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// validPkg is a minimal package the generator accepts.
-const validPkg = `package x
-
-//cppgo:library libx
-
-// F does nothing in particular.
-//
-//cppgo:external f
-func F(v int32) int32
-`
-
-func TestGenerateWritesAndCheckAccepts(t *testing.T) {
-	dir := writePkg(t, map[string]string{"x.go": validPkg})
-	out := filepath.Join(t.TempDir(), "nested", "out")
-
-	require.NoError(t, Generate(Config{Dir: dir, Out: out}))
-
-	// A nested output directory is created on demand.
-	for _, name := range []string{GenFileName, AsmFileName, ShimFileName, SourceFileName} {
-		assert.FileExists(t, filepath.Join(out, name))
-	}
-	assert.NoError(t, Generate(Config{Dir: dir, Out: out, Check: true}))
-}
-
-func TestGenerateIsIdempotent(t *testing.T) {
-	dir := writePkg(t, map[string]string{"x.go": validPkg})
-	out := t.TempDir()
-
-	require.NoError(t, Generate(Config{Dir: dir, Out: out}))
-	first := readDir(t, out)
-
-	require.NoError(t, Generate(Config{Dir: dir, Out: out}))
-	second := readDir(t, out)
-
-	assert.Equal(t, first, second, "a second run must produce identical bytes")
-	assert.NoError(t, Generate(Config{Dir: dir, Out: out, Check: true}))
-}
-
-func TestCheckReportsStaleFiles(t *testing.T) {
-	dir := writePkg(t, map[string]string{"x.go": validPkg})
-	out := t.TempDir()
-	require.NoError(t, Generate(Config{Dir: dir, Out: out}))
-
-	require.NoError(t, os.WriteFile(filepath.Join(out, GenFileName), []byte("stale\n"), 0o644))
-	require.NoError(t, os.Remove(filepath.Join(out, AsmFileName)))
-
-	err := Generate(Config{Dir: dir, Out: out, Check: true})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "out of date")
-	assert.Contains(t, err.Error(), GenFileName)
-	assert.Contains(t, err.Error(), AsmFileName)
-	assert.NotContains(t, err.Error(), ShimFileName)
-}
-
-func TestCheckOnEmptyOutputDirectory(t *testing.T) {
-	dir := writePkg(t, map[string]string{"x.go": validPkg})
-	err := Generate(Config{Dir: dir, Out: t.TempDir(), Check: true})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "out of date")
-}
-
-func TestRenderSortsOutputs(t *testing.T) {
-	dir := writePkg(t, map[string]string{"x.go": validPkg})
-	outs, err := Render(Config{Dir: dir, Out: t.TempDir()})
+// TestRenderOutputs checks the four files a run produces, their names, and that
+// the Go file is legal Go with the generated banner and invocation.
+func TestRenderOutputs(t *testing.T) {
+	outs, err := Render(mathxConfig())
 	require.NoError(t, err)
 	require.Len(t, outs, 4)
-	var names []string
-	for _, o := range outs {
-		names = append(names, o.Name)
+
+	byName := map[string][]byte{}
+	for _, out := range outs {
+		byName[out.Name] = out.Data
 	}
-	assert.True(t, sort.StringsAreSorted(names), names)
+	for _, name := range []string{GenFileName, AsmFileName, ShimHeaderFileName, ShimSourceFileName} {
+		assert.Contains(t, byName, name)
+	}
+
+	gen := string(byName[GenFileName])
+	assert.Contains(t, gen, GeneratedBanner)
+	assert.Contains(t, gen, "cppgo gen -header testdata/mathx/vector.hpp -package mathx -library libmathx -out .")
+	assert.Contains(t, gen, "package mathx")
+	_, err = parser.ParseFile(token.NewFileSet(), GenFileName, gen, parser.ParseComments)
+	require.NoError(t, err, "the generated file must be legal Go")
+
+	assert.Contains(t, string(byName[AsmFileName]), "#include \"textflag.h\"")
+	assert.Contains(t, string(byName[ShimHeaderFileName]), "#ifndef CPPGO_MATHX_SHIM_H")
+	assert.Contains(t, string(byName[ShimSourceFileName]), "cppgo_last_error")
 }
 
-func TestRenderDefaults(t *testing.T) {
-	dir := writePkg(t, map[string]string{"x.go": validPkg})
-	t.Chdir(dir)
-
-	// Empty Dir means "." and an empty Out means "in place".
-	require.NoError(t, Generate(Config{}))
-	assert.FileExists(t, filepath.Join(dir, GenFileName))
-	assert.NoFileExists(t, filepath.Join(dir, SourceFileName))
-
-	data, err := os.ReadFile(filepath.Join(dir, "x.go"))
+// TestRenderIsDeterministic checks that two runs produce byte-identical output,
+// which is what makes `cppgo check` a usable gate.
+func TestRenderIsDeterministic(t *testing.T) {
+	first, err := Render(mathxConfig())
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "return cppgoCallF(v)")
-
-	// Check mode has the same defaults.
-	assert.NoError(t, Generate(Config{Check: true}))
+	second, err := Render(mathxConfig())
+	require.NoError(t, err)
+	require.Equal(t, len(first), len(second))
+	for i := range first {
+		assert.Equal(t, first[i].Name, second[i].Name)
+		assert.Equal(t, string(first[i].Data), string(second[i].Data), first[i].Name)
+	}
 }
 
-func TestRenderMultipleSourceFiles(t *testing.T) {
-	dir := writePkg(t, map[string]string{
-		"a.go": "package x\n\n//cppgo:library libx\n\n//cppgo:external a\nfunc A()\n",
-		"b.go": "package x\n\n//cppgo:external b\nfunc B()\n",
-	})
-	outs := renderMap(t, Config{Dir: dir, Out: t.TempDir()})
-	assert.Contains(t, outs, SourceFileName)
-	assert.Contains(t, outs, "zz_cppgo_stub_b.go")
-	assert.Contains(t, outs["zz_cppgo_stub_b.go"], "func B() { cppgoCallB() }")
+// TestGenerateWritesAndCheckAccepts runs the write path and then the check path.
+func TestGenerateWritesAndCheckAccepts(t *testing.T) {
+	dir := t.TempDir()
+	cfg := mathxConfig()
+	cfg.Out = dir
+	cfg.Report = io.Discard
+	require.NoError(t, Generate(cfg))
+	for _, name := range []string{GenFileName, AsmFileName, ShimHeaderFileName, ShimSourceFileName} {
+		_, err := os.Stat(filepath.Join(dir, name))
+		require.NoError(t, err, name)
+	}
+	check := cfg
+	check.Check = true
+	require.NoError(t, Generate(check))
 }
 
-func TestRenderReportsSignatureErrorsWithPosition(t *testing.T) {
-	dir := writePkg(t, map[string]string{
-		"x.go": "package x\n\n//cppgo:library libx\n\n//cppgo:external f\nfunc F() []byte\n",
-	})
-	_, err := Render(Config{Dir: dir, Out: t.TempDir()})
+// TestCheckReportsStaleFiles checks that a modified generated file is reported
+// by name, and a missing one too.
+func TestCheckReportsStaleFiles(t *testing.T) {
+	dir := t.TempDir()
+	cfg := mathxConfig()
+	cfg.Out = dir
+	require.NoError(t, Generate(cfg))
+
+	path := filepath.Join(dir, GenFileName)
+	require.NoError(t, os.WriteFile(path, []byte("// stale\n"), 0o644))
+	check := cfg
+	check.Check = true
+	err := Generate(check)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "x.go:")
-	assert.Contains(t, err.Error(), "unsupported result type []byte")
+	assert.Contains(t, err.Error(), GenFileName)
+
+	require.NoError(t, os.Remove(filepath.Join(dir, ShimHeaderFileName)))
+	err = Generate(check)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ShimHeaderFileName)
 }
 
-func TestRenderErrors(t *testing.T) {
-	_, err := Render(Config{Dir: filepath.Join(t.TempDir(), "missing"), Out: t.TempDir()})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "reading package directory")
-
-	_, err = Render(Config{Dir: writePkg(t, map[string]string{"x.go": "package x\n"}), Out: t.TempDir()})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing //cppgo:library")
-}
-
+// TestGenerateWriteErrors covers the two filesystem failures the writer can
+// report: an output path that is a file, and a generated name that exists as a
+// directory.
 func TestGenerateWriteErrors(t *testing.T) {
-	dir := writePkg(t, map[string]string{"x.go": validPkg})
+	dir := t.TempDir()
+	file := filepath.Join(dir, "not-a-dir")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
 
-	t.Run("output path is a file", func(t *testing.T) {
-		blocker := filepath.Join(t.TempDir(), "file")
-		require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
-		err := Generate(Config{Dir: dir, Out: filepath.Join(blocker, "sub")})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "creating output directory")
-	})
-
-	t.Run("output directory is read only", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("root ignores directory permissions")
-		}
-		out := t.TempDir()
-		require.NoError(t, os.Chmod(out, 0o500))
-		t.Cleanup(func() { _ = os.Chmod(out, 0o755) })
-		err := Generate(Config{Dir: dir, Out: out})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "writing")
-	})
-}
-
-func TestEmitSourceFormattingErrors(t *testing.T) {
-	// The formatter is the last line of defence: an input that prints to
-	// unparseable source must be reported, not written.
-	_, err := gofmtSource("package x\n\nfunc (\n")
+	cfg := mathxConfig()
+	cfg.Out = filepath.Join(file, "out")
+	err := Generate(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "formatting generated Go source")
+	assert.Contains(t, err.Error(), "creating output directory")
+
+	out := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(out, GenFileName), 0o755))
+	cfg.Out = out
+	err = Generate(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), GenFileName)
 }
 
-func TestStripBannerText(t *testing.T) {
-	in := GeneratedBanner + "\n\npackage x\n"
-	assert.Equal(t, "package x\n", string(stripBannerText([]byte(in))))
-
-	// A banner without the blank line after it.
-	assert.Equal(t, "package x\n", string(stripBannerText([]byte(GeneratedBanner+"\npackage x\n"))))
-
-	// Nothing to strip.
-	src := []byte("// Package x does things.\npackage x\n")
-	assert.Equal(t, src, stripBannerText(src))
-	assert.Equal(t, []byte("package x"), stripBannerText([]byte("package x")))
-}
-
-func TestImportIdent(t *testing.T) {
-	cases := map[string]string{
-		`"fmt"`:                        "fmt",
-		`"strings"`:                    "strings",
-		`"gopkg.in/yaml.v3"`:           "yaml",
-		`"github.com/x/go-spew"`:       "spew",
-		`"github.com/x/json-go"`:       "json",
-		`"github.com/russross/b/x/v2"`: "",
-		`"gopkg.in/check.v1"`:          "check",
-		`"github.com/x/weird-name"`:    "",
-		`"not a path literal`:          "",
+// TestRenderErrors covers the manifest validation the generator refuses before
+// it parses anything.
+func TestRenderErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{"no header", Config{Package: "p", Library: "l"}, "-header is required"},
+		{"bad package", Config{Headers: []string{"testdata/mathx/vector.hpp"}, Package: "9bad", Library: "l"}, "not a valid Go package name"},
+		{"no library", Config{Headers: []string{"testdata/mathx/vector.hpp"}, Package: "p"}, "-library is required"},
+		{"missing header", Config{Headers: []string{"testdata/nope.hpp"}, Package: "p", Library: "l"}, "nope.hpp"},
 	}
-	for in, want := range cases {
-		assert.Equal(t, want, importIdent(in), in)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Render(tc.cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
 	}
 }
 
-func TestIsHelpers(t *testing.T) {
-	assert.True(t, isVersionSuffix("v3"))
-	assert.True(t, isVersionSuffix("V10"))
-	assert.False(t, isVersionSuffix("v"))
-	assert.False(t, isVersionSuffix("vx"))
-	assert.False(t, isVersionSuffix("3"))
-	assert.True(t, isGoIdent("_x9"))
-	assert.False(t, isGoIdent("9x"))
-	assert.False(t, isGoIdent(""))
-	assert.False(t, isGoIdent("a-b"))
-	assert.False(t, isGoIdent("a.b"))
-}
-
-// readDir returns every file in dir with its contents.
-func readDir(t *testing.T, dir string) map[string]string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
+// TestRenderMultipleHeaders parses the same header twice and still emits one
+// declaration of each binding.
+func TestRenderMultipleHeaders(t *testing.T) {
+	cfg := mathxConfig()
+	cfg.Headers = []string{"testdata/mathx/vector.hpp", "testdata/mathx/vector.hpp"}
+	result, err := RenderResult(cfg)
 	require.NoError(t, err)
-	out := make(map[string]string, len(entries))
-	for _, e := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		require.NoError(t, err)
-		out[e.Name()] = string(data)
+	require.NotEmpty(t, result.Outputs)
+	assert.Len(t, result.Report, 9)
+}
+
+// TestInvocationRendersEveryFlag checks the regeneration command in the
+// generated header names every manifest entry that shaped the package.
+func TestInvocationRendersEveryFlag(t *testing.T) {
+	cfg := Config{
+		Headers:         []string{"a.hpp", "b.hpp"},
+		Package:         "p",
+		Library:         "libp",
+		Out:             "out",
+		CompileCommands: "build/compile_commands.json",
+		Bind:            []string{"ns::A"},
+		Exclude:         []string{"ns::B"},
+		Rename:          []string{"ns::C::m=Met"},
 	}
-	return out
+	invocation := cfg.invocation()
+	for _, want := range []string{
+		"-header a.hpp", "-header b.hpp", "-package p", "-library libp", "-out out",
+		"-compile-commands build/compile_commands.json", "-bind ns::A", "-exclude ns::B",
+		"-rename ns::C::m=Met",
+	} {
+		assert.Contains(t, invocation, want)
+	}
+}
+
+// TestReportAndWarnings checks the per-binding report and the assumed-flags
+// warning. The fixture has no compilation database, so the flags are the
+// documented fallback and the generator must say so.
+func TestReportAndWarnings(t *testing.T) {
+	result, err := RenderResult(mathxConfig())
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Report)
+	assert.Len(t, result.Report, 9)
+	var hasDirect, hasThunk bool
+	for _, line := range result.Report {
+		hasDirect = hasDirect || strings.Contains(line, " direct ")
+		hasThunk = hasThunk || strings.Contains(line, " thunk ")
+	}
+	assert.True(t, hasDirect, "the report must name the direct carrier")
+	assert.True(t, hasThunk, "the report must name the thunk carrier")
+	require.NotEmpty(t, result.Warnings)
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "assumption")
 }
