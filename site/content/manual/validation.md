@@ -74,9 +74,10 @@ exported can still be direct.
 
 ## What this build refuses
 
-Each of these is a generation error that writes no output. The message names the
-file, the line, the declaration, what is wrong, and what to do, the shape is
-`cppgo: <file>:<line>: <declaration>: <what is wrong>; <fix>`.
+These are generation errors that write no output. The message names the file,
+the line, the declaration, what is wrong, and what to do, the shape is
+`cppgo: <file>:<line>: <declaration>: <what is wrong>; <fix>`. One case behaves
+differently, and it is stated after the table.
 
 | input | message (short form) | what to do |
 |---|---|---|
@@ -91,11 +92,16 @@ file, the line, the declaration, what is wrong, and what to do, the shape is
 | a **variadic** function | *a variadic function has no fixed argument list to lay out; replace the ellipsis with a fixed parameter list or a span* | take a slice or a fixed list |
 | `long double` / `__int128` | the parameter or result, and the fix | widen or narrow at the boundary |
 | a callback with more than six integer or eight floating-point arguments | the sixth argument | take a pointer to a struct |
-| a macro that is the whole API | the macro, which libclang cannot see as a declaration | write a function |
 | `-bind` / `-exclude` that names nothing | *it names nothing this header declares* | fix the name |
 | `-instantiate` that names no visible instantiation | *it names no instantiation this header declares; add an explicit instantiation such as `template struct ...;` to the header* | make it visible |
 | `-rename` that matches nothing, or several declarations | both declarations | name the full signature |
 | `-status` on a non-32-bit, non-integer return | the type it found | name a function that returns `int32_t` |
+
+A **function-like macro that is the whole API** is not a generation error
+today. libclang sees the macro's expansion, not its declaration, so nothing is
+bound. `cppgo gen` exits 0, writes a package whose only exported function is
+`Open`, and builds the shim. No warning names the macro. The fix is a function.
+The owner is the v4 emitter, which should report the unbound macro.
 
 The current refusal set is deliberately broad. It is checked **before**
 selection. A header that declares any enum anywhere fails even if you did not bind it. That is a limitation of this phase, not a policy. The constructs are

@@ -39,8 +39,9 @@ directive to write.
 
 ## What the emitter does not bind yet
 
-Each is a generation error that writes no files. The message names the file, the
-line, the declaration, what is wrong and what to supply. The exact texts:
+Most of these are generation errors that write no files. The message names the
+file, the line, the declaration, what is wrong and what to supply. Two cases
+behave differently, and they are stated after the table.
 
 | input | message | owner |
 |---|---|---|
@@ -53,12 +54,17 @@ line, the declaration, what is wrong and what to supply. The exact texts:
 | a nested type | *a type nested inside a record is not emitted by this build yet; move the nested type to namespace scope, or bind the outer type through a C++ wrapper* | the v4 emitter, epic #1 |
 | a variadic function | *a variadic function has no fixed argument list to lay out; replace the ellipsis with a fixed parameter list or a span* | the v4 emitter, epic #1 |
 | a class template with no `-instantiate` entry | *a class template is not a type until it is instantiated; name a concrete instantiation with `-instantiate 'Cell<...>'`* | input the user supplies |
-| `long double` or `__int128` in a signature | *no Go value type* | a wrapper with a representable type |
-| a function-like macro that is the whole API | *the macro, which libclang cannot see as a declaration* | a function |
-| a template instantiation nobody asked for at load time | a load-time error naming the exact `template …;` line to add | the Go program's instantiation list |
+| `long double` or `__int128` in a signature | *cppgo: long double: long double and __int128 have no Go value type; widen or narrow it at the C++ boundary to double or int64, or wrap it in a representable type* | a wrapper with a representable type |
 
-One consequence surprises people. The refusal is checked before selection, so a
-header that declares any enum anywhere fails even when you did not bind it.
+A **function-like macro that is the whole API** emits no error today.
+libclang sees the macro's expansion and never its declaration. The package binds nothing.
+`cppgo gen` exits 0, writes a package whose only exported function is `Open`,
+and builds the shim. The fix is a function, which every large library provides.
+The owner is the v4 emitter, which should report the unbound macro.
+
+A **template instantiation that nobody asked for** is a load-time error in the designed two-phase flow. See the next section.
+
+One consequence surprises people. The refusal is checked before selection. A header that declares any enum anywhere fails even when you did not bind it.
 Splitting the header is the current workaround. The full refusal table, with
 the parameter that triggers each one, is in
 [validation]({{< ref "manual/validation.md" >}}).
@@ -68,12 +74,14 @@ the parameter that triggers each one, is in
 - **the full error projection** — `std::error_code`, `std::expected`,
   `std::optional`, `errno`, status ints, `bool` + out-parameters and custom
   result types. The mechanism and its configuration are implemented and
-  measured in `internal/errormap`. `cppgo gen` does not read it yet
+  measured in `internal/errormap`. `cppgo gen` has yet to read it
   ([#19](https://git.manu343726.com/manu343726/cppgo/issues/19)). Today the
   generator emits exceptions and `-status`.
 - **the generic Go API for templates (4b-1)** — concrete specialisations work
   through `-instantiate`. `Matrix[float64,4,4]` and the automatic collection of
-  the instantiations a Go program uses are the next phase, under epic #1.
+  the instantiations a Go program uses are the next phase, under epic #1. In
+  that flow a Go instantiation with no C++ counterpart is a load-time error
+  naming the exact `template …;` line to add. Instantiation collection is still 4b-1 work, so that error waits for it.
 - **the target libraries** — Eigen, OpenCV and ArrayFire, as generated packages
   tested against the real headers and the real shared object
   ([#15](https://git.manu343726.com/manu343726/cppgo/issues/15)).
@@ -81,7 +89,7 @@ the parameter that triggers each one, is in
   with no end-to-end fixture yet.
 - **`std::optional` as a parameter or result, and `std::unique_ptr`** — mapped,
   with no end-to-end fixture yet.
-- **`std::shared_ptr`** — mapped, not supported yet.
+- **`std::shared_ptr`** — mapped, with no support yet.
 - **embedding wired into `Open`** — `cppgo.OpenFS` ships in the runtime. A
   generated package's `Open` takes a path today
   ([#20](https://git.manu343726.com/manu343726/cppgo/issues/20)).
@@ -118,7 +126,7 @@ the parameter that triggers each one, is in
 - **No hand-written bindings.** The header and the flags are the input.
 - **Symbols are resolved at run time.** The same binary can load a different
   build of the library.
-- **The library is not modified.** No generated file goes into your build.
+- **The library stays untouched.** No generated file goes into your build.
 
 ## Roadmap
 

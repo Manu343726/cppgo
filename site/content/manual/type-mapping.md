@@ -98,7 +98,7 @@ type Point struct {
 Everything else is an **opaque value type**: a Go struct with unexported
 storage, `Close()` from the destructor, `Clone()` from the copy constructor when
 one exists, and generated accessors for every public field. A class with private
-members is opaque. That is the normal case, not a failure.
+members is opaque. That is the normal case.
 
 ## Callbacks
 
@@ -114,7 +114,7 @@ std::int32_t apply(const std::function<std::int32_t(std::int32_t)> &fn,
 func (s *Signal) Apply(fn func(int32) int32, value int32) (int32, error)
 ```
 
-The limits are the ABI's, not a policy. At most six integer and eight
+The limits come from the ABI. At most six integer and eight
 floating-point arguments, and one register result. A callback that takes a
 stack-passed argument is a generation error naming the sixth argument.
 
@@ -127,10 +127,13 @@ fix:
   templates, operators and conversion operators, variadic functions, constructs
   the emitter does not emit yet.
 - a **class template** with no `-instantiate` entry.
-- a macro that is the whole API.
 - `long double` / `__int128`.
 - an incomplete type used where a value is needed.
 - a callback taking more than six integer or eight floating-point arguments.
+
+A **function-like macro that is the whole API** behaves differently. libclang sees the macro's expansion and never its declaration. The package has no bindings. `cppgo
+gen` exits 0 with a package whose only exported function is `Open`, and builds
+the shim. The fix is a function.
 
 The full list, with the exact messages, is in
 [validation]({{< ref "manual/validation.md" >}}).

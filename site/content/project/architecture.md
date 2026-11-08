@@ -142,7 +142,7 @@ The mechanism lives in the shim, because the shim is C++ and can catch. Today:
 - `-status` reads a 32-bit integer return as success or failure instead.
 
 `std::error_code`, `std::expected`, `std::optional`, `errno` and the `bool` plus
-out-parameter convention are specified in [`DESIGN.md`](DESIGN.md) and tracked as
+out-parameter convention are specified in [`DESIGN.md`](https://github.com/Manu343726/cppgo/blob/main/DESIGN.md) and tracked as
 [#19](https://git.manu343726.com/manu343726/cppgo/issues/19). The projection and
 its configuration are measured in `internal/errormap`. The generator has not
 emitted them yet. [Error handling]({{< ref "manual/errors.md" >}}) has the table,
