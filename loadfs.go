@@ -16,14 +16,14 @@ import (
 )
 
 // LibraryPathEnv is the environment variable that overrides OpenFS with an
-// explicit library path. When it is non-empty OpenFS skips extraction and
-// loads that path instead. That is how a development build points the same
-// program at a library the C++ build left in place:
+// explicit library path. When it is non-empty, OpenFS extracts nothing and loads
+// that path instead, which is how a development build points the same program at
+// the library the C++ build left in place:
 //
 //	CPPGO_LIBRARY_PATH=/path/to/libmathx.so ./my-program
 //
-// The override names the object to load. That object still resolves its own
-// dependencies through the dynamic loader's search path.
+// The override names the object to load. Its own dependencies still resolve
+// through the dynamic loader's search path.
 const LibraryPathEnv = "CPPGO_LIBRARY_PATH"
 
 const (
@@ -44,8 +44,8 @@ const (
 
 	// tempPattern is the prefix os.CreateTemp fills in for the file that is
 	// about to be renamed into place. CreateTemp creates it with O_EXCL and
-	// 0600 inside the private cache directory, so the name is randomized and
-	// can never be a world-writable path somebody prepared in advance.
+	// 0600 inside the private cache directory, so the name is random and can
+	// never be a world-writable path somebody prepared in advance.
 	tempPattern = ".cppgo-extract-*"
 )
 
@@ -54,11 +54,9 @@ const (
 var errFileChanged = errors.New("file changed while it was being extracted")
 
 // CacheDir returns the directory below which OpenFS extracts embedded shared
-// objects. That is os.UserCacheDir()/cppgo, and one subdirectory per embedded
-// set lives there, named after the set's SHA-256.
+// objects: os.UserCacheDir()/cppgo, holding one subdirectory per embedded set.
 //
-// The path is a location. OpenFS creates the directory on first use. It is a
-// function because os.UserCacheDir reads the environment.
+// Nothing is created here; OpenFS creates the directory on first use.
 func CacheDir() (string, error) {
 	base, err := os.UserCacheDir()
 	if err != nil {
@@ -70,12 +68,10 @@ func CacheDir() (string, error) {
 
 // CleanCache removes every library OpenFS has extracted for the current user.
 //
-// It is the cache-clear helper a program runs to reclaim disk or to start from
-// a known state. A later OpenFS extracts again from whatever it is given.
-// Removing the cache while another goroutine or process is loading from it is
-// unsynchronized. An object already mapped stays mapped, and a process that
-// extracts again recreates the entry. A program calls it when it is the only
-// user of the cache, normally at startup or shutdown.
+// A later OpenFS extracts again from whatever it is given. Nothing is
+// synchronized with a concurrent loader: an object that is already mapped stays
+// mapped, and a process that extracts again recreates the entry. Call it when
+// this program is the cache's only user, normally at startup or shutdown.
 func CleanCache() error {
 	dir, err := CacheDir()
 	if err != nil {
@@ -89,51 +85,39 @@ func CleanCache() error {
 	return nil
 }
 
-// OpenFS loads a shared object that is embedded in the program, materializing
-// every shared object of fsys in a private cache first.
+// OpenFS loads a shared object that is embedded in the program, so a program that
+// embeds its C++ side needs no C++ build at run time and no library path in its
+// environment.
 //
 // fsys is any file system. An embed.FS produced by //go:embed is the intended
 // source, and fstest.MapFS or os.DirFS serve the same purpose in tests and in
-// development. name is the base name of the object to load and must be one of
-// the ".so" entries of fsys.
+// development. name is the base name of the object to load and must be one of the
+// ".so" entries of fsys.
 //
-// Every shared object in fsys is extracted. The dependencies of an object are
-// loaded by the dynamic loader. This function therefore has to put the cppgo
-// shim and the user's library in one directory, where they sit beside each
-// other. A sibling is found through the DT_RUNPATH the loading object was
-// linked with. That path is conventionally
+// Every ".so" entry of fsys is extracted, not only name, and the entries are
+// flattened into one directory. A shared object resolves its dependencies from
+// the directory it was loaded from, so the C++ side has to be complete and side by
+// side for the load to work. A dependency left out of the embedded set (libc,
+// libm, libstdc++, libgcc_s, or any system library the C++ side linked against)
+// still comes from the system's own search path: embedding makes the C++ side one
+// file to ship, and leaves the Go binary dynamically linked to libc. Two entries
+// with one base name are an error, and files that do not end in ".so" are ignored.
 //
-//	-Wl,-rpath,$ORIGIN
+// # The cache
 //
-// and it makes the loader search the directory the object itself was loaded
-// from. A dependency left out of the embedded set (libc, libm, libstdc++,
-// libgcc_s, or any system library the C++ side linked against) still comes from
-// the loader's normal search path. Embedding makes the C++ side one file to
-// ship. It leaves the Go binary dynamically linked to libc.
+// The objects are written under CacheDir, one directory per embedded set, so a
+// change to any embedded name, size or byte gives the new set a directory of its
+// own and an old one is never mixed with new contents. The directories are private
+// to the user (0700), and so are the files (0600), because a shared object is
+// mapped executable and a file another local user could replace would be code in
+// this process. A path that fails that check is refused with ErrInsecureCache
+// rather than used. A reader sees whole files only, a truncated or altered cache
+// entry is replaced, and a second call for the same set reuses what is already
+// there.
 //
-// Entries whose name ends in ".so" are extracted even when they live in a
-// subdirectory, flattened into one directory because that is the only layout
-// in which $ORIGIN sees them. Two entries with one base name are an error.
-// Other files are ignored.
-//
-// The cache is CacheDir()/<sha256>/<name>. The digest covers the whole embedded
-// set (every name, size and content). A change to any of them lands in a new
-// directory, and an old directory is never combined with new contents. The
-// directory is created 0700 and every file 0600, and a mode that was loosened
-// is tightened. A path in the cache's place that fails the private-directory
-// check (a symbolic link, a regular file, or a directory that cannot be made
-// private) is rejected with ErrInsecureCache. A file is written to a
-// temporary file in that directory and renamed into place. A reader never sees
-// a partial object, and concurrent goroutines or processes cannot corrupt an
-// entry. An existing file is reused only when its size and SHA-256 match what
-// was embedded. A corrupted or truncated cache entry is replaced. The set is
-// hashed on every call, and that is what makes the reuse check meaningful. The
-// cost is one read of the embedded bytes.
-//
-// OpenFS is the deployment path. A program that embeds its C++ side needs no
-// C++ build at run time and no library path in its environment. For a library
-// the C++ build already produced, Open is the call. LibraryPathEnv overrides
-// this function with an explicit path.
+// For a library the C++ build already produced, Open is the call. LibraryPathEnv
+// overrides this function with an explicit path. How the extraction works is the
+// subject of ADR-0003.
 func OpenFS(fsys fs.FS, name string) (*Library, error) {
 	if name == "" {
 		return nil, &OpenError{Path: name, Err: errEmptyPath}

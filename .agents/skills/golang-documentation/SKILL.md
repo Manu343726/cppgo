@@ -19,6 +19,9 @@ paths:
   - "**/*.go"
 ---
 
+> **Read first:** [`../extra/documentation-rules.md`](../extra/documentation-rules.md).
+> Those rules extend this skill and win over its text wherever the two disagree.
+
 **Persona:** You are a Go technical writer and API designer. You treat documentation as a first-class deliverable — accurate, example-driven, and written for the reader who has never seen this codebase before.
 
 **Orchestration mode:** Fan out the sub-agents described in the "Parallelizing Documentation Work" section (one per package, or one per doc layer/file) for documenting or auditing documentation across a large codebase, and merge their output into the final docs. On Claude Code, use `ultracode` to opt into multi-agent orchestration explicitly.

@@ -163,10 +163,11 @@ trimmed:
 
 // Symbol is one bindable C++ function.
 //
-// The field that matters most is HasOutOfLineBody. A member defined inside its
-// class definition is implicitly inline, emits no dynamic symbol, and binding
-// it produces a trampoline that fails at load time. See Project for how the
-// answer is computed across translation units.
+// The field the carrier decision leans on is HasOutOfLineBody. A member defined
+// inside its class definition is implicitly inline and a library emits no dynamic
+// symbol for it, so a direct call fails at load time and the binding needs a
+// thunk. Project computes the answer across the header and the sources that
+// include it.
 type Symbol struct {
 	// QualifiedName is the C++ name built from semantic parents:
 	// "mathx::Vector::norm", "mathx::Vector::Vector", "mathx::make".
@@ -178,9 +179,9 @@ type Symbol struct {
 	Kind Kind
 	// IsConst is true for a const member function: the mangling carries K.
 	IsConst bool
-	// IsVirtual is true when the ABI dispatch goes through the vtable. Such a
-	// function cannot be called directly from a fixed symbol: the vtable has to
-	// be walked, so the generator has to reject it.
+	// IsVirtual is true when dispatch goes through the vtable, so the call
+	// cannot go to a fixed symbol. The generator carries such a binding through
+	// a thunk that calls the member as C++ does.
 	IsVirtual bool
 	// IsStatic is true for static member functions and for free functions with
 	// internal linkage. Static members need no `this`.
