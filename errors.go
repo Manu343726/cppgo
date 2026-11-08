@@ -7,9 +7,9 @@ import (
 	"github.com/Manu343726/cppgo/internal/rtl"
 )
 
-// ErrClosed is returned by every Library method that needs the loaded library
-// once Close has run, and by a second Close. It is the same value the
-// underlying loader shim uses, so errors.Is covers both layers.
+// ErrClosed is what every Library method returns once Close has run, and what a
+// second Close returns. It is the loader's own value, so errors.Is matches both
+// layers.
 var ErrClosed = rtl.ErrClosed
 
 // OpenError reports a library that could not be loaded.
@@ -74,16 +74,15 @@ func (e *ExtractError) Error() string {
 // Unwrap exposes the underlying error to errors.Is and errors.As.
 func (e *ExtractError) Unwrap() error { return e.Err }
 
-// ErrInsecureCache reports a cache path whose permissions fail the
-// private-directory check. That covers a regular file, a symbolic link, or a
-// directory whose mode could not be tightened to 0700. OpenFS refuses to
-// extract into it, because another user could replace a shared object written
-// there.
+// ErrInsecureCache reports a cache path that fails the private-directory check:
+// a regular file, a symbolic link, or a directory whose mode could not be
+// tightened to 0700. OpenFS refuses to extract into it, because another local
+// user could then replace a shared object this process maps executable.
 var ErrInsecureCache = errors.New("cache path is not a private directory")
 
-// NativeError is a failure reported by the foreign library through the
-// cppgo_last_error convention. Its message is the C string verbatim. The
-// generated wrappers add the symbol name on top.
+// NativeError is a failure the foreign library reported through the
+// cppgo_last_error convention. Its message is the C string verbatim; a generated
+// wrapper adds the symbol name on top, as a CallError.
 type NativeError struct {
 	// Message is the text the foreign library stored, without the trailing
 	// NUL.
