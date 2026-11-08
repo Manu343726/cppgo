@@ -338,7 +338,7 @@ generated trampoline calls the user's symbol; "shim" means the cppgo-built thunk
 | 3 | `std::vector<T>` | copied in and out through the caller's slice | `TestStdStringAndVector/std::vector_in_and_out` | same as `std::string` |
 | 3 | `std::string_view`, `std::span` | borrowed: `(pointer, length)`, no copy, valid for the call | **designed, not measured** (v3 oracle at `5b4fef7`; the shim receives the raw pair and constructs the view) | the callee must not retain the view |
 | 3 | `std::array<T,N>` | by value through the shim | **designed, not measured** | same ABI rule as any by-value aggregate |
-| 3 | `std::optional<T>` | `*T`: nil is `nullopt`; the shim constructs and reads it | **designed, not measured** | — |
+| 3 | `std::optional<T>` | as a parameter `*T` (nil is `nullopt`); as a return `(T, bool)`, or `(T, error)` with `absent:`; the shim constructs and reads it | **designed, not measured** | the two axes are not the same type, and the return axis follows *Errors from C++ to Go* |
 | 3 | `std::unique_ptr<T>` | a parameter consumes the Go value, a result is owning (`Close` destroys it) | **designed, not measured** | the deleter must be the default one |
 | 3 | `std::shared_ptr<T>` | a parameter shares (the reference count is copied), a result is owning | **designed, not measured** | a `shared_ptr` the *Go side* must construct out of nothing needs a control block only C++ can allocate: that is a shim entry point, not a layout trick |
 | 4 | POD above 16 bytes / MEMORY class by value | copied through the shim; an sret result goes into Go storage | **designed, not measured** | — |
@@ -427,12 +427,12 @@ generated Go package, and `internal/errormap` is the part of it that is shared a
 | **exceptions**: `std::exception`, a user subclass, `std::system_error` | the declaration is not `noexcept` | `try`/`catch` around the call, and around the marshalling; writes the message, and for `std::system_error` its code and category | `(T, error)`; `*cppgo.CallError` wrapping `*errormap.Message` (text only) or `*errormap.ErrorCode` (code, category, message) |
 | **`std::error_code`** | the return type is `std::error_code` | calls, tests the code, writes code + category + message | `(T, error)`; `*errormap.ErrorCode`; `errors.Is` compares code **and** category |
 | **`std::expected<T,E>`**, `tl::expected<T,E>` | the return type has `has_value()`/`value()`/`error()`, or its spelling is `std::expected` | tests `has_value()`, copies the value out, projects `E` | `(T, error)`; `E = std::error_code` → `*errormap.ErrorCode`; `E = std::string` → `*errormap.Message`; a custom `E` → the type the config names |
-| **`std::optional<T>`** | the return type is `std::optional<T>` | copies the value, or writes "empty" | **not an error by default**: `(T, bool)` — `optional` means "absent", and a value that is absent is not a failure. A package that wants it as an error writes `kind: optional` with `absent: "<message>"`, and then it is `(T, error)` |
-| **status int** | a plain integer return, only with a config entry | returns the int, the projection maps it | `(T, error)`; `*errormap.ErrorCode` with the category the config names (default `"status"`) |
-| **`errno`** | a config entry (`kind: errno`) | reads `errno` after the call | `(T, error)`; `*errormap.ErrorCode` with category `"errno"` |
+| **`std::optional<T>`** — **designed, not measured** | the return type is `std::optional<T>` | copies the value, or writes "empty" | **not an error by default**: `(T, bool)` — `optional` means "absent", and a value that is absent is not a failure. A package that wants it as an error writes `kind: optional` with `absent: "<message>"`, and then it is `(T, error)` |
+| **status int** — **designed, not measured** | a plain integer return, only with a config entry | returns the int, the projection maps it | `(T, error)`; `*errormap.ErrorCode` with the category the config names (default `"status"`) |
+| **`errno`** — **designed, not measured** | a config entry (`kind: errno`) | reads `errno` after the call | `(T, error)`; `*errormap.ErrorCode` with category `"errno"` |
 | **`bool` + out parameters** (`bool parse(const char*, Result*, Error*)`) | **never inferred** — a `bool` says nothing | the config names the value channel and the error channel; the shim writes both | `(T, error)`; the `bool` does not appear in the Go signature |
 | **a custom result type** (`outcome<T>`, `absl::StatusOr<T>`, a project `Result<T>`) | the shape: `has_value()`, `value()`, `error()` | tests the shape and projects the error member | `(T, error)`; the error member is projected as above, or by the type the config names |
-| **`std::variant<T,E>`** with a known error alternative | **never guessed**: a config entry names it with `alternative: <index>` | tests `index()`, copies the matching alternative | `(T, error)`; the config names which alternative is the error and how to project it |
+| **`std::variant<T,E>`** with a known error alternative — **designed, not measured** | **never guessed**: a config entry names it with `alternative: <index>` | tests `index()`, copies the matching alternative | `(T, error)`; the config names which alternative is the error and how to project it |
 
 Two rules hold across the table, and they are what make the generated API predictable:
 
@@ -539,11 +539,11 @@ shim built as two objects, and six C++ functions covering **five** of the table'
 (`TestErrorCodeReturn`, `TestExpectedReturn`, `TestExceptionReturn`, `TestConfiguredOutParamReturn`,
 `TestInferredCustomResult`), plus every validation error above.
 
-**The rows the fixture does not execute are marked *designed* in the table**: `std::optional` as an
-error, a status int, `errno`, and a `std::variant` alternative. Their rules and their validation are
-implemented and tested (`TestOptionalAndVariantRules`), and no binding exercises them end to end yet —
-that is the emitter's work, and the table says so row by row rather than the paragraph implying six
-functions prove nine rows.
+**Four rows of the table above carry `designed, not measured` in their first cell** — `std::optional`
+as an error, a status int, `errno`, and a `std::variant` alternative. Their rules and their validation
+are implemented and tested (`TestOptionalAndVariantRules`), and no binding exercises them end to end
+yet: that is the emitter's work, and the mark is on the row so a reader does not have to hold six
+functions against nine rows.
 
 **Every block a thunk writes into is Go storage pinned for the call.** A stack local's address is a
 `uintptr` the moment it is handed to the C++ side, and a Go frame moves; the message the projection
@@ -803,9 +803,10 @@ runtime's own test asserts it.
 ## Generation: input, selection, evidence, output
 
 - **Input.** `-header` (repeatable), `-package`, `-library`, `-compile-commands`, `-bind`,
-  `-exclude`, `-instantiate`, `-rename`, `-status`, and `-errors cppgo.yaml` — the package's error
-  configuration, part of the generation inputs so `cppgo check` fails when it changes without a
-  regeneration.
+  `-exclude`, `-instantiate`, `-rename`, `-status`, and — **planned, not accepted by today's
+  `cppgo gen`** — `-errors cppgo.yaml`, the package's error configuration. When the emitter debt
+  above is paid it becomes a generation input like the headers, so `cppgo check` fails when it changes
+  without a regeneration; until then the only code that reads it is `internal/errormap`'s tests.
 - **Compilation flags** come from `compile_commands.json` and `.clangd`, in clangd's order, never
   invented. A database entry's relative paths are rebased against the entry's `directory` — the
   include search paths (`-I`, `-isystem`, `-iquote`, `-idirafter`) and the included files
