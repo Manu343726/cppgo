@@ -172,7 +172,7 @@ report](https://manu343726.github.io/cppgo/manual/validation/).
 
 ## Requirements
 
-- Go 1.25 or newer (`go.mod` pins it. This repo is developed on 1.27).
+- Go 1.25 or newer (`go.mod` pins it, and this repo is developed on 1.27).
 - A C++17 compiler (`g++` or `clang++`, override with `make CXX=clang++`).
 - libclang, because `cppgo gen` parses the header with it. On Debian/Ubuntu:
   `sudo apt install clang libclang-dev`. On Arch: `sudo pacman -S clang`.

@@ -134,7 +134,7 @@ benchmarks). All of these must hold:
 - the declaration has an out-of-line body and the mangled name is in the user's `.dynsym` (the ELF
   tier checks it, as in v3, a header-only declaration whose mangled name happens to be exported is
   direct, and that rule is kept, with its tests).
-- it is **not virtual** (the call is to a fixed address. Dispatch is a shim concern).
+- it is **not virtual** (the call goes to a fixed address, so dispatch is a shim concern).
 - it is **`noexcept`** (the direct path has no handler, and an escaping exception terminates the
   process, measured).
 - the signature is register-representable. Scalars, enums, pointers and references, and a POD of at

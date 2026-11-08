@@ -56,7 +56,7 @@ the garbage collector:
 > Measured. A **2.0 ms** call delayed the worst GC cycle by **1.1 ms**, versus
 > **2.4 ms** for a spinning Go goroutine.
 
-(Again at 964 MHz. The comparison is the point.) A
+(Again at 964 MHz, where the comparison is the point.) A
 goroutine spinning in Go yields to the scheduler. A goroutine inside a cppgo call
 keeps running, because the runtime cannot see the foreign frame. For short calls this
 is invisible. For a call that blocks for milliseconds, it is the reason to move
