@@ -91,10 +91,10 @@ Two things look like limits and are not:
 - **A non-`noexcept` function taking the thunk carrier.** That is not a
   degradation of the API: it is the only safe carrier, and the cost is one C++
   call frame on top of the same Go-side trampoline
-  ([measured]({{< ref "reference/carriers.md" >}})).
+  ([measured]({{< ref "explanation/carriers.md" >}})).
 
 ## Related
 
-- What the mechanisms cost: [Carrier table]({{< ref "reference/carriers.md" >}}).
+- What the mechanisms cost: [Carrier table]({{< ref "explanation/carriers.md" >}}).
 - Why these limits exist: [Architecture]({{< ref "explanation/architecture.md" >}}).
 - The decisions behind them: [Design decisions]({{< ref "explanation/decisions.md" >}}).

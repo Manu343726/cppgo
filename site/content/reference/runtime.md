@@ -168,7 +168,7 @@ inside a foreign call, and this entry establishes that state. It is the slow
 path by design: 151 ns per call against 15.9 ns for the direct carrier, with one
 16-byte allocation, because the argument block cannot live on a goroutine stack a
 callback may grow (measured 2026-11-08; see the
-[carrier table]({{< ref "reference/carriers.md" >}})).
+[carrier table]({{< ref "explanation/carriers.md" >}})).
 
 ## Errors
 

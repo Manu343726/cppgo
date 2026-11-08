@@ -1,8 +1,13 @@
 ---
-title: "Carrier table"
-description: "How each C++ construct crosses into Go, and the test that measures it."
-weight: 40
+title: "Carriers and the construct table"
+description: "How each C++ construct reaches C++, what it costs, and the test that measures it."
+weight: 25
 ---
+
+This page is the mechanism behind a call: which of the three carriers a
+declaration gets, what each one costs, and the table of constructs with the test
+that pins each row. It is the companion to [Architecture]({{< ref "explanation/architecture.md" >}});
+the API a caller sees is in [Generated API]({{< ref "reference/generated-api.md" >}}).
 
 Every binding is assigned exactly one **carrier** before anything is emitted. The
 carrier is how one call crosses from Go to C++, and it is invisible in the
@@ -87,6 +92,9 @@ mathx::Vector::scale(double) noexcept        direct _ZN5mathx6Vector5scaleEd    
 mathx::Vector::norm() const                  thunk  cppgo_thunk_49993cda6560     not noexcept: an exception would unwind into Go
 mathx::midpoint(Point, Point)                thunk  cppgo_thunk_a66614728a62     a record passed or returned by value: the thunk copies it
 ```
+
+In `examples/stats`, four `noexcept` functions take the direct carrier and
+`histogram` takes a thunk: that is the whole difference the header makes.
 
 ## The construct table
 

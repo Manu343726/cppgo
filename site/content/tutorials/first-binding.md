@@ -352,5 +352,5 @@ part of it.
 - Bind your own library: [Generate a binding for your own library]({{< ref "how-to/generate.md" >}}).
 - Ship the pair: [Ship a program that uses a binding]({{< ref "how-to/deploy.md" >}}).
 - Understand the machinery: [Architecture]({{< ref "explanation/architecture.md" >}}) and the
-  [carrier table]({{< ref "reference/carriers.md" >}}).
+  [carrier table]({{< ref "explanation/carriers.md" >}}).
 - Look up a signature: [Generated API]({{< ref "reference/generated-api.md" >}}).

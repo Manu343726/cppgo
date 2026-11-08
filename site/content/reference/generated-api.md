@@ -263,5 +263,5 @@ when a generated method surprises you.
 ## Related
 
 - How to produce this package: [Generate a binding for your own library]({{< ref "how-to/generate.md" >}}).
-- What each carrier costs: [Carrier table]({{< ref "reference/carriers.md" >}}).
+- What each carrier costs: [Carrier table]({{< ref "explanation/carriers.md" >}}).
 - The runtime the package imports: [Runtime]({{< ref "reference/runtime.md" >}}).
