@@ -1,0 +1,37 @@
+{{- /* The sidebar is the site's navigation: the four Diátaxis sections, the
+       pages inside each one, and the project links that are not part of the
+       manual. It is built from the content tree, so a new page appears here
+       without a second edit. */ -}}
+<aside class="sidebar">
+  <a class="brand" href="{{ site.Home.RelPermalink }}">
+    <span class="brand-name">cppgo</span>
+    <span class="brand-line">C++ from Go, no cgo at build time</span>
+  </a>
+
+  <nav class="nav">
+    {{ range site.Sections }}
+      {{ $section := . }}
+      <section class="nav-section">
+        <a class="nav-title{{ if or ($.IsDescendant $section) ($.Eq $section) }} current{{ end }}" href="{{ .RelPermalink }}">{{ .Title }}</a>
+        <ul>
+          {{ range .Pages }}
+            <li>
+              <a href="{{ .RelPermalink }}"{{ if eq . $ }} class="current" aria-current="page"{{ end }}>{{ .Title }}</a>
+            </li>
+          {{ end }}
+        </ul>
+      </section>
+    {{ end }}
+  </nav>
+
+  <nav class="nav nav-project">
+    <p class="nav-title">Project</p>
+    <ul>
+      <li><a href="{{ site.Params.repo }}">Source code</a></li>
+      <li><a href="{{ site.Params.design }}">Design contract</a></li>
+      <li><a href="{{ site.Params.repo }}/tree/main/docs/adr">Decision records</a></li>
+      <li><a href="{{ site.Params.issues }}">Issue tracker</a></li>
+    </ul>
+    <p class="nav-note">The tracker is on the project's Forgejo and needs an account there.</p>
+  </nav>
+</aside>

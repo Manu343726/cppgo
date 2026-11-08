@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}</title>
+    <meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ site.Params.description }}{{ end }}">
+    {{ with resources.Get "css/site.css" }}
+      {{ $css := . | minify | fingerprint }}
+      <link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}">
+    {{ end }}
+  </head>
+  <body>
+    <div class="site">
+      {{ partial "sidebar.html" . }}
+      <main class="content">
+        {{ block "main" . }}{{ end }}
+        <footer class="footer">
+          <p>
+            cppgo is <a href="{{ site.Params.repo }}/blob/main/LICENSE">MIT licensed</a>.
+            The <a href="{{ site.Params.design }}">design contract</a> and the
+            <a href="{{ site.Params.repo }}/tree/main/docs/adr">decision records</a>
+            state what the code is held to.
+          </p>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

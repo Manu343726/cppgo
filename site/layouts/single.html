@@ -1,0 +1,25 @@
+{{ define "main" }}
+<article class="single">
+  <header>
+    {{ with .CurrentSection }}{{ if not .IsHome }}<p class="eyebrow"><a href="{{ .RelPermalink }}">{{ .Title }}</a></p>{{ end }}{{ end }}
+    <h1>{{ .Title }}</h1>
+    {{ with .Description }}<p class="lead">{{ . }}</p>{{ end }}
+  </header>
+
+  {{ if .Fragments.Headings }}
+    <nav class="toc" aria-label="On this page">
+      <p class="toc-title">On this page</p>
+      {{ .TableOfContents }}
+    </nav>
+  {{ end }}
+
+  <div class="prose">
+    {{ .Content }}
+  </div>
+
+  <nav class="pager">
+    {{ with .PrevInSection }}<a class="pager-prev" href="{{ .RelPermalink }}">← {{ .Title }}</a>{{ end }}
+    {{ with .NextInSection }}<a class="pager-next" href="{{ .RelPermalink }}">{{ .Title }} →</a>{{ end }}
+  </nav>
+</article>
+{{ end }}

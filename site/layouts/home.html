@@ -1,13 +1,24 @@
-<!doctype html>
-<html lang="{{ site.Language.Locale }}">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ site.Title }}</title>
-  </head>
-  <body>
-    <main>
-      {{ .Content }}
-    </main>
-  </body>
-</html>
+{{ define "main" }}
+<article class="home">
+  <header class="home-header">
+    <h1>{{ site.Title }}</h1>
+    <p class="lead">{{ site.Params.description }}</p>
+  </header>
+
+  {{ .Content }}
+
+  <div class="cards">
+    {{ range site.Sections }}
+      <a class="card" href="{{ .RelPermalink }}">
+        <h2>{{ .Title }}</h2>
+        <p>{{ .Params.summary }}</p>
+        <ul>
+          {{ range first 3 .Pages }}
+            <li>{{ .Title }}</li>
+          {{ end }}
+        </ul>
+      </a>
+    {{ end }}
+  </div>
+</article>
+{{ end }}
