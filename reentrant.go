@@ -12,37 +12,36 @@ import (
 //
 // A generated binding fills I and F for the call and reads Ret or RetF after it.
 // A callback reads its arguments from the same block and writes the one result
-// register its C signature names. The layout is asm.Args, whose offsets
-// internal/asm's tests assert. The alias is exported because a generated package
-// lives in the user's module and cannot import an internal package.
+// register its C signature names. The layout is fixed; a change to it breaks both
+// directions at once.
 type Args = asm.Args
 
-// CallReentrant invokes the foreign function at fn with the arguments in a,
-// through runtime.cgocall, so the callee may call back into Go.
+// CallReentrant invokes the foreign function at fn with the arguments in a, in the
+// state a callback needs: the callee may call back into Go.
 //
-// It is the carrier of every binding whose signature passes a Go function to
-// C++: the runtime accepts a callback only on a thread that is already inside a
-// foreign call, and this entry establishes that state. It costs what a cgo call
-// costs, rather than what the direct trampoline costs: 151 ns against 15.9 ns
-// per call in DESIGN.md's measurement of 2026-11-08. A binding with no callback
-// in its signature takes the direct carrier instead.
+// It is the call to use whenever a Go function is passed to C++, as a function
+// pointer or a std::function, because no other call may invoke a callback. A call
+// that passes none does not need it, and a plain call costs less: 151 ns against
+// 15.9 ns per call in the measurement in DESIGN.md.
 //
 // The results are read from a.Ret and a.RetF after the call returns.
 func CallReentrant(fn uintptr, a *Args) {
 	asm.CallReentrant(rtl.Pointer(fn), a)
 }
 
-// CallbackPanic is a panic a callback raised. The dispatcher recovers it before
-// it can unwind into C++, zeroes the result and records it. The binding that
-// passed the callback takes it with TakeCallbackPanic and re-panics there.
+// CallbackPanic is a panic a callback raised.
+//
+// It does not unwind into C++, which would terminate the process. It is recorded,
+// and the binding that passed the callback takes it with TakeCallbackPanic once
+// the call has returned and re-panics there, so it reaches the code that made the
+// call.
 type CallbackPanic = callback.Panic
 
 // RegisterCallback makes fn callable from C++ and returns its code address.
 //
-// The address is a slot in the process-wide callback table and stays valid until
-// ReleaseCallback is called for it. A binding registers the Go function, passes
-// the address to the shim, and releases it once the foreign call that could
-// invoke it has returned.
+// The address stays valid until ReleaseCallback is called for it. A binding
+// registers the Go function, passes the address to C++, and releases it once the
+// call that could invoke it has returned.
 func RegisterCallback(fn func(*Args)) (uintptr, error) {
 	return callback.Register(fn)
 }
@@ -54,10 +53,9 @@ func ReleaseCallback(code uintptr) error {
 	return callback.Release(code)
 }
 
-// TakeCallbackPanic returns the panic the most recent callback captured and
-// clears it. A binding calls it after the foreign call returns and re-panics
-// with Value, which delivers the panic to the caller instead of terminating the
-// process.
+// TakeCallbackPanic returns the panic the most recent callback captured and clears
+// it. A binding calls it after the foreign call returns and re-panics with Value,
+// which delivers the panic to its caller instead of terminating the process.
 func TakeCallbackPanic() *CallbackPanic {
 	return callback.TakePanic()
 }

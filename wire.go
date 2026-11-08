@@ -35,8 +35,8 @@ func StrPtr(s string) unsafe.Pointer {
 // a foreign call was handed stays alive and in place while the callee is still
 // reading it.
 //
-// Call it after the trampoline, never before. Probing, forming the pointers and
-// making the call come first, in that order:
+// Call it after the call, never before. Probing, forming the pointers and making
+// the call come first, in that order:
 //
 //	cppgo.ProbeStack()
 //	p := cppgo.StrPtr(name)

@@ -3,10 +3,9 @@ package cppgo
 // Handle refers to memory whose layout the Go side cannot see: a C++ instance,
 // a context, an iterator.
 //
-// It is a uintptr on purpose. The memory belongs to the foreign side, or to a Go
-// allocation whose layout mirrors it, and an unsafe.Pointer would invite the
-// collector and vet's unsafeptr check to reason about memory outside the Go
-// heap.
+// It holds an address as a uintptr, so the Go runtime never treats foreign memory
+// as memory of its own. Nothing behind the Handle is Go's, and no dereference of
+// it is checked.
 //
 // # Lifetimes
 //
@@ -26,8 +25,8 @@ package cppgo
 //
 //	func (v *Vector) Close() error { return destroyVector(v.h) }
 //
-// A finalizer is deliberately absent. It would run at an unpredictable moment
-// on an arbitrary goroutine, and would call into C++ while the library may
+// A finalizer is deliberately absent: it would run at an unpredictable moment,
+// on any goroutine, and would free an object while the library it belongs to may
 // already be unloading.
 //
 // # Zero value

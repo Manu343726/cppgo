@@ -1,21 +1,19 @@
-// Package stats is a cppgo-generated binding for a C++ library of statistics
-// functions, and the worked example of the free-function and slice shapes.
+// Package stats binds a C++ library of statistics functions to Go, and is the
+// worked example of the free-function and slice shapes.
 //
-// Everything here except doc.go is generated from include/stats/stats.hpp by the
-// command in zz_cppgo.gen.go's banner: the Go API, the assembly trampolines and
-// the shim sources under cppgo_shim/. Nothing in this directory is written by
-// hand, and `make check` proves the committed files are what the generator
-// produces.
+// It is generated from include/stats/stats.hpp: the Go functions here are the C++
+// API as a caller sees it, taking Go slices and returning Go values and errors,
+// and the command that produced them is in zz_cppgo.gen.go's banner. Nothing in
+// this directory is written by hand, and `make check` proves the committed files
+// are what the generator produces.
 //
-// The C++ side is src/stats.cpp, built by the example's own Makefile into
-// build/libstats.so. The binding links that library into the shim it compiles, so
-// the Go package loads libcppgo_stats.so from this directory and finds the user's
-// library beside it.
+// The C++ side is src/stats.cpp, built by the example's own Makefile. A caller
+// needs nothing from it but the generated package: the two shared objects it loads
+// are found beside the code, and the library path is the only thing a deployment
+// can change.
 //
-// The header's split is the lesson: a noexcept function defined out of line is
-// called directly through its mangled symbol and its Go signature carries no
-// error, while a function that may throw goes through the shim, which turns the
-// exception into an error. Every function takes its data as a (pointer, length)
-// pair, which is what a Go slice becomes on the wire, so nothing is copied in
-// either direction, output arrays included.
+// The header's split is the lesson. A function that cannot fail returns a value
+// and no error; a function that can fails with an error carrying the text the C++
+// side produced. Data crosses as a slice in both directions, including an output
+// array the function writes into.
 package stats

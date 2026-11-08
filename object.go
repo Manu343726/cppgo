@@ -8,11 +8,12 @@ import (
 
 // Object is storage for a C++ value whose layout Go cannot see.
 //
-// The generator creates one per opaque bound record. It is a Go allocation,
-// aligned and pinned so its address stays put, handed to the C++ side as this.
-// The reference count is Go's: Retain lets several Go values share the object
-// and Release drops one reference, and the destructor the object was created
-// with runs exactly once, when the last reference goes.
+// The generator creates one per opaque bound record. Its address stays the same
+// for as long as any reference to the object is held, and the C++ side treats
+// that address as the value's this. The reference count is Go's: Retain lets
+// several Go values share the object and Release drops one reference, and the
+// destructor the object was created with runs exactly once, when the last
+// reference goes.
 //
 // The zero Object is unusable and an Object is never copied; hold a *Object and
 // get one from NewObject. Addr, Retain and Release are safe for concurrent use
@@ -35,12 +36,12 @@ type Object struct {
 	release func()
 }
 
-// NewObject allocates size bytes of zeroed storage aligned to align, pins it,
-// and returns an object whose reference count is one.
+// NewObject allocates size bytes of zeroed storage aligned to align, and returns
+// an object whose reference count is one.
 //
 // release is the destructor and runs exactly once, at the last Release: it calls
 // the C++ destructor at Addr for a value constructed into this storage, or
-// deletes what the shim heap-allocated. A nil release means the storage needs no
+// deletes what C++ allocated for it. A nil release means the storage needs no
 // destructor.
 //
 // An align of 0 is treated as 1. A size of 0 still yields a valid non-nil
@@ -65,8 +66,8 @@ func NewObject(size, align uintptr, release func()) *Object {
 	return o
 }
 
-// Addr returns the pinned, aligned address of the storage, or 0 for a nil
-// object. The address stays valid until the last reference is released.
+// Addr returns the address of the storage, or 0 for a nil object. The address
+// stays valid until the last reference is released.
 func (o *Object) Addr() uintptr {
 	if o == nil {
 		return 0
@@ -83,8 +84,8 @@ func (o *Object) Retain() {
 	o.refs.Add(1)
 }
 
-// Release drops one reference. The last one runs the object's release
-// function, unpins the storage and clears the address.
+// Release drops one reference. The last one runs the object's release function
+// and makes its address invalid.
 //
 // Releasing a nil object is a no-op, and a count that is already zero has no
 // further effect, so the destructor never runs twice.

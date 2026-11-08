@@ -1,27 +1,21 @@
-// Package cppgo calls C++ from Go without cgo: no import "C", and nothing to
-// build with cgo. It is the runtime layer of the project, and it never imports
-// the generator (internal/cxx, internal/gen, cmd/cppgo), which takes libclang
-// and is generation-time only. A program that uses a generated package depends
-// on this package, internal/asm, internal/rtl, internal/callback and purego.
+// Package cppgo calls C++ from Go without cgo: it loads a shared object, resolves
+// the symbols a binding needs and makes the call, with no import "C" and nothing
+// to build with cgo.
 //
-// A library is loaded with Open, a symbol is resolved with Library.Symbol, and
-// the call is made through one of two carriers, both entered from package asm:
-// a direct trampoline that calls the foreign address from a NOSPLIT assembly
-// function on the goroutine's own stack, and a reentrant carrier that goes
-// through runtime.cgocall because the callee may call back into Go.
+// A library is loaded with Open and a symbol resolved with Library.Symbol; the
+// call itself is made by generated code, or by a hand-written binding through
+// CallReentrant. Two rules belong to every caller. A foreign call runs on a stack
+// Go cannot grow, so ProbeStack runs first and before any pointer into the
+// caller's frame is taken. A foreign call is also not preempted, so a long one
+// delays the runtime's own work until it returns.
 //
-// Both carriers cost the caller the same two things. The foreign frame runs on
-// a stack the Go runtime cannot grow, so ProbeStack must run first, from the
-// same goroutine and before any pointer into the caller's frame is taken. The
-// goroutine also keeps its P for the duration of the call and is not a
-// preemption point, so a long foreign call delays the stop-the-world phase of a
-// collection.
+// The package carries the values a binding moves across the boundary: Handle and
+// Object for storage whose layout Go cannot see, Ptr, StrPtr and KeepAlive for Go
+// memory lent to a call, OpenFS for a shared object embedded in the program, and
+// LastError with the typed errors around it.
 //
-// Handle and Object carry storage whose layout Go cannot see, Ptr, StrPtr and
-// KeepAlive carry Go memory into a call and keep it there for as long as the
-// call lasts, OpenFS loads a shared object embedded in the program, and
-// LastError reads the message a failing function stored through the
-// cppgo_last_error convention.
+// How a call is made is the generator's business. DESIGN.md is where that is
+// written down; this package owns the contract at the boundary.
 package cppgo
 
 import (
@@ -96,8 +90,7 @@ func (l *Library) Close() error {
 // Symbol resolves name to the address of the foreign function or variable.
 //
 // The address points into the loaded library and has no Go pointer semantics,
-// so it must not be stored anywhere the collector traces. uintptr is the only
-// safe carrier.
+// so it must not be stored anywhere the collector traces. Hold it as a uintptr.
 //
 // Returns a *SymbolError wrapping ErrClosed once Close has run, or the loader's
 // error for a name the library does not export.
@@ -135,8 +128,6 @@ func (l *Library) MustSymbol(name string) uintptr {
 // library that cannot fail) and for an empty C string (nothing has been
 // recorded). The message is copied out before returning, because the C string
 // belongs to the library and is only valid until the next call into it.
-//
-// The accessor is itself a foreign call, so LastError runs ProbeStack first.
 func LastError(lib *Library) error {
 	if lib == nil {
 		return nil

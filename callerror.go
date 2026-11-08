@@ -1,12 +1,11 @@
 package cppgo
 
-// CallError reports a bound call that failed, naming the C++ declaration that
-// was called and wrapping the native failure.
+// CallError reports a bound call that failed, naming the C++ declaration that was
+// called and wrapping the native failure.
 //
-// It is the error a generated binding returns when a thunk reports a non-zero
-// status. Err carries the *NativeError or errormap value the C++ side recorded,
-// so errors.As still finds it through the CallError, and the message is
-// "cppgo: <symbol>: <message>".
+// It is the error a generated binding returns when the call fails. Err carries the
+// failure the C++ side reported, so errors.As still finds it through the
+// CallError, and the message is "cppgo: <symbol>: <message>".
 type CallError struct {
 	// Symbol is the C++ declaration the binding called, e.g.
 	// "mathx::Vector::norm".

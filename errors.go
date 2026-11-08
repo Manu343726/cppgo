@@ -8,8 +8,7 @@ import (
 )
 
 // ErrClosed is what every Library method returns once Close has run, and what a
-// second Close returns. It is the loader's own value, so errors.Is matches both
-// layers.
+// second Close returns. errors.Is matches it wherever it is wrapped.
 var ErrClosed = rtl.ErrClosed
 
 // OpenError reports a library that could not be loaded.
@@ -54,8 +53,8 @@ type ExtractError struct {
 	// nothing was written.
 	Dir string
 	// Err is the underlying error: a file-system failure, a file that
-	// changed between being hashed and being copied, or fs.ErrNotExist for a
-	// name the file system does not contain.
+	// changed while it was being written out, or fs.ErrNotExist for a name
+	// the file system does not contain.
 	Err error
 }
 
@@ -74,10 +73,10 @@ func (e *ExtractError) Error() string {
 // Unwrap exposes the underlying error to errors.Is and errors.As.
 func (e *ExtractError) Unwrap() error { return e.Err }
 
-// ErrInsecureCache reports a cache path that fails the private-directory check:
-// a regular file, a symbolic link, or a directory whose mode could not be
-// tightened to 0700. OpenFS refuses to extract into it, because another local
-// user could then replace a shared object this process maps executable.
+// ErrInsecureCache reports a cache path that is not a private directory: a
+// regular file, a symbolic link, or a directory that could not be made private
+// (0700). OpenFS refuses to extract into it, because another local user could
+// then replace a shared object this process maps executable.
 var ErrInsecureCache = errors.New("cache path is not a private directory")
 
 // NativeError is a failure the foreign library reported through the

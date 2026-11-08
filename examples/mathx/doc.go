@@ -1,17 +1,18 @@
-// Package mathx is a cppgo-generated binding for a C++17 class, and the worked
-// example of the header-first flow.
+// Package mathx binds a small C++17 class to Go, and is the worked example of the
+// header-first flow.
 //
-// Everything here except doc.go is generated from include/mathx/vector.hpp by the
-// command in zz_cppgo.gen.go's banner: the Go API, the assembly trampolines and
-// the shim sources under cppgo_shim/. Nothing in this directory is written by
-// hand, and `make check` proves the committed files are what the generator
-// produces.
+// It is generated from include/mathx/vector.hpp: the Go types and functions here
+// are the C++ API as a caller sees it, with Go values and Go errors, and the
+// command that produced them is in zz_cppgo.gen.go's banner. Nothing in this
+// directory is written by hand, and `make check` proves the committed files are
+// what the generator produces.
 //
-// The C++ side is src/vector.cpp, built by the example's own Makefile into
-// build/libmathx.so with the flags a normal C++ project would use. The binding
-// links that library into the shim it compiles, so the Go package loads
-// libcppgo_mathx.so from this directory and finds the user's library beside it.
+// The C++ side is src/vector.cpp, built by the example's own Makefile. A caller
+// needs nothing from it but the generated package: the two shared objects it loads
+// are found beside the code, and the library path is the only thing a deployment
+// can change.
 //
-// The tests in this package are the teaching material: they show what a caller
-// writes for a constructor, a method, a free function and an error result.
+// The tests are the teaching material. They show what a caller writes for a
+// constructor, a method, an inline accessor, a free function and a call that can
+// fail.
 package mathx

@@ -7,9 +7,9 @@
 //     then compiles the shim.
 //   - check writes nothing, and exits non-zero when the files on disk differ
 //     from what gen would write.
-//   - build is the second phase of the template flow: it loads a program with
-//     go/packages, collects the instantiations the program uses, and adds their
-//     thunks to the shim.
+//   - build is the second phase of the template flow: it adds the template
+//     instantiations a Go program uses to the binding, before the shim is
+//     compiled.
 //
 // All three accept the same manifest flags, which usage prints. Exit codes: 0
 // when the command succeeded, 1 when generation or verification failed, 2 when
