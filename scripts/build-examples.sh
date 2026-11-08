@@ -47,6 +47,7 @@ built=0
 skipped=0
 
 for dir in "$EXAMPLES_DIR"/*/; do
+  dir="${dir%/}" # the glob leaves a trailing slash; keep the printed commands copyable
   name="$(basename "$dir")"
 
   if [[ -f "$dir/Makefile" || -f "$dir/makefile" ]]; then
