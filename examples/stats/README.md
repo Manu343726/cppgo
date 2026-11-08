@@ -107,7 +107,5 @@ measures the crossing alone, `BenchmarkHistogram` the two-way slice case, and
 ## The committed generated sources
 
 `zz_cppgo.gen.go`, `zz_cppgo_amd64.s` and `cppgo_shim/` are committed so a
-reader can see what the generator wrote. At this commit `make check` reports
-`zz_cppgo_shim.cpp` out of date — the committed file predates an
-`#include <cstdint>` the current emitter writes. `make gen` and a commit clear
-it.
+reader can see what the generator wrote. `make check` proves they are current:
+it fails when a committed file differs from what `make gen` writes.
