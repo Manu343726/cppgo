@@ -90,6 +90,15 @@ type CXSourceLocation struct {
 	IntData uint32
 }
 
+// CXSourceRange mirrors libclang's CXSourceRange:
+// { const void *ptr_data[2]; unsigned begin_int_data; unsigned end_int_data; }.
+// 24 bytes, MEMORY class.
+type CXSourceRange struct {
+	PtrData  [2]uintptr
+	BeginInt uint32
+	EndInt   uint32
+}
+
 // CXCursorKind values used by this package. They are part of libclang's stable
 // C ABI; TestKindConstants checks every one of them against
 // clang_getCursorKindSpelling at run time, so a wrong number cannot go unnoticed.
@@ -98,20 +107,36 @@ const (
 	cursorNoDeclFound     int32 = 71
 	cursorTranslationUnit int32 = 350
 
-	cursorStructDecl   int32 = 2
-	cursorUnionDecl    int32 = 3
-	cursorClassDecl    int32 = 4
-	cursorEnumDecl     int32 = 5
-	cursorFieldDecl    int32 = 6
-	cursorFunctionDecl int32 = 8
+	cursorStructDecl       int32 = 2
+	cursorUnionDecl        int32 = 3
+	cursorClassDecl        int32 = 4
+	cursorEnumDecl         int32 = 5
+	cursorFieldDecl        int32 = 6
+	cursorEnumConstantDecl int32 = 7
+	cursorFunctionDecl     int32 = 8
 
-	cursorCXXMethod      int32 = 21
-	cursorNamespace      int32 = 22
-	cursorLinkageSpec    int32 = 23
-	cursorConstructor    int32 = 24
-	cursorDestructor     int32 = 25
-	cursorNamespaceAlias int32 = 33
-	cursorBaseSpecifier  int32 = 44
+	cursorCXXMethod          int32 = 21
+	cursorNamespace          int32 = 22
+	cursorVarDecl            int32 = 9
+	cursorConversionFunction int32 = 26
+	cursorLinkageSpec        int32 = 23
+	cursorConstructor        int32 = 24
+	cursorDestructor         int32 = 25
+	cursorNamespaceAlias     int32 = 33
+	cursorBaseSpecifier      int32 = 44
+
+	// Templates. They are declarations with no layout and no symbol until they
+	// are instantiated, and both the record and the function model have to say
+	// so instead of leaving them out.
+	cursorFunctionTemplate                   int32 = 30
+	cursorClassTemplate                      int32 = 31
+	cursorClassTemplatePartialSpecialization int32 = 32
+
+	// Template parameters, in declaration order. They are what the model
+	// substitutes when it reads a specialisation through its pattern.
+	cursorTemplateTypeParameter     int32 = 27
+	cursorNonTypeTemplateParameter  int32 = 28
+	cursorTemplateTemplateParameter int32 = 29
 )
 
 // CXTypeKind values used by this package, also checked at run time by
@@ -150,11 +175,58 @@ const (
 	typeEnum            int32 = 106
 	typeTypedef         int32 = 107
 
+	typeConstantArray       int32 = 112
+	typeIncompleteArray     int32 = 114
+	typeVariableArray       int32 = 115
+	typeDependentSizedArray int32 = 116
+
 	typeNullPtr int32 = 24
 )
 
 // CX_StorageClass values, as returned by clang_Cursor_getStorageClass.
 const storageClassStatic int32 = 3
+
+// CX_CXXAccessSpecifier values, as returned by clang_getCXXAccessSpecifier.
+// accessInvalid is what a namespace-scope declaration reports.
+const (
+	accessInvalid   int32 = 0
+	accessPublic    int32 = 1
+	accessProtected int32 = 2
+	accessPrivate   int32 = 3
+)
+
+// CXCursor_ExceptionSpecificationKind values, as returned by
+// clang_getCursorExceptionSpecificationType. Only the three spellings that are
+// known to promise nothing escapes are treated as such: a computed noexcept
+// is evaluated by the compiler and libclang does not expose the result, so it
+// is conservatively allowed to throw.
+const (
+	exceptionSpecNone             int32 = 0
+	exceptionSpecDynamicNone      int32 = 1
+	exceptionSpecDynamic          int32 = 2
+	exceptionSpecMSAny            int32 = 3
+	exceptionSpecBasicNoexcept    int32 = 4
+	exceptionSpecComputedNoexcept int32 = 5
+	exceptionSpecUnevaluated      int32 = 6
+	exceptionSpecUninstantiated   int32 = 7
+	exceptionSpecUnparsed         int32 = 8
+	exceptionSpecNoThrow          int32 = 9
+)
+
+// CXTemplateArgumentKind values, as returned by
+// clang_Cursor_getTemplateArgumentKind.
+const (
+	templateArgumentNull        int32 = 0
+	templateArgumentType        int32 = 1
+	templateArgumentDeclaration int32 = 2
+	templateArgumentNullPtr     int32 = 3
+	templateArgumentIntegral    int32 = 4
+	templateArgumentTemplate    int32 = 5
+	templateArgumentExpansion   int32 = 6
+	templateArgumentExpression  int32 = 7
+	templateArgumentPack        int32 = 8
+	templateArgumentInvalid     int32 = 9
+)
 
 // CXChildVisitResult, the return value of the visitor callback.
 const (
@@ -265,9 +337,13 @@ type libclangFuncs struct {
 	getCursorDisplayName func(CXCursor) CXString
 	getCursorType        func(CXCursor) CXType
 	getCursorLocation    func(CXCursor) CXSourceLocation
+	getCursorExtent      func(CXCursor) CXSourceRange
+	getRangeStart        func(CXSourceRange) CXSourceLocation
+	getRangeEnd          func(CXSourceRange) CXSourceLocation
 	isCursorDefinition   func(CXCursor) int32
 	isFunctionInlined    func(CXCursor) int32
 	getSemanticParent    func(CXCursor) CXCursor
+	getCursorDefinition  func(CXCursor) CXCursor
 	cursorMangling       func(CXCursor) CXString
 	isVirtualBase        func(CXCursor) int32
 
@@ -277,11 +353,18 @@ type libclangFuncs struct {
 	methodIsVirtual              func(CXCursor) int32
 	methodIsConst                func(CXCursor) int32
 	methodIsDefaulted            func(CXCursor) int32
+	methodIsDeleted              func(CXCursor) int32
 	constructorIsCopyConstructor func(CXCursor) int32
 	constructorIsMoveConstructor func(CXCursor) int32
 
 	// Types.
 	getCanonicalType      func(CXType) CXType
+	getPointeeType        func(CXType) CXType
+	getNonReferenceType   func(CXType) CXType
+	getArrayElementType   func(CXType) CXType
+	getArraySize          func(CXType) int64
+	isConstQualifiedType  func(CXType) int32
+	isPODType             func(CXType) int32
 	getTypeSpelling       func(CXType) CXString
 	getTypeKindSpelling   func(kind int32) CXString
 	getCursorKindSpelling func(kind int32) CXString
@@ -289,7 +372,38 @@ type libclangFuncs struct {
 	getNumArgTypes        func(CXType) int32
 	getArgType            func(CXType, uint32) CXType
 	typeGetSizeOf         func(CXType) int64
+	typeGetAlignOf        func(CXType) int64
+	typeGetOffsetOf       func(CXType, *byte) int64
 	getTypeDeclaration    func(CXType) CXCursor
+
+	// Records.
+	getCXXAccessSpecifier func(CXCursor) int32
+	cursorOffsetOfField   func(CXCursor) int64
+	cursorIsBitField      func(CXCursor) int32
+	fieldDeclBitWidth     func(CXCursor) int32
+	cursorIsAnonymous     func(CXCursor) int32
+	methodIsPureVirtual   func(CXCursor) int32
+	cxxRecordIsAbstract   func(CXCursor) int32
+	getOffsetOfBase       func(CXCursor, CXCursor) int64
+
+	// Enums.
+	getEnumDeclIntegerType       func(CXCursor) CXType
+	getEnumConstantValue         func(CXCursor) int64
+	getEnumConstantUnsignedValue func(CXCursor) uint64
+	enumDeclIsScoped             func(CXCursor) int32
+	getTemplateCursorKind        func(CXCursor) int32
+
+	// Function properties.
+	cursorIsVariadic    func(CXCursor) int32
+	cursorExceptionSpec func(CXCursor) int32
+
+	// Templates.
+	getNumTemplateArguments          func(CXCursor) int32
+	getTemplateArgumentKind          func(CXCursor, uint32) int32
+	getTemplateArgumentType          func(CXCursor, uint32) CXType
+	getTemplateArgumentValue         func(CXCursor, uint32) int64
+	getTemplateArgumentUnsignedValue func(CXCursor, uint32) uint64
+	getSpecializedCursorTemplate     func(CXCursor) CXCursor
 
 	// Locations.
 	getFileLocation          func(CXSourceLocation, *uintptr, *uint32, *uint32, *uint32)
@@ -319,9 +433,13 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_getCursorDisplayName", &f.getCursorDisplayName},
 		{"clang_getCursorType", &f.getCursorType},
 		{"clang_getCursorLocation", &f.getCursorLocation},
+		{"clang_getCursorExtent", &f.getCursorExtent},
+		{"clang_getRangeStart", &f.getRangeStart},
+		{"clang_getRangeEnd", &f.getRangeEnd},
 		{"clang_isCursorDefinition", &f.isCursorDefinition},
 		{"clang_Cursor_isFunctionInlined", &f.isFunctionInlined},
 		{"clang_getCursorSemanticParent", &f.getSemanticParent},
+		{"clang_getCursorDefinition", &f.getCursorDefinition},
 		{"clang_Cursor_getMangling", &f.cursorMangling},
 		{"clang_isVirtualBase", &f.isVirtualBase},
 		{"clang_Cursor_getStorageClass", &f.getCursorStorageClass},
@@ -329,9 +447,16 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_CXXMethod_isVirtual", &f.methodIsVirtual},
 		{"clang_CXXMethod_isConst", &f.methodIsConst},
 		{"clang_CXXMethod_isDefaulted", &f.methodIsDefaulted},
+		{"clang_CXXMethod_isDeleted", &f.methodIsDeleted},
 		{"clang_CXXConstructor_isCopyConstructor", &f.constructorIsCopyConstructor},
 		{"clang_CXXConstructor_isMoveConstructor", &f.constructorIsMoveConstructor},
 		{"clang_getCanonicalType", &f.getCanonicalType},
+		{"clang_getPointeeType", &f.getPointeeType},
+		{"clang_getNonReferenceType", &f.getNonReferenceType},
+		{"clang_getArrayElementType", &f.getArrayElementType},
+		{"clang_getArraySize", &f.getArraySize},
+		{"clang_isConstQualifiedType", &f.isConstQualifiedType},
+		{"clang_isPODType", &f.isPODType},
 		{"clang_getTypeSpelling", &f.getTypeSpelling},
 		{"clang_getTypeKindSpelling", &f.getTypeKindSpelling},
 		{"clang_getCursorKindSpelling", &f.getCursorKindSpelling},
@@ -339,7 +464,30 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_getNumArgTypes", &f.getNumArgTypes},
 		{"clang_getArgType", &f.getArgType},
 		{"clang_Type_getSizeOf", &f.typeGetSizeOf},
+		{"clang_Type_getAlignOf", &f.typeGetAlignOf},
+		{"clang_Type_getOffsetOf", &f.typeGetOffsetOf},
 		{"clang_getTypeDeclaration", &f.getTypeDeclaration},
+		{"clang_getCXXAccessSpecifier", &f.getCXXAccessSpecifier},
+		{"clang_Cursor_getOffsetOfField", &f.cursorOffsetOfField},
+		{"clang_Cursor_isBitField", &f.cursorIsBitField},
+		{"clang_getFieldDeclBitWidth", &f.fieldDeclBitWidth},
+		{"clang_Cursor_isAnonymous", &f.cursorIsAnonymous},
+		{"clang_CXXMethod_isPureVirtual", &f.methodIsPureVirtual},
+		{"clang_CXXRecord_isAbstract", &f.cxxRecordIsAbstract},
+		{"clang_getOffsetOfBase", &f.getOffsetOfBase},
+		{"clang_getEnumDeclIntegerType", &f.getEnumDeclIntegerType},
+		{"clang_getEnumConstantDeclValue", &f.getEnumConstantValue},
+		{"clang_getEnumConstantDeclUnsignedValue", &f.getEnumConstantUnsignedValue},
+		{"clang_EnumDecl_isScoped", &f.enumDeclIsScoped},
+		{"clang_getTemplateCursorKind", &f.getTemplateCursorKind},
+		{"clang_Cursor_isVariadic", &f.cursorIsVariadic},
+		{"clang_getCursorExceptionSpecificationType", &f.cursorExceptionSpec},
+		{"clang_Cursor_getNumTemplateArguments", &f.getNumTemplateArguments},
+		{"clang_Cursor_getTemplateArgumentKind", &f.getTemplateArgumentKind},
+		{"clang_Cursor_getTemplateArgumentType", &f.getTemplateArgumentType},
+		{"clang_Cursor_getTemplateArgumentValue", &f.getTemplateArgumentValue},
+		{"clang_Cursor_getTemplateArgumentUnsignedValue", &f.getTemplateArgumentUnsignedValue},
+		{"clang_getSpecializedCursorTemplate", &f.getSpecializedCursorTemplate},
 		{"clang_getFileLocation", &f.getFileLocation},
 		{"clang_Location_isFromMainFile", &f.locationIsFromMainFile},
 		{"clang_Location_isInSystemHeader", &f.locationIsInSystemHeader},
@@ -675,17 +823,22 @@ func (l *Libclang) visit(parent CXCursor, fn visitorFunc) error {
 
 // TU is a parsed translation unit. It must be closed.
 type TU struct {
-	l             *Libclang
-	index         uintptr
-	tu            uintptr
-	File          string   // the main file, as given
-	Args          []string // the flags the unit was parsed with
-	once          sync.Once
-	symbols       []Symbol
-	byName        map[string][]int
-	byNameMangled map[string]int
-	closed        bool
-	mu            sync.Mutex
+	l               *Libclang
+	index           uintptr
+	tu              uintptr
+	File            string   // the main file, as given
+	Args            []string // the flags the unit was parsed with
+	once            sync.Once
+	symbols         []Symbol
+	byName          map[string][]int
+	byNameMangled   map[string]int
+	memberTemplates map[string]memberTemplate
+	records         []Record
+	byRecord        map[string]int
+	enums           []Enum
+	byEnum          map[string]int
+	closed          bool
+	mu              sync.Mutex
 }
 
 // ParseTranslationUnit parses file with the given command-line flags. The flags
@@ -792,4 +945,40 @@ func (tu *TU) LookupMangled(mangled string) (Symbol, bool) {
 		return Symbol{}, false
 	}
 	return tu.symbols[i], true
+}
+
+// Records returns every class, struct and union definition in the translation
+// unit, in source order, excluding system headers. Templates are included with
+// IsTemplate set and no layout: a declaration that cannot be laid out is still
+// a declaration the generator has to report.
+func (tu *TU) Records() []Record {
+	tu.once.Do(tu.extract)
+	return append([]Record(nil), tu.records...)
+}
+
+// Record finds a record by its qualified C++ name, e.g. "mathx::Vector".
+func (tu *TU) Record(name string) (Record, bool) {
+	tu.once.Do(tu.extract)
+	i, ok := tu.byRecord[name]
+	if !ok {
+		return Record{}, false
+	}
+	return tu.records[i], true
+}
+
+// Enums returns every enum definition in the translation unit, in source
+// order, excluding system headers.
+func (tu *TU) Enums() []Enum {
+	tu.once.Do(tu.extract)
+	return append([]Enum(nil), tu.enums...)
+}
+
+// Enum finds an enum by its qualified C++ name.
+func (tu *TU) Enum(name string) (Enum, bool) {
+	tu.once.Do(tu.extract)
+	i, ok := tu.byEnum[name]
+	if !ok {
+		return Enum{}, false
+	}
+	return tu.enums[i], true
 }

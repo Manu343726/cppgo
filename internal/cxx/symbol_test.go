@@ -272,6 +272,79 @@ func TestSymbolStrings(t *testing.T) {
 	}
 }
 
+func TestSymbolMemberProperties(t *testing.T) {
+	symbols := headerSymbols(t)
+
+	norm := symbols["mathx::Vector::norm"]
+	assert.Equal(t, "mathx::Vector", norm.Parent)
+	assert.Equal(t, AccessPublic, norm.Access)
+	assert.False(t, norm.IsPureVirtual)
+	assert.False(t, norm.IsNoExcept)
+	assert.False(t, norm.IsVariadic)
+	assert.False(t, norm.IsTemplate)
+
+	area := symbols["mathx::Shape::area"]
+	assert.True(t, area.IsPureVirtual, "a pure virtual is declared, never defined")
+	assert.Equal(t, AccessPublic, area.Access)
+
+	shapeCtor := symbols["mathx::Shape::Shape"]
+	assert.Equal(t, AccessProtected, shapeCtor.Access, "the constructor is protected")
+
+	add := symbols["mathx::add"]
+	assert.Equal(t, "mathx", add.Parent, "a free function's parent is its namespace")
+	assert.Equal(t, AccessNone, add.Access)
+
+	assert.True(t, symbols["mathx::noexcept_add"].IsNoExcept)
+	assert.False(t, symbols["mathx::add"].IsNoExcept)
+	assert.True(t, symbols["mathx::variadic_sum"].IsVariadic)
+	assert.False(t, symbols["mathx::add"].IsVariadic)
+
+	get := symbols["mathx::Box::get"]
+	assert.True(t, get.IsTemplate, "a member of a class template has no symbol until instantiated")
+	assert.Equal(t, "mathx::Box", get.Parent)
+}
+
+func TestParamModel(t *testing.T) {
+	symbols := headerSymbols(t)
+
+	dot := symbols["mathx::Vector::dot"]
+	pointer := dot.Params[0]
+	assert.False(t, pointer.IsConst, "the pointer itself is not const")
+	require.NotNil(t, pointer.Pointee)
+	assert.True(t, pointer.Pointee.IsConst, "the pointee is const")
+	assert.Equal(t, TypeFloat, pointer.Pointee.Kind)
+	assert.Equal(t, int64(8), pointer.Pointee.SizeBytes)
+	assert.Nil(t, pointer.Pointee.Pointee)
+
+	length := dot.Params[1]
+	assert.True(t, length.Unsigned, "std::size_t is unsigned")
+	assert.Nil(t, length.Pointee)
+
+	axis := symbols["mathx::is_axis"].Params[0]
+	assert.Equal(t, TypeEnum, axis.Kind)
+	assert.Equal(t, "mathx::Axis", axis.RecordName)
+	assert.True(t, axis.Unsigned, "Axis is an enum over unsigned char")
+
+	pair := symbols["mathx::make_pair"]
+	assert.Equal(t, TypeRecord, pair.Result.Kind)
+	assert.Equal(t, "mathx::Pair", pair.Result.RecordName)
+
+	scaled := symbols["mathx::Vector::scaled"]
+	assert.True(t, scaled.HasSret, "Vector is non-trivial for calls, so it comes back through sret")
+	assert.Equal(t, "mathx::Vector", scaled.Result.RecordName)
+
+	nullptr := symbols["mathx::take_nullptr"].Params[0]
+	assert.True(t, nullptr.Ptr, "nullptr_t is one INTEGER slot")
+	assert.Equal(t, TypePointer, nullptr.Kind)
+	assert.Nil(t, nullptr.Pointee, "there is nothing behind nullptr_t")
+
+	reference := symbols["mathx::take_ref"].Params[0]
+	assert.True(t, reference.Ptr, "a reference is a pointer at the ABI level")
+	require.NotNil(t, reference.Pointee)
+	assert.Equal(t, "mathx::Pair", reference.Pointee.RecordName)
+	assert.True(t, reference.Pointee.IsConst)
+}
+
 func TestSymbolHasExportedSymbol(t *testing.T) {
 	// An out-of-line body is not enough: a namespace-scope static function has
 	// one and still exports nothing.
