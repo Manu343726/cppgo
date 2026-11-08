@@ -394,10 +394,14 @@ func (e *extractor) visit(cursor, parent CXCursor) int32 {
 		// has no symbol until it is instantiated.
 		e.collect(cursor, parent)
 		return visitRecurse
-	case cursorClassTemplate, cursorClassTemplatePartialSpecialization:
+	case cursorClassTemplate:
 		// The pattern of a class template has no symbol until it is
 		// instantiated. Its members are collected and marked.
 		return visitRecurse
+	case cursorClassTemplatePartialSpecialization:
+		// A partial specialisation is a pattern, not a type: its members are
+		// read from its cursor when an instantiation matches it.
+		return visitContinue
 	case cursorNamespace, cursorClassDecl, cursorStructDecl, cursorUnionDecl,
 		cursorLinkageSpec, cursorNamespaceAlias:
 		return visitRecurse
@@ -669,12 +673,33 @@ func (l *Libclang) qualifiedName(cursor CXCursor) (string, bool) {
 	for i := 0; i < maxParentDepth; i++ {
 		cursor = l.f.getSemanticParent(cursor)
 		kind := l.f.getCursorKind(cursor)
-		parents = append(parents, parentName{kind: kind, spelling: l.str(l.f.getCursorSpelling(cursor))})
+		spelling := l.str(l.f.getCursorSpelling(cursor))
+		// A member of a full or partial specialisation is named after the
+		// specialisation, not after the pattern: Q<int>::Kind, not Q::Kind.
+		// libclang spells the parent "Q" for all three, so the arguments are
+		// what tell them apart.
+		if isSpecializationRecordKind(kind) {
+			if args := l.templateArguments(cursor); len(args) > 0 {
+				spelling = specializationName(spelling, args)
+			}
+		}
+		parents = append(parents, parentName{kind: kind, spelling: spelling})
 		if kind == cursorTranslationUnit || kind == cursorInvalidFile || kind == cursorNoDeclFound {
 			break
 		}
 	}
 	return qualify(spelling, parents)
+}
+
+// isSpecializationRecordKind reports the cursor kinds a specialisation can be
+// declared with. The primary pattern is a ClassTemplate and is not one.
+func isSpecializationRecordKind(kind int32) bool {
+	switch kind {
+	case cursorClassDecl, cursorStructDecl, cursorUnionDecl, cursorClassTemplatePartialSpecialization:
+		return true
+	default:
+		return false
+	}
 }
 
 // parentName is one step of the semantic parent chain.

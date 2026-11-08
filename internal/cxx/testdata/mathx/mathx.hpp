@@ -234,6 +234,33 @@ struct EnumBox {
 struct EnumBoxHolder { EnumBox<int, 7> value; };
 template struct EnumBox<int, 7>;
 
+// A primary template with a full explicit specialisation and a partial one.
+// The explicit body and the partial pattern are the source of truth for their
+// instantiations, not the primary.
+template <typename T>
+struct Spec {
+    T value;
+    T get() const { return value; }
+    enum class Kind { X = 1 };
+};
+template <>
+struct Spec<int> {
+    int special;
+    int get() const { return special; }
+    enum class Kind { X = 42 };
+};
+template <typename T>
+struct Spec<T *> {
+    T *pointer;
+    T pointee() const;
+    enum class Kind { X = 7 };
+};
+struct SpecHolder {
+    Spec<int> a;
+    Spec<int *> b;
+    Spec<double> c;
+};
+
 template <typename T>
 struct BigEnum {
     enum class Big : unsigned long long { Max = 0xFFFFFFFFFFFFFFFF };

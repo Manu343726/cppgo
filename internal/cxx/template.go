@@ -158,9 +158,25 @@ type TemplateArgument struct {
 // String renders the argument for a diagnostic or a generated name.
 func (a TemplateArgument) String() string {
 	if a.Spelling != "" {
-		return a.Spelling
+		return normalizeTypeSpelling(a.Spelling)
 	}
 	return a.Kind.String()
+}
+
+// normalizeTypeSpelling removes the spaces libclang puts around punctuation in
+// a type spelling, so "Q<int *>" and "Q<int*>" are one identity. The spaces of
+// a multiword type ("unsigned long") are kept.
+func normalizeTypeSpelling(spelling string) string {
+	for _, pair := range [][2]string{
+		{" *", "*"}, {"* ", "*"},
+		{" &", "&"}, {"& ", "&"},
+		{" ,", ","}, {", ", ","},
+		{"< ", "<"}, {" <", "<"},
+		{" >", ">"}, {"> ", ">"},
+	} {
+		spelling = strings.ReplaceAll(spelling, pair[0], pair[1])
+	}
+	return strings.TrimSpace(spelling)
 }
 
 // exceptionSpec maps libclang's exception specification kind onto the model.

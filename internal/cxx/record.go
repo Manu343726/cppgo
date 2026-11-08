@@ -128,6 +128,11 @@ type Record struct {
 	// IsTemplateSpecialization is true for a concrete instantiation, e.g.
 	// Box<int>. It has a layout and a name built from its arguments.
 	IsTemplateSpecialization bool
+	// Synthesized is true when the record was built from a pattern (or a
+	// partial specialisation) because libclang has no definition cursor for
+	// the instantiation. A full explicit specialisation has its own definition
+	// and is not synthesised; it wins over a synthesised sighting.
+	Synthesized bool
 	// TemplateName is the qualified name of the template a specialization
 	// instantiates.
 	TemplateName string
@@ -273,16 +278,28 @@ type recordExtractor struct {
 	// sources caches the files whose text is read to evaluate enum
 	// initializers, so one parse reads each file once.
 	sources map[string][]byte
+	// partials are the partial specialisations by primary template name, in
+	// declaration order.
+	partials map[string][]partialSpecialization
+}
+
+// partialSpecialization is one `template <typename T> struct Q<T *>` pattern.
+// It has its own cursor and children; an instantiation that matches it is
+// synthesised from this cursor, not from the primary.
+type partialSpecialization struct {
+	cursor CXCursor
+	args   []TemplateArgument
 }
 
 // extractRecords fills tu.records and tu.enums. It shares the lazy extraction
 // with the symbol pass: TU.Records and TU.Symbols both force the same parse.
 func (tu *TU) extractRecords() {
 	ex := &recordExtractor{
-		l:      tu.l,
-		tu:     tu,
-		byName: make(map[string]int),
-		byEnum: make(map[string]int),
+		l:        tu.l,
+		tu:       tu,
+		byName:   make(map[string]int),
+		byEnum:   make(map[string]int),
+		partials: make(map[string][]partialSpecialization),
 	}
 	tu.memberTemplates = make(map[string]memberTemplate)
 	// The symbol walk has already proven the handle open; a second walk of the
@@ -311,8 +328,11 @@ func (e *recordExtractor) visit(cursor, parent CXCursor) int32 {
 		// Recurse so nested records are found; the field walk itself does not
 		// descend into them.
 		return visitRecurse
-	case cursorClassTemplate, cursorClassTemplatePartialSpecialization:
+	case cursorClassTemplate:
 		e.addRecord(e.collectRecord(cursor, true))
+		return visitContinue
+	case cursorClassTemplatePartialSpecialization:
+		e.collectPartial(cursor)
 		return visitContinue
 	case cursorEnumDecl:
 		if e.l.f.isCursorDefinition(cursor) != 0 {
@@ -378,9 +398,21 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 	rec.IsPolymorphic = e.l.polymorphic(decl, 0)
 
 	facts := ctorFacts{}
-	if isSpecialization {
-		e.synthesizeSpecialization(&rec, pattern, typ, &facts, e.l.substitution(pattern, rec.TemplateArguments))
-	} else {
+	switch {
+	case isSpecialization && e.isFullExplicitSpecialization(cursor):
+		// A full explicit specialisation has its own body: read it, not the
+		// pattern. Its members and nested types are its own.
+		e.collectChildren(&rec, decl, typ, &facts)
+		if rec.TemplateName != "" && len(rec.TemplateArguments) > 0 {
+			rec.QualifiedName = specializationName(rec.TemplateName, rec.TemplateArguments)
+		}
+	case isSpecialization:
+		// An implicit or explicit instantiation with no definition cursor:
+		// select a partial specialisation if one matches, else the primary.
+		rec.Synthesized = true
+		patternCursor, sub := e.selectPattern(rec.TemplateName, rec.TemplateArguments, pattern)
+		e.synthesizeSpecialization(&rec, patternCursor, typ, &facts, sub)
+	default:
 		e.collectChildren(&rec, decl, typ, &facts)
 	}
 
@@ -434,6 +466,141 @@ func (e *recordExtractor) addTypeSpecialization(field CXCursor) {
 	e.addRecord(rec)
 }
 
+// isFullExplicitSpecialization distinguishes `template <> struct Q<int> {...}`
+// from `template struct Q<int>;`: libclang reports both as a StructDecl with a
+// definition flag in some contexts, but only the first has a body of its own.
+// The source text of the cursor's extent is the discriminator; when it cannot
+// be read (a macro or an unsaved buffer), a declaration with member children
+// is treated as a body, because an instantiation cursor exposes none.
+func (e *recordExtractor) isFullExplicitSpecialization(cursor CXCursor) bool {
+	if e.l.f.isCursorDefinition(cursor) == 0 {
+		return false
+	}
+	text, ok := e.sourceText(cursor)
+	if ok {
+		head := text
+		if len(head) > 64 {
+			head = head[:64]
+		}
+		head = strings.Join(strings.Fields(head), " ")
+		if strings.HasPrefix(head, "template <>") || strings.HasPrefix(head, "template<>") {
+			return true
+		}
+		if strings.HasPrefix(head, "template struct") || strings.HasPrefix(head, "template class") {
+			return false
+		}
+	}
+	return e.cursorDeclaresMembers(cursor)
+}
+
+// cursorDeclaresMembers reports whether a record cursor exposes any field or
+// function child.
+func (e *recordExtractor) cursorDeclaresMembers(cursor CXCursor) bool {
+	found := false
+	_ = e.l.visit(cursor, func(child, parent CXCursor) int32 {
+		switch e.l.f.getCursorKind(child) {
+		case cursorFieldDecl, cursorCXXMethod, cursorConversionFunction,
+			cursorConstructor, cursorDestructor, cursorEnumDecl, cursorVarDecl:
+			found = true
+		}
+		return visitContinue
+	})
+	return found
+}
+
+// collectPartial keeps a partial specialisation for matching. It is a pattern,
+// not a record a Go type is generated from: only an instantiation is.
+func (e *recordExtractor) collectPartial(cursor CXCursor) {
+	primary := e.l.f.getSpecializedCursorTemplate(cursor)
+	if !e.l.cursorIsValid(primary) {
+		return
+	}
+	primaryName, ok := e.l.qualifiedName(primary)
+	if !ok {
+		return
+	}
+	args := e.l.fillArgumentSpellings(e.l.templateArguments(cursor), e.l.f.getCursorType(cursor))
+	if len(args) == 0 {
+		return
+	}
+	e.partials[primaryName] = append(e.partials[primaryName], partialSpecialization{cursor: cursor, args: args})
+}
+
+// selectPattern chooses where an instantiation's body comes from: the best
+// matching partial specialisation when there is one, else the primary pattern.
+// A full explicit specialisation is not selected here: it is a real record with
+// its own definition and wins through addRecord's precedence.
+func (e *recordExtractor) selectPattern(primary string, args []TemplateArgument, pattern CXCursor) (CXCursor, substitution) {
+	if cursor, sub, ok := e.matchPartial(primary, args); ok {
+		return cursor, sub
+	}
+	return pattern, e.l.substitution(pattern, args)
+}
+
+// matchPartial finds the most specific partial specialisation that accepts an
+// instantiation. The rule is deterministic: the argument counts must match, a
+// component that is not a bare parameter counts one point, and the highest
+// score wins; ties go to the first declared.
+func (e *recordExtractor) matchPartial(primary string, args []TemplateArgument) (CXCursor, substitution, bool) {
+	bestScore := -1
+	var bestCursor CXCursor
+	var bestBound []TemplateArgument
+	for _, partial := range e.partials[primary] {
+		if len(partial.args) != len(args) {
+			continue
+		}
+		bound, score, ok := matchPartialArgs(partial.args, args)
+		if !ok || score <= bestScore {
+			continue
+		}
+		bestScore, bestCursor, bestBound = score, partial.cursor, bound
+	}
+	if bestScore < 0 {
+		return CXCursor{}, substitution{}, false
+	}
+	return bestCursor, e.l.substitution(bestCursor, bestBound), true
+}
+
+// matchPartialArgs matches one partial's argument list against a concrete
+// instantiation, returning the binding of the partial's parameters.
+func matchPartialArgs(patterns, concrete []TemplateArgument) ([]TemplateArgument, int, bool) {
+	bound := make([]TemplateArgument, len(patterns))
+	score := 0
+	for i := range patterns {
+		pattern, actual := patterns[i], concrete[i]
+		switch {
+		case isBareParameter(pattern.Type):
+			bound[i] = actual
+		case pattern.Type.Kind == TypePointer && pattern.Type.Pointee != nil && isBareParameter(*pattern.Type.Pointee):
+			if actual.Type.Kind != TypePointer || actual.Type.Pointee == nil {
+				return nil, 0, false
+			}
+			bound[i] = TemplateArgument{
+				Kind:     TemplateArgumentType,
+				Spelling: actual.Type.Pointee.Spelling,
+				Type:     *actual.Type.Pointee,
+			}
+			score++
+		default:
+			if baseTypeName(pattern.Type.Spelling) != baseTypeName(actual.Type.Spelling) {
+				return nil, 0, false
+			}
+			score++
+		}
+	}
+	return bound, score, true
+}
+
+// isBareParameter reports whether a type is a template parameter used whole,
+// as in Q<T>, rather than inside another type, as in Q<T *>.
+func isBareParameter(p Param) bool {
+	if p.Kind != TypeOther && p.ClangKind != "Unexposed" {
+		return false
+	}
+	name := baseTypeName(p.Spelling)
+	return name != "" && !strings.ContainsAny(name, " *&<>[],")
+}
+
 // recordFromSpecialization builds the record for a specialisation declaration
 // reached through a type.
 func (e *recordExtractor) recordFromSpecialization(decl, pattern CXCursor) (Record, bool) {
@@ -462,8 +629,10 @@ func (e *recordExtractor) recordFromSpecialization(decl, pattern CXCursor) (Reco
 	rec.IsAbstract = e.l.f.cxxRecordIsAbstract(decl) != 0
 	rec.IsTrivial = !e.l.nonTrivialRecord(decl, 0)
 	rec.IsPolymorphic = e.l.polymorphic(decl, 0)
+	rec.Synthesized = true
 	facts := ctorFacts{}
-	e.synthesizeSpecialization(&rec, pattern, typ, &facts, e.l.substitution(pattern, args))
+	patternCursor, sub := e.selectPattern(templateName, args, pattern)
+	e.synthesizeSpecialization(&rec, patternCursor, typ, &facts, sub)
 	e.finishRecord(&rec, facts)
 	return rec, true
 }
@@ -1224,6 +1393,17 @@ func (e *recordExtractor) collectEnum(cursor CXCursor) Enum {
 // is no name for the generator to bind it under.
 func (e *recordExtractor) addRecord(rec Record) {
 	if rec.QualifiedName == "" {
+		return
+	}
+	if i, ok := e.byName[rec.QualifiedName]; ok {
+		existing := e.records[i]
+		if existing.Synthesized && !rec.Synthesized {
+			// A full explicit specialisation's own body replaces a record that
+			// was synthesised before its definition cursor was reached.
+			e.records[i] = rec
+			return
+		}
+		mergeRecord(&e.records[i], rec)
 		return
 	}
 	e.byName[rec.QualifiedName] = len(e.records)

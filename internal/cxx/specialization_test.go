@@ -247,3 +247,87 @@ func TestTypeFieldOffsetWithoutName(t *testing.T) {
 	assert.Equal(t, int64(-1), library.typeFieldOffset(CXType{}, ""))
 	assert.Empty(t, library.fillArgumentSpellings(nil, CXType{}), "an invalid type spells no arguments")
 }
+
+func TestFullExplicitSpecialization(t *testing.T) {
+	tu := recordFixture(t)
+
+	full, ok := tu.Record("mathx::Spec<int>")
+	require.True(t, ok)
+	assert.False(t, full.Synthesized, "a full explicit specialisation has its own definition")
+	assert.True(t, full.LayoutKnown)
+	assert.Equal(t, int64(4), full.SizeBytes)
+	require.Len(t, full.Fields, 1)
+	assert.Equal(t, "special", full.Fields[0].Name, "the explicit body's field, not the pattern's")
+	assert.Equal(t, TypeInteger, full.Fields[0].Type.Kind)
+	assert.Empty(t, full.Members, "the body's members are project symbols, with their manglings")
+	member, ok := tu.Lookup("mathx::Spec<int>::get")
+	require.True(t, ok)
+	assert.Equal(t, Method, member.Kind)
+
+	// The primary pattern's body is not part of the specialisation.
+	for _, field := range full.Fields {
+		assert.NotEqual(t, "value", field.Name)
+	}
+
+	kind, ok := tu.Enum("mathx::Spec<int>::Kind")
+	require.True(t, ok)
+	assert.True(t, kind.ConstantsKnown)
+	require.Len(t, kind.Constants, 1)
+	assert.Equal(t, int64(42), kind.Constants[0].Value, "the explicit body's initializer, not the pattern's 1")
+
+	_, ok = tu.Enum("mathx::Spec::Kind")
+	assert.False(t, ok, "the primary pattern's nested enum is not a concrete type")
+}
+
+func TestPartialSpecialization(t *testing.T) {
+	tu := recordFixture(t)
+
+	partial, ok := tu.Record("mathx::Spec<int*>")
+	require.True(t, ok)
+	assert.True(t, partial.Synthesized, "a partial instantiation has no definition cursor")
+	require.Len(t, partial.Fields, 1)
+	assert.Equal(t, "pointer", partial.Fields[0].Name)
+	assert.Equal(t, TypePointer, partial.Fields[0].Type.Kind)
+	require.NotNil(t, partial.Fields[0].Type.Pointee)
+	assert.Equal(t, TypeInteger, partial.Fields[0].Type.Pointee.Kind)
+
+	pointee := mustMember(t, tu, "mathx::Spec<int*>::pointee")
+	assert.Equal(t, TypeInteger, pointee.Result.Kind, "the partial's T is int")
+	assert.True(t, pointee.IsTemplate == false)
+
+	kind, ok := tu.Enum("mathx::Spec<int*>::Kind")
+	require.True(t, ok)
+	assert.Equal(t, int64(7), kind.Constants[0].Value, "the partial's initializer")
+
+	// A non-matching instantiation falls back to the primary.
+	fallback, ok := tu.Record("mathx::Spec<double>")
+	require.True(t, ok)
+	require.Len(t, fallback.Fields, 1)
+	assert.Equal(t, "value", fallback.Fields[0].Name)
+	assert.Equal(t, TypeFloat, fallback.Fields[0].Type.Kind)
+	doubleKind, ok := tu.Enum("mathx::Spec<double>::Kind")
+	require.True(t, ok)
+	assert.Equal(t, int64(1), doubleKind.Constants[0].Value, "the primary's initializer")
+}
+
+func mustMember(t *testing.T, tu *TU, name string) Symbol {
+	t.Helper()
+	for _, record := range tu.Records() {
+		for _, member := range record.Members {
+			if member.QualifiedName == name {
+				return member
+			}
+		}
+	}
+	t.Fatalf("%s is not a member of any record", name)
+	return Symbol{}
+}
+
+func TestFullExplicitMemberHasItsOwnMangling(t *testing.T) {
+	project := openFixture(t)
+	member, ok := project.Lookup("mathx::Spec<int>::get")
+	require.True(t, ok)
+	assert.NotEmpty(t, member.Mangled, "the explicit body's member is a real symbol")
+	assert.True(t, member.Parent == "mathx::Spec<int>")
+	assert.False(t, member.IsTemplate)
+}

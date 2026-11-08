@@ -161,6 +161,8 @@ func TestProjectMissingBodies(t *testing.T) {
 		"mathx::Point::value",
 		"mathx::Right::right",
 		"mathx::Shape::area",
+		"mathx::Spec::get",
+		"mathx::Spec<int>::get",
 		"mathx::VDerived::derived",
 		"mathx::Vector::x",
 		"mathx::Vector::y",
