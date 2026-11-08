@@ -48,6 +48,13 @@ Applying it:
   no command used to produce the page, no "this tree", no commit, pull-request or
   issue numbers, no "we measured", no build or authoring notes, no description of
   the project's own CI or deployment, and no project history;
+- **benchmarks are user documentation, not a diary.** A benchmarks page is a
+  legitimate, evidence-bearing part of the manual: it contrasts cppgo with cgo
+  and with plain Go, and across the carriers, object lifecycle and error paths,
+  and it supports the project's performance claims. It carries the comparison
+  and a neutral statement of the environment it was measured on — not when, where
+  or by whom the page was produced. The full methodology and the run-by-run
+  provenance live in `docs/dev/benchmarks.md`;
 - developer material lives in [`docs/dev/`](../../../docs/dev/README.md): the
   benchmark methodology and its provenance, the claim-to-test evidence, the
   repository layout, the project's CI and release notes, the decision records and
@@ -55,8 +62,9 @@ Applying it:
   [`CONTRIBUTING.md`](../../../CONTRIBUTING.md), not from the user pages;
 - a performance characteristic may stay in user documentation as a
   characteristic ("a direct call stays in the same order as a Go call; cgo is
-  roughly an order of magnitude slower"). The measurement behind it lives in
-  `docs/dev/benchmarks.md`;
+  roughly an order of magnitude slower"), and the benchmarks page is where the
+  comparison lives. A number that is published as a measurement must come from a
+  real run — never an estimate, never a placeholder;
 - `CONTRIBUTING.md` and `CHANGELOG.md` are developer documents and keep their
   provenance;
 - moving is not deleting: the passage goes to the developer document that owns
