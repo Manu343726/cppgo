@@ -11,10 +11,38 @@
 # assumed: Debian 12 ships clang 14, and with it the suite fails (cmd/cppgo's
 # ABI tests — TestGenABIReport, TestCheckABIIsSilent, TestGenABIForce, ... — and
 # parts of internal/cxx) because the libclang behaviour the project relies on
-# is newer than 14. The same tree with trixie's clang 19 passes at 99.4% total
-# coverage; clang 19 is therefore the oldest version that satisfies the code,
-# and trixie is the Debian stable that carries it. g++ 14 covers the C++17
-# fixtures. arm64 maps to the same package names, so the build stays portable.
+# is newer than 14. g++ 14 covers the C++17 fixtures.
+#
+# clang/libclang come from apt.llvm.org rather than from trixie's archive, and
+# that is the same measurement a second time. trixie's archive stops at clang 19,
+# and since eadb901 (2026-11-08) the tree binds `clang_getOffsetOfBase`, which
+# libclang 19 does not export — the suite dies at load time with
+#
+#   cxx: libclang not found: … /usr/lib/libclang.so: undefined symbol:
+#   clang_getOffsetOfBase
+#
+# which is a statement about the image and not about the code under test: the
+# failure this image exists to prevent.
+#
+# Why 22 and not "the oldest major that exports the symbol": both halves are
+# measured. LLVM 20 is the oldest that exports `clang_getOffsetOfBase`
+# (`nm -D --defined-only`: present in 20.1 and 22.1, absent in 19.1). But the
+# suite also asserts what libclang *does* with an explicitly instantiated
+# template — internal/cxx expects the layout to be deferred (`LayoutKnown` false,
+# size -1) — and that expectation only holds while the parse cannot resolve
+# `<cstddef>`. With the C++ headers available, libclang 20, 21 and 22 all
+# complete the layout and four tests in internal/cxx fail; with `-nostdinc++`
+# the same binary reports the deferred layout the tests expect. So it is the
+# tests that encode a degraded parse, not a property of a major, and the finding
+# is named in the pull request that introduced this pin. No compiler here can
+# satisfy both the test and the code, so the pin follows the code.
+#
+# 22.1.8 is the version the project is developed against, and apt.llvm.org's
+# trixie archive ships it as a release build (the -20 and -21 components are
+# snapshots of their branches). Its signing key is fingerprint-checked below
+# instead of trusted, and the build-time probe proves `clang_getOffsetOfBase` is
+# there, so a pin that falls behind the code fails the build rather than the
+# test suite.
 #
 # Runs as root, deliberately: GitHub Actions container jobs start as root, so a
 # non-root USER here would either be ignored (the runner passes --user) or make
@@ -31,10 +59,19 @@ ARG DEBIAN_VERSION=trixie
 # ---------------------------------------------------------------------------
 FROM debian:${DEBIAN_VERSION}-slim AS fetch
 
-# Go must match the `go` directive in go.mod (1.25.0). Bump both together: the
-# final image sets GOTOOLCHAIN=local, so a go.mod newer than this fails loudly
-# instead of silently downloading a second toolchain.
-ARG GO_VERSION=1.25.0
+# Go has to be at least the `go` directive in go.mod (1.25.0) — the final image
+# sets GOTOOLCHAIN=local, so a module newer than this pin fails loudly instead of
+# silently downloading a second toolchain — and at least what the suite itself
+# asks for. It asks for more than go.mod does: internal/gen's end-to-end fixture
+# writes a throwaway module declaring `go 1.27.0` (writeModule, in
+# internal/gen/e2e_test.go), so a 1.25 toolchain stops four of those tests with
+# `go.mod requires go >= 1.27.0 (running go 1.25.0; GOTOOLCHAIN=local)`. 1.27.3
+# is the newest release, and the `build with the latest Go` job already proves
+# the module builds and vets with it. That a test fixture requires a Go newer
+# than the library's own documented minimum is a finding in the test, named in
+# the pull request that introduced this pin — it is not a reason to hold the
+# image behind the suite it has to run.
+ARG GO_VERSION=1.27.3
 # Same version as .golangci.yml / golangci-lint-action in ci.yml (v2, a v1
 # binary refuses the v2 config).
 ARG GOLANGCI_LINT_VERSION=v2.15.0
@@ -77,16 +114,57 @@ RUN set -eux; \
     mv rootfs/hugo rootfs/usr/local/bin/hugo; \
     chmod 0755 rootfs/usr/local/bin/golangci-lint rootfs/usr/local/bin/hugo
 
+# apt.llvm.org's signing key, imported only if its fingerprint is the one this
+# repository pinned: an archive that starts serving a different key fails this
+# build instead of being trusted. `gpg` is needed to read the key and for nothing
+# else, which is why the key is fetched here and copied into the final stage
+# rather than installed there — and why this is a step of its own, after the
+# pinned downloads: it changes nothing those steps read, so their layer survives.
+# Named "fingerprint" and not "key", for the build check that flags any ARG or ENV
+# whose name says "key": this value is a public fingerprint, and the flag it would
+# raise on every build is noise.
+ARG LLVM_ARCHIVE_FINGERPRINT=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gnupg; \
+    curl -fsSL --retry 3 --retry-delay 2 -o apt.llvm.org.asc \
+      https://apt.llvm.org/llvm-snapshot.gpg.key; \
+    fpr="$(gpg --show-keys --with-colons ./apt.llvm.org.asc | awk -F: '/^fpr:/ {print $10; exit}')"; \
+    if [ "$fpr" != "${LLVM_ARCHIVE_FINGERPRINT}" ]; then \
+      echo "apt.llvm.org key fingerprint is '$fpr', expected '${LLVM_ARCHIVE_FINGERPRINT}'" >&2; \
+      exit 1; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
+
 # ---------------------------------------------------------------------------
 # Stage 2 — the image CI runs in.
 # ---------------------------------------------------------------------------
 FROM debian:${DEBIAN_VERSION}-slim
 
-# Pinned libclang/libclang major. Trixie's metapackages (`clang`,
-# `libclang-dev`) resolve to these, but naming the version keeps the image
-# honest if the base ever floats: changing it is a code decision (see the base
-# note above), not an image tweak.
-ARG CLANG_VERSION=19
+# Pinned clang/libclang major, from apt.llvm.org (see the base note above).
+# trixie's own metapackages (`clang`, `libclang-dev`) stop at 19 and cannot bind
+# `clang_getOffsetOfBase`, so they are not used: changing this number is a code
+# decision, not an image tweak.
+ARG CLANG_VERSION=22
+# The apt.llvm.org suite that matches the base. It is a separate ARG because the
+# archive names its components `<suite>-<major>` and both halves are pinned.
+ARG LLVM_APT_SUITE=trixie
+
+# `apt-get update` reaches apt.llvm.org over TLS, and the slim base ships no CA
+# bundle (every Debian mirror in its sources is http://). Without this the index
+# download fails with `SSL routines::certificate verify failed` and the pinned
+# packages are then simply "unable to locate" — measured on the first build of
+# this recipe.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# The key verified in the fetch stage, and the one archive this image reads
+# clang from. No `[trusted=yes]`, no `Acquire::AllowInsecureRepositories`.
+COPY --from=fetch /staging/apt.llvm.org.asc /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+RUN set -eux; \
+    echo "deb https://apt.llvm.org/${LLVM_APT_SUITE}/ llvm-toolchain-${LLVM_APT_SUITE}-${CLANG_VERSION} main" \
+      > /etc/apt/sources.list.d/llvm.list
 
 LABEL org.opencontainers.image.title="cppgo-ci" \
       org.opencontainers.image.description="Pinned Go + C++17 + libclang + golangci-lint + Hugo toolchain for cppgo" \
@@ -106,13 +184,15 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 #                    and the race detector's cgo; `cc` also builds the fake
 #                    libclang the cxx tests use
 #   clang-$CLANG_VERSION
-#                    the compiler the project introspects with. clang 14 vs 19
-#                    differ in observable behaviour (see the base note), so the
-#                    exact version is a tested dependency, not an incidental
-#                    runtime.
+#                    the compiler the project introspects with. clang 14, 19,
+#                    20 and 22 differ in observable behaviour (see the base
+#                    note), so the exact version is a tested dependency, not an
+#                    incidental runtime.
 #   libclang-$CLANG_VERSION-dev
-#                    the C API internal/cxx dlopen()s, plus the unversioned
-#                    /usr/lib/llvm-19/lib/libclang.so the loader looks for.
+#                    the C API internal/cxx dlopen()s, including
+#                    clang_getOffsetOfBase, which libclang 19 does not export,
+#                    plus the /usr/lib/llvm-20/lib/libclang.so.1 the loader
+#                    reaches through the symlink created below.
 #                    It also installs clang's static archives (libclangSema.a
 #                    and friends, ~250 MB) which nothing here links at run
 #                    time, so they are deleted below; the shared object, the
@@ -153,17 +233,21 @@ RUN rm -rf /usr/local/go/test /usr/local/go/api /usr/local/go/doc /usr/local/go/
 
 # libclang discovery: internal/cxx looks for $CPPGO_LIBCLANG, then
 # /usr/lib/libclang.so, then /usr/lib/libclang-*.so*, then /usr/lib/llvm-*/lib/.
-# Debian's package puts the real object in the multiarch directory with the
-# version *in the middle* (libclang-19.so.1), a name the last pattern does not
-# match, so the unversioned name the loader tries first must be created here.
+# apt.llvm.org's package puts the real object in the multiarch directory
+# (/usr/lib/x86_64-linux-gnu/libclang-20.so.20) and a versioned hop beside it
+# (/usr/lib/llvm-20/lib/libclang-20.so.1), which the loader's last pattern does
+# reach — but the unversioned name it tries first (/usr/lib/libclang.so) is what
+# the environment actually resolves, so it is created here and then proven.
 # It is then proven with a real dlopen + dlsym that the symlink resolves, that
-# the C API is exported and that the major matches the pin — a build-time
-# failure is far cheaper than a silent test skip that only shows up as a red
-# coverage gate.
+# the C API is exported, that the major matches the pin **and that the version's
+# own symbols are there**: `clang_getOffsetOfBase` is the one internal/cxx calls
+# that a major can be too old for (clang 19 does not export it, clang 20 does),
+# and the failure it causes in the suite is an `undefined symbol` after a
+# successful load — far away from the pin that caused it. A build-time failure
+# is cheaper than a silent test skip that only shows up as a red coverage gate.
 #
-# The versionless compiler names are what Debian's `clang` metapackage provides;
-# we install the pinned clang-19 instead (the metapackage is only a symlink
-# carrier), so create them the same way.
+# The versionless compiler names are what a `clang` metapackage provides; the
+# pinned clang-20 package does not create them, so they are created here.
 RUN <<'SCRIPT'
 set -eux
 
@@ -197,6 +281,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "libclang C API symbols not found\n");
         return 2;
     }
+    /* The version-dependent symbol internal/cxx binds: absent before LLVM 20. */
+    if (!dlsym(handle, "clang_getOffsetOfBase")) {
+        fprintf(stderr, "clang_getOffsetOfBase is not exported by %s\n", argv[1]);
+        return 3;
+    }
     printf("%s\n", get_string(get_version()));
     return 0;
 }
@@ -228,7 +317,7 @@ RUN set -eux; \
     g++ --version | head -n 1; \
     clang --version | head -n 1; \
     hugo version | grep -qi extended; \
-    go version | grep -q "go1\.25\.0 "; \
+    go version | grep -q "go1\.27\.3 "; \
     clang --version | grep -q "clang version ${CLANG_VERSION}\."
 
 CMD ["bash"]
