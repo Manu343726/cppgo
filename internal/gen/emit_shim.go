@@ -18,14 +18,6 @@ func (m *packageModel) emitShim() ([]byte, []byte, []thunkSpan, error) {
 	return m.renderShim(nil)
 }
 
-// thunkSpan is one thunk's line range in the generated translation unit. It is
-// how a compiler diagnostic is turned back into the binding that produced it.
-type thunkSpan struct {
-	start  int
-	end    int
-	symbol string
-}
-
 // renderShim renders both shim files and the line range of every thunk. When
 // only is non-nil, the source contains just that binding's thunk, which is how
 // the self-check isolates the culprit of a compiler diagnostic.
@@ -83,7 +75,7 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 
 	var spans []thunkSpan
 	for _, binding := range m.bindings {
-		if binding.Carrier != thunk || (only != nil && binding != only) {
+		if !binding.Carrier.shimCarried() || (only != nil && binding != only) {
 			continue
 		}
 		h.WriteString("\n")
@@ -109,10 +101,14 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 func shimLine(b *strings.Builder) int { return strings.Count(b.String(), "\n") + 1 }
 
 // shimReturnType is the C return type of a thunk: the status when the call can
-// fail, the value itself when it cannot.
+// fail, the value itself when it cannot, and nothing when the value travels
+// through an out-pointer (a record the caller owns, whatever its size).
 func shimReturnType(binding *binding) string {
 	if binding.Status {
 		return "int32_t"
+	}
+	if binding.Out != nil {
+		return "void"
 	}
 	if binding.Result != nil {
 		return cTypeOf(binding.Result)
@@ -150,14 +146,27 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// store is the whole statement that delivers the value: a record is
+	// constructed into the caller's storage through the out-pointer, which is
+	// where C++'s own sret form is materialized. It is only reached when the
+	// binding has an out-pointer, which newBinding only adds with one.
+	store := func() string {
+		if binding.Result.Kind == goRecord {
+			return fmt.Sprintf("*static_cast<%s *>(cppgo_result) = %s;", binding.Result.Cxx, call)
+		}
+		return fmt.Sprintf("*cppgo_result = %s;", call)
+	}
 	var b strings.Builder
 	if !binding.Status {
 		// A noexcept call whose arguments are scalars, pointers or PODs cannot
 		// throw, and its Go signature has no error. Nothing is caught because
 		// there is nothing to catch.
-		if binding.Result != nil {
+		switch {
+		case binding.Out != nil:
+			fmt.Fprintf(&b, "\t%s\n", store())
+		case binding.Result != nil:
 			fmt.Fprintf(&b, "\treturn %s;\n", call)
-		} else {
+		default:
 			fmt.Fprintf(&b, "\t%s;\n", call)
 		}
 		return b.String(), nil
@@ -165,18 +174,25 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 	b.WriteString("\tcppgo_error_message.clear();\n")
 	b.WriteString("\ttry {\n")
 	b.WriteString(m.stdLocals(binding))
-	if binding.StdResult {
+	switch {
+	case binding.StdResult:
 		result, err := m.stdResult(binding, call)
 		if err != nil {
 			return "", err
 		}
 		b.WriteString(result)
-	} else if binding.Result != nil {
-		fmt.Fprintf(&b, "\t\t*cppgo_result = %s;\n", call)
-	} else {
+		b.WriteString("\t\treturn 0;\n")
+	case binding.statusResult:
+		// The callee's own return value is the status: 0 is success, anything
+		// else is the failure the Go side turns into an error.
+		fmt.Fprintf(&b, "\t\treturn %s;\n", call)
+	case binding.Out != nil:
+		fmt.Fprintf(&b, "\t\t%s\n", store())
+		b.WriteString("\t\treturn 0;\n")
+	default:
 		fmt.Fprintf(&b, "\t\t%s;\n", call)
+		b.WriteString("\t\treturn 0;\n")
 	}
-	b.WriteString("\t\treturn 0;\n")
 	b.WriteString("\t} catch (const std::exception &error) {\n")
 	b.WriteString("\t\tcppgo_error_message = error.what();\n")
 	b.WriteString("\t\treturn 1;\n")
@@ -194,12 +210,14 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 		if arg.label == "this" || arg.label == "out" || arg.isOut || arg.stdRole == stdRoleExtra {
 			continue
 		}
+		if arg.callable != nil && !arg.callable.Std {
+			// A plain function pointer: the address the callback table handed
+			// out, cast to the declaration's own type.
+			args = append(args, "reinterpret_cast<"+arg.callable.Cxx+">("+arg.cName+")")
+			continue
+		}
 		if arg.stdRole == stdRolePrimary {
-			if arg.stdMove {
-				args = append(args, "std::move("+arg.stdLocal+")")
-			} else {
-				args = append(args, arg.stdLocal)
-			}
+			args = append(args, arg.stdLocal)
 			continue
 		}
 		expr, err := m.shimArg(arg.param, arg.cName)
@@ -233,6 +251,15 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 // pointer to a record; the target wants the record type, a pointer, or a
 // reference, and the conversion is written where the layout is known.
 func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
+	if p.Kind == cxx.TypeRecord {
+		// A record passed by value: the Go side handed over the address of the
+		// value it holds, and the copy into the call is C++'s.
+		record := m.mapper.records[p.RecordName]
+		if record == nil {
+			return "", fmt.Errorf("cppgo: %s: a record the model does not know", p.Spelling)
+		}
+		return "*static_cast<const ::" + record.CxxName + " *>(" + name + ")", nil
+	}
 	if !p.Ptr || p.Pointee == nil {
 		return name, nil
 	}
@@ -269,6 +296,11 @@ func (m *packageModel) stdLocals(binding *binding) string {
 		}
 		elem := arg.stdElem
 		switch arg.stdKind {
+		case stdFunction:
+			// The std::function is constructed here, from the plain function
+			// pointer the callback table handed out: Go never builds one.
+			fmt.Fprintf(&b, "\t\t%s %s = reinterpret_cast<%s>(%s);\n",
+				arg.callable.StdCxx, arg.stdLocal, arg.callable.Cxx, arg.stdArgs[0])
 		case stdString:
 			fmt.Fprintf(&b, "\t\tstd::string %s(%s, %s);\n", arg.stdLocal, arg.stdArgs[0], arg.stdArgs[1])
 		case stdStringView:

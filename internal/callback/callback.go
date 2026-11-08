@@ -102,7 +102,7 @@ type slot struct {
 // published atomically so the callback path takes no lock (a callback that
 // registers another callback must not deadlock against the path it runs on).
 type table struct {
-	mu      sync.Mutex // serialises writers only
+	mu      sync.Mutex // serializes writers only
 	current atomic.Pointer[[Slots]*slot]
 }
 

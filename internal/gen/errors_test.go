@@ -17,9 +17,16 @@ func TestGenerationErrors(t *testing.T) {
 		header string
 		want   string
 	}{
-		{"bigresult.hpp", "is returned by value"},
 		{"bitfield.hpp", "public field"},
-		{"byvalue.hpp", "is passed by value"},
+		{"callbackargs.hpp", "more than 6 INTEGER arguments"},
+		{"callbackfloat.hpp", "take a double instead"},
+		{"callbackpointer.hpp", "of a callback binding is a"},
+		{"callbackmanyfloats.hpp", "more than 8 SSE arguments"},
+		{"callbackrecord.hpp", "is not a scalar"},
+		{"callbackrecordresult.hpp", "is not a scalar"},
+		{"callbackstring.hpp", "is not a scalar or a known record"},
+		{"callbackresult.hpp", "is a function or std::function result"},
+		{"callbackstdresult.hpp", "returns a standard-library value and takes a callback"},
 		{"classtemplate.hpp", "class template is not a type"},
 		{"freeoperator.hpp", "operators and conversion operators"},
 		{"incomplete.hpp", "not part of the generated API"},

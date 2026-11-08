@@ -43,11 +43,18 @@ func TestGeneratedGoShape(t *testing.T) {
 		"// C++: mathx::Vector::norm() const, _ZNK5mathx6Vector4normEv (thunk cppgo_thunk_",
 		"&cppgo.CallError{Symbol: symbol, Err: err}",
 		"func Open(path string) error { return cppgoOpen(path) }",
-		"const cppgoLibraryName = \"libmathx\"",
+		"cppgoShimName = \"libcppgo_mathx.so\"",
 	} {
 		assert.Contains(t, gen, want)
 	}
 	assert.NotContains(t, gen, "cppgo.Handle", "generated code must not expose Handle")
+
+	// This fixture's -library is a bare loader name, which the linker cannot be
+	// given: there is no recorded soname and no override to point at one, and
+	// the loader must find the library itself.
+	assert.NotContains(t, gen, "CppgoLibraryPath")
+	assert.NotContains(t, gen, "CPPGO_LIBRARY_PATH")
+	assert.NotContains(t, gen, "cppgoUserLibrary")
 }
 
 // TestGeneratedAsmShape asserts the trampoline's non-negotiable rules: the
@@ -174,7 +181,7 @@ func TestEveryBindingHasACarrier(t *testing.T) {
 			assert.NotEmpty(t, binding.Reason, "%s: %s", name, binding.sym.QualifiedName)
 			assert.NotEmpty(t, binding.Symbol, "%s: %s", name, binding.sym.QualifiedName)
 			assert.NotEmpty(t, binding.Trampoline, "%s: %s", name, binding.sym.QualifiedName)
-			if binding.Carrier == thunk {
+			if binding.Carrier.shimCarried() {
 				assert.NotEmpty(t, binding.Thunk)
 			} else {
 				assert.Empty(t, binding.Thunk)
@@ -206,7 +213,7 @@ func TestFixtureShimsCompile(t *testing.T) {
 				// std::span is C++20; the fixture's .clangd says so too.
 				standard = "-std=c++20"
 			}
-			cmd := exec.Command(compiler, standard, "-fsyntax-only", "-I"+cwd, filepath.Join(out, ShimSourceFileName))
+			cmd := exec.Command(compiler, standard, "-fsyntax-only", "-I"+cwd, ShimPath(out, ShimSourceFileName))
 			cmd.Dir = cwd
 			output, err := cmd.CombinedOutput()
 			require.NoErrorf(t, err, "%s rejected %s's shim:\n%s", compiler, name, output)

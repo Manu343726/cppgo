@@ -317,7 +317,7 @@ func (p *Project) Members(parent string) []Symbol {
 			out = append(out, sym)
 		}
 	}
-	// A template specialisation's members are synthesised from its pattern:
+	// A template specialization's members are synthesized from its pattern:
 	// libclang exposes no cursor for the instantiated definition. They live on
 	// the record, not in the symbol list, so the two are joined here.
 	for _, record := range p.records {

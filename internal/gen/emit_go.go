@@ -15,7 +15,13 @@ func (m *packageModel) emitGo() ([]byte, error) {
 	fmt.Fprintf(&b, "package %s\n\n", m.name)
 
 	usesUnsafe := m.usesUnsafe()
-	b.WriteString("import (\n\t\"fmt\"\n\t\"sync\"\n")
+	b.WriteString("import (\n\t\"fmt\"\n")
+	if m.libraryName != "" {
+		// Where the user's library is loaded from is a filesystem question at
+		// load time: beside the shim, or wherever the deployment points.
+		b.WriteString("\t\"os\"\n\t\"path/filepath\"\n")
+	}
+	b.WriteString("\t\"sync\"\n")
 	if usesUnsafe {
 		b.WriteString("\t\"unsafe\"\n")
 	}
@@ -77,20 +83,72 @@ func (m *packageModel) usesBool() bool {
 }
 
 // emitOpen writes the generated entry point and the symbol table Open resolves.
+//
+// Two objects are loaded, in this order: the user's library, which carries the
+// direct symbols, and the shim cppgo compiled, which carries the thunks. The
+// shim names the user's library in its DT_NEEDED entry — by soname, never by
+// the path the build found it at — so opening the shim brings the library in as
+// well, and loading the library first is what makes the name resolve to the
+// object the Go side already holds.
+//
+// Nothing here is a build path. The default deployment keeps the two shared
+// objects together: the user's library beside the shim, found through $ORIGIN
+// and through the directory of the path Open was given. A deployment with
+// another layout sets CppgoLibraryPath or CPPGO_LIBRARY_PATH.
 func (m *packageModel) emitOpen(b *strings.Builder) {
 	b.WriteString(`
-// Open loads the shared library and resolves every symbol this package binds.
-// A path of "" uses the -library name the package was generated with. It is
-// safe to call Open more than once; the first successful call wins.
+// Open loads the cppgo-built shim and, when the package has one, the user's
+// library it was linked against, then resolves every symbol this package binds.
+//
+// path names the shim cppgo compiled beside this package. A path of "" uses the
+// name the package was generated with. It is safe to call Open more than once;
+// the first successful call wins.
 func Open(path string) error { return cppgoOpen(path) }
+`)
 
-// cppgoLibraryName is the library named by -library.
-const cppgoLibraryName = `)
-	fmt.Fprintf(b, "%q\n\n", m.library)
+	if m.libraryName != "" {
+		b.WriteString(`
+// CppgoLibraryPath overrides where the user's library is loaded from, for a
+// deployment that does not keep it beside the shim. It must be set before the
+// first Open: the two objects are loaded once, and a later change is not
+// observed.
+//
+// The shim names the library by its soname, so a library that declares one is
+// found wherever this points. A library built without a soname is loaded from
+// the path here, and the shim still needs the loader to find it by name: keep
+// it beside the shim, or put its directory on LD_LIBRARY_PATH.
+var CppgoLibraryPath string
+`)
+	}
 
-	b.WriteString(`var (
+	b.WriteString(`
+const (
+	// cppgoShimName is the shim cppgo compiled beside this package.
+	cppgoShimName = `)
+	fmt.Fprintf(b, "%q\n", ShimLibraryName(m.name))
+	if m.libraryName != "" {
+		b.WriteString(`	// cppgoUserLibrary is the user's library by the name the shim names in its
+	// DT_NEEDED entry: its soname, or its file name when it declares none. It is
+	// never the path the package was generated at.
+	cppgoUserLibrary = `)
+		fmt.Fprintf(b, "%q\n", m.libraryName)
+		b.WriteString(`	// cppgoLibraryPathEnv is the environment override, for a deployment that
+	// cannot set CppgoLibraryPath before Open.
+	cppgoLibraryPathEnv = "CPPGO_LIBRARY_PATH"
+`)
+	}
+	b.WriteString(`)
+
+// cppgoLibraries are the two objects a generated call reaches: the shim cppgo
+// built, and the user's library it was linked against.
+type cppgoLibraries struct {
+	user *cppgo.Library
+	shim *cppgo.Library
+}
+
+var (
 	cppgoMu      sync.Mutex
-	cppgoLibrary *cppgo.Library
+	cppgoLoaded  *cppgoLibraries
 	cppgoOpenErr error
 )
 
@@ -105,62 +163,124 @@ var (
 	}
 	b.WriteString(")\n\n")
 
-	b.WriteString(`// cppgoOpen loads the shared library and resolves every symbol the generated
-// bindings need. A missing thunk means the generated shim was not compiled into
-// the library, which is a build error the message names.
+	b.WriteString(`// cppgoOpen loads the two objects and resolves every symbol the generated
+// bindings need. A missing thunk means the shim cppgo compiled is not the one
+// this package was generated from, and the message says how to rebuild it.
 func cppgoOpen(path string) error {
 	cppgoMu.Lock()
 	defer cppgoMu.Unlock()
-	if cppgoLibrary != nil {
+	if cppgoLoaded != nil {
 		return nil
 	}
 	if path == "" && cppgoOpenErr != nil {
 		return cppgoOpenErr
 	}
 	if path == "" {
-		path = cppgoLibraryName
+		path = cppgoShimName
 	}
-	lib, err := cppgo.Open(path)
+	loaded, err := cppgoLoad(path)
 	if err != nil {
 		cppgoOpenErr = err
 		return err
 	}
+	cppgoLoaded = loaded
+	cppgoOpenErr = nil
+	return nil
+}
+
+`)
+
+	if m.libraryName != "" {
+		b.WriteString(`// cppgoUserLibraryPath is where the user's library is loaded from:
+// CPPGO_LIBRARY_PATH, then CppgoLibraryPath, then the directory the shim was
+// found in (the default deployment keeps the two objects together), then the
+// recorded name for the dynamic loader's own search.
+func cppgoUserLibraryPath(shimPath string) string {
+	if path := os.Getenv(cppgoLibraryPathEnv); path != "" {
+		return path
+	}
+	if CppgoLibraryPath != "" {
+		return CppgoLibraryPath
+	}
+	if dir := filepath.Dir(shimPath); dir != "" && dir != "." {
+		beside := filepath.Join(dir, cppgoUserLibrary)
+		if _, err := os.Stat(beside); err == nil {
+			return beside
+		}
+	}
+	return cppgoUserLibrary
+}
+
+`)
+	}
+	b.WriteString(`// cppgoLoad opens the shim and resolves every symbol from the object that
+// carries it.
+func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
+	loaded := &cppgoLibraries{}
+`)
+	if m.libraryName != "" {
+		b.WriteString(`	// The shim names the user's library in its DT_NEEDED entry, so opening the
+	// shim has already brought it in. A deployment that keeps the library
+	// somewhere else also gets an explicit handle, which is what a direct
+	// symbol is resolved from; a handle is not required, because the shim's own
+	// dependency graph covers the same symbols.
+	if user, err := cppgo.Open(cppgoUserLibraryPath(shimPath)); err == nil {
+		loaded.user = user
+	}
+`)
+	}
+	b.WriteString(`	shim, err := cppgo.Open(shimPath)
+	if err != nil {
+		return nil, fmt.Errorf("cppgo: open the shim %s: %w", shimPath, err)
+	}
+	loaded.shim = shim
 	for _, symbol := range []struct {
-		name  string
-		addr  *uintptr
-		thunk bool
+		name string
+		addr *uintptr
+		shim bool
 	}{
 `)
 	for _, binding := range m.bindings {
-		fmt.Fprintf(b, "\t\t{name: %q, addr: &%s, thunk: %t},\n", binding.Symbol, binding.SymbolVar, binding.Carrier == thunk)
+		fmt.Fprintf(b, "\t\t{name: %q, addr: &%s, shim: %t},\n", binding.Symbol, binding.SymbolVar, binding.Carrier.shimCarried())
 	}
 	if m.usesFree {
-		b.WriteString("\t\t{name: \"cppgo_free\", addr: &cppgoFreeSym, thunk: true},\n")
+		b.WriteString("\t\t{name: \"cppgo_free\", addr: &cppgoFreeSym, shim: true},\n")
 	}
 	b.WriteString(`	} {
+		lib := loaded.user
+		if symbol.shim || lib == nil {
+			lib = loaded.shim
+		}
 		addr, err := lib.Symbol(symbol.name)
 		if err != nil {
-			_ = lib.Close()
-			if symbol.thunk {
-				err = fmt.Errorf("cppgo: %w: compile zz_cppgo_shim.cpp into %s", err, path)
+			cppgoUnload(loaded)
+			if symbol.shim {
+				err = fmt.Errorf("cppgo: %w: the shim cppgo compiled is stale; run cppgo gen again", err)
 			}
-			cppgoOpenErr = err
-			return err
+			return nil, err
 		}
 		*symbol.addr = addr
 	}
-	cppgoLibrary = lib
-	cppgoOpenErr = nil
-	return nil
+	return loaded, nil
+}
+
+// cppgoUnload closes whatever a failed load opened.
+func cppgoUnload(loaded *cppgoLibraries) {
+	if loaded.user != nil {
+		_ = loaded.user.Close()
+	}
+	if loaded.shim != nil {
+		_ = loaded.shim.Close()
+	}
 }
 
 // cppgoCallError reads the message a thunk stored and wraps it in the error the
 // binding returns.
 func cppgoCallError(symbol string) error {
 	cppgoMu.Lock()
-	lib := cppgoLibrary
+	shim := cppgoLoaded.shim
 	cppgoMu.Unlock()
-	err := cppgo.LastError(lib)
+	err := cppgo.LastError(shim)
 	if err == nil {
 		err = fmt.Errorf("the call failed without a message")
 	}
@@ -171,9 +291,9 @@ func cppgoCallError(symbol string) error {
 // message, a CallError when it did.
 func cppgoCloseError(symbol string) error {
 	cppgoMu.Lock()
-	lib := cppgoLibrary
+	shim := cppgoLoaded.shim
 	cppgoMu.Unlock()
-	if err := cppgo.LastError(lib); err != nil {
+	if err := cppgo.LastError(shim); err != nil {
 		return &cppgo.CallError{Symbol: symbol, Err: err}
 	}
 	return nil
@@ -394,20 +514,152 @@ type callContext struct {
 // callArgs renders the trampoline arguments, including the implicit this and a
 // clone's hidden source.
 func (m *packageModel) callArgs(binding *binding, ctx callContext) []string {
-	args := []string{binding.SymbolVar}
+	return append([]string{binding.SymbolVar}, m.wireExprs(binding, ctx)...)
+}
+
+// wireExprs renders the argument expressions in wire order, with the implicit
+// this and a clone's hidden source filled in from the Go receiver.
+func (m *packageModel) wireExprs(binding *binding, ctx callContext) []string {
+	exprs := make([]string, 0, len(binding.Wire))
 	cloneSource := binding.IsClone
 	for _, arg := range binding.Wire {
 		switch {
 		case arg.label == "this":
-			args = append(args, ctx.thisExpr)
+			exprs = append(exprs, ctx.thisExpr)
 		case cloneSource:
-			args = append(args, ctx.recvExpr)
+			exprs = append(exprs, ctx.recvExpr)
 			cloneSource = false
 		default:
-			args = append(args, arg.expr)
+			exprs = append(exprs, arg.expr)
 		}
 	}
-	return args
+	return exprs
+}
+
+// emitReentrant writes a call that enters C through runtime.cgocall: every Go
+// function the signature takes is registered in the callback table first, the
+// argument frame is filled from the wire words, the call is made, and the
+// recorded panic, the status and the result are read back in that order.
+func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx callContext) {
+	for _, arg := range binding.Wire {
+		if arg.callable != nil {
+			m.emitCallbackRegistration(b, binding, arg)
+		}
+	}
+	if binding.Out != nil && binding.outPointer {
+		fmt.Fprintf(b, "\tcppgoResult := new(%s)\n", binding.OutLocal)
+	}
+	b.WriteString("\tvar cppgoFrame cppgo.Args\n")
+	// The frame is filled from the same expressions the NOSPLIT trampoline
+	// would load, in wire order, into the two register banks.
+	exprs := m.wireExprs(binding, ctx)
+	ints, floats := 0, 0
+	for i, arg := range binding.Wire {
+		if arg.class == classFloat {
+			fmt.Fprintf(b, "\tcppgoFrame.F[%d] = float64(%s)\n", floats, exprs[i])
+			floats++
+			continue
+		}
+		fmt.Fprintf(b, "\tcppgoFrame.I[%d] = uintptr(%s)\n", ints, exprs[i])
+		ints++
+	}
+	fmt.Fprintf(b, "\tcppgo.CallReentrant(%s, &cppgoFrame)\n", binding.SymbolVar)
+	m.emitKeepAlive(b, binding, ctx)
+	b.WriteString("\tif cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {\n\t\tpanic(cppgoPanic.Value)\n\t}\n")
+	if !binding.Status {
+		switch {
+		case binding.Out != nil:
+			fmt.Fprintf(b, "\treturn %s\n", convertResult(binding, "*cppgoResult"))
+		case binding.Result != nil:
+			fmt.Fprintf(b, "\treturn %s\n", reentrantResult(binding))
+		}
+		return
+	}
+	b.WriteString("\tif cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {\n")
+	fmt.Fprintf(b, "\t\treturn %scppgoCallError(%q)\n\t}\n", errorZeroPrefix(binding), binding.sym.QualifiedName)
+	// A status thunk with a value always carries it through the out-pointer the
+	// caller owns, so what is left is that pointer or no result at all.
+	if binding.Out != nil {
+		fmt.Fprintf(b, "\treturn %s, nil\n", convertResult(binding, "*cppgoResult"))
+		return
+	}
+	b.WriteString("\treturn nil\n")
+}
+
+// emitCallbackRegistration writes one Go function into the callback table. The
+// closure marshals the C argument frame to the Go signature and the Go result
+// back to the one result register the ABI carries.
+func (m *packageModel) emitCallbackRegistration(b *strings.Builder, binding *binding, arg *wireArg) {
+	index := 0
+	for _, other := range binding.Wire {
+		if other == arg {
+			break
+		}
+		if other.callable != nil {
+			index++
+		}
+	}
+	callable := arg.callable
+	args := make([]string, len(callable.Params))
+	ints, floats := 0, 0
+	for i, param := range callable.Params {
+		switch param.Kind {
+		case goFloat:
+			args[i] = fmt.Sprintf("cppgoFrame.F[%d]", floats)
+			floats++
+		case goBool:
+			args[i] = fmt.Sprintf("cppgoFrame.I[%d] != 0", ints)
+			ints++
+		default:
+			args[i] = fmt.Sprintf("%s(cppgoFrame.I[%d])", param.Go, ints)
+			ints++
+		}
+	}
+	invoke := arg.callbackParam + "(" + strings.Join(args, ", ") + ")"
+	fmt.Fprintf(b, "\tcppgoCallback%d, cppgoCallbackErr := cppgo.RegisterCallback(func(cppgoFrame *cppgo.Args) {\n", index)
+	// The registration's own error is handled before the call; a nil function
+	// is the only way a fresh registration fails, and the table is 64 slots.
+	switch {
+	case callable.Result == nil:
+		fmt.Fprintf(b, "\t\t%s\n", invoke)
+	case callable.Result.Kind == goBool:
+		fmt.Fprintf(b, "\t\tif %s {\n\t\t\tcppgoFrame.Ret = 1\n\t\t}\n", invoke)
+	case callable.Result.Kind == goFloat:
+		fmt.Fprintf(b, "\t\tcppgoFrame.RetF = %s\n", invoke)
+	case unsignedType(callable.Result):
+		fmt.Fprintf(b, "\t\tcppgoFrame.Ret = uintptr(%s)\n", invoke)
+	default:
+		fmt.Fprintf(b, "\t\tcppgoFrame.Ret = uintptr(int64(%s))\n", invoke)
+	}
+	fmt.Fprintf(b, "\t})\n")
+	if binding.ErrorResult {
+		fmt.Fprintf(b, "\tif cppgoCallbackErr != nil {\n\t\treturn %scppgoCallbackErr\n\t}\n", errorZeroPrefix(binding))
+	} else {
+		b.WriteString("\tif cppgoCallbackErr != nil {\n\t\tpanic(cppgoCallbackErr)\n\t}\n")
+	}
+	fmt.Fprintf(b, "\tdefer cppgo.ReleaseCallback(cppgoCallback%d)\n", index)
+}
+
+// unsignedType reports whether a mapped integer has no sign bit to extend. The
+// Go name is the evidence: a template argument's element type carries no
+// libclang parameter, so its width and signedness are the mapped spelling.
+func unsignedType(t *goType) bool { return strings.HasPrefix(t.Go, "uint") }
+
+// reentrantResult reads a value result out of the argument frame: the INTEGER
+// result from RAX and the floating one from XMM0.
+func reentrantResult(binding *binding) string {
+	result := binding.Result
+	switch result.Kind {
+	case goBool:
+		// bool returns in AL; the rest of RAX is not part of the value.
+		return "cppgoFrame.Ret&0xff != 0"
+	case goFloat:
+		return "cppgoFrame.RetF"
+	case goPointer:
+		return "(*" + strings.TrimPrefix(result.Go, "*") + ")(unsafe.Pointer(cppgoFrame.Ret))"
+	default:
+		return result.Go + "(cppgoFrame.Ret)"
+	}
 }
 
 // emitCall writes one function or method wrapper.
@@ -450,6 +702,11 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		b.WriteString(err)
 	}
 	b.WriteString("\tcppgo.ProbeStack()\n")
+	if binding.Carrier == reentrant {
+		m.emitReentrant(b, binding, ctx)
+		b.WriteString("}\n")
+		return
+	}
 	call := binding.Trampoline + "(" + strings.Join(m.callArgs(binding, ctx), ", ") + ")"
 	switch {
 	case binding.Status:
@@ -471,6 +728,13 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		default:
 			b.WriteString("\treturn nil\n")
 		}
+	case binding.Out != nil:
+		// A value the thunk writes into Go storage; a call that cannot fail has
+		// no error to report, so the result is the signature's only return.
+		fmt.Fprintf(b, "\tvar cppgoResult %s\n", binding.OutLocal)
+		fmt.Fprintf(b, "\t%s\n", call)
+		m.emitKeepAlive(b, binding, ctx)
+		fmt.Fprintf(b, "\treturn %s\n", convertResult(binding, "cppgoResult"))
 	case binding.Result != nil:
 		// A thunk that cannot throw returns the value directly, and a direct
 		// call has no error channel at all.
@@ -490,11 +754,11 @@ func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, desc
 	fmt.Fprintf(b, "\n// %s\n", description)
 	mangled := binding.sym.Mangled
 	if mangled == "" {
-		mangled = "synthesised"
+		mangled = "synthesized"
 	}
 	evidence := "//\n// C++: " + displaySignature(binding.sym) + ", " + mangled
 	evidence += " (" + binding.Carrier.String()
-	if binding.Carrier == thunk {
+	if binding.Carrier.shimCarried() {
 		evidence += " " + binding.Thunk
 	}
 	evidence += ", " + binding.Reason + ")"
@@ -575,6 +839,9 @@ func (m *packageModel) emitTrampolineDeclarations(b *strings.Builder) {
 		b.WriteString("\n// cppgoFree is the NOSPLIT trampoline for cppgo_free.\nfunc cppgoFree(fn uintptr, block unsafe.Pointer)\n")
 	}
 	for _, binding := range m.bindings {
+		if binding.Carrier == reentrant {
+			continue
+		}
 		b.WriteString("\n")
 		fmt.Fprintf(b, "// %s is the NOSPLIT trampoline for %s.\n", binding.Trampoline, binding.Symbol)
 		parts := make([]string, 0, len(binding.Slots))
@@ -633,7 +900,7 @@ func zeroValue(t *goType) string {
 		return `""`
 	case goSlice:
 		return "nil"
-	case goArray:
+	case goArray, goRecord:
 		return t.Go + "{}"
 	default:
 		return "0"

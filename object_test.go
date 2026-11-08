@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNewObjectAlignment checks that the address handed to C++ honours the
+// TestNewObjectAlignment checks that the address handed to C++ honors the
 // requested alignment and that the storage starts zeroed (C++ constructs into
 // it, but a constructor is free to read before it writes nothing; zeroed is the
 // only predictable value).

@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,92 +14,211 @@ import (
 	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
-// TestGeneratedPackageBuildsAndRuns is the end-to-end proof of the emitter: it
-// builds the fixture library with g++, generates bindings for it, compiles the
-// generated shim into the same library, and then calls the generated Go package
-// for real.
+// TestGeneratedPackageBuildsAndRuns is the end-to-end proof of the v4 pipeline
+// on a project laid out the way a real one is: a header under include/, a
+// source under src/, and a shared object built by the project's own command.
 //
-// The exercise covers both carriers: Scale is called through the direct
-// trampoline (noexcept, out of line), everything else through a generated
-// thunk. It also proves Open's missing-thunk diagnostic in a second process,
-// because a package's library is opened once.
+// The steps are the contract's three artifacts in order. The user's library is
+// built first, by the project's Makefile, and never touched again. `cppgo gen`
+// parses the header, decides the carriers, writes the Go package, the
+// trampolines and the shim, and compiles the shim itself into
+// libcppgo_analytic.so, linked against the user's library. The generated
+// package is then built and run twice — with CGO_ENABLED=0 and with the race
+// detector — against the two objects.
 func TestGeneratedPackageBuildsAndRuns(t *testing.T) {
-	gxx, err := exec.LookPath("g++")
-	if err != nil {
-		t.Skip("g++ is not in PATH")
-	}
-	goBin, err := exec.LookPath("go")
+	requireEndToEndTools(t)
+	repo, err := filepath.Abs("../..")
+	require.NoError(t, err)
+
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "project")
+	require.NoError(t, copyTree("testdata/project", project))
+
+	// 1. The user's build: their Makefile, their flags, their object.
+	makeBin, err := exec.LookPath("make")
+	require.NoError(t, err)
+	runIn(t, project, makeBin, "library")
+	library := filepath.Join(project, "build", "libanalytic.so")
+	require.FileExists(t, library)
+	before := fileDigest(t, library)
+
+	header := filepath.Join(project, "include", "analytic", "analytic.hpp")
+	moduleDir := filepath.Join(tmp, "module")
+	out := filepath.Join(moduleDir, "analytic")
+	var report bytes.Buffer
+	require.NoError(t, Generate(Config{
+		Headers: []string{header},
+		Package: "analytic",
+		Library: library,
+		Out:     out,
+		Report:  &report,
+	}))
+
+	// 2. The carriers are what the contract says, and the report names them:
+	// the noexcept out-of-line method is direct, the inline accessor and the
+	// throwing function are shims, and a callback forces the reentrant carrier.
+	carrierOf(t, report.String(), "analytic::Signal::scaled(double) const noexcept", "direct")
+	carrierOf(t, report.String(), "analytic::Signal::gain() const", "thunk")
+	carrierOf(t, report.String(), "analytic::ratio(std::int32_t, std::int32_t)", "thunk")
+	carrierOf(t, report.String(), "analytic::fold(", "reentrant")
+	carrierOf(t, report.String(), "analytic::integrate(", "reentrant")
+
+	// 3. cppgo built the shim itself, and the user's build was not touched: the
+	// library carries no cppgo symbol and it is byte-identical to the object its
+	// own build produced.
+	shim := filepath.Join(out, ShimLibraryName("analytic"))
+	require.FileExists(t, shim)
+	assert.Equal(t, before, fileDigest(t, library), "the user's library must not change")
+	deployBeside(t, library, out)
+	assert.Empty(t, symbolsMatching(t, library, "cppgo"))
+	assert.NotEmpty(t, symbolsMatching(t, shim, "cppgo_last_error"), "the shim is the cppgo artifact")
+
+	// 4. The generated package builds and runs against the two objects, with
+	// cgo off and with the race detector on.
+	require.NoError(t, writeModule(t, moduleDir, repo))
+	require.NoError(t, os.WriteFile(filepath.Join(out, "analytic_test.go"), []byte(e2eTestSource), 0o644))
+	runGoEnv(t, goTool(t), moduleDir, nil, "vet", "./analytic")
+	ran := runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=0", "CPPGO_E2E_SHIM=" + shim},
+		"test", "-count=1", "-v", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestBindings")
+	ran = runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=1", "CPPGO_E2E_SHIM=" + shim},
+		"test", "-race", "-count=1", "-v", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestBindings")
+}
+
+// TestMissingShimNamesTheArtefact proves the load-time diagnostic: the user's
+// library loads, the shim does not, and Open names the shim path it looked for
+// instead of failing later on a symbol nobody resolved.
+func TestMissingShimNamesTheArtefact(t *testing.T) {
+	requireEndToEndTools(t)
+	repo, err := filepath.Abs("../..")
+	require.NoError(t, err)
+
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "project")
+	require.NoError(t, copyTree("testdata/project", project))
+	makeBin, err := exec.LookPath("make")
+	require.NoError(t, err)
+	runIn(t, project, makeBin, "library")
+
+	moduleDir := filepath.Join(tmp, "module")
+	out := filepath.Join(moduleDir, "analytic")
+	require.NoError(t, Generate(Config{
+		Headers: []string{filepath.Join(project, "include", "analytic", "analytic.hpp")},
+		Package: "analytic",
+		Library: filepath.Join(project, "build", "libanalytic.so"),
+		Out:     out,
+	}))
+	require.NoError(t, writeModule(t, moduleDir, repo))
+	require.NoError(t, os.WriteFile(filepath.Join(out, "missing_test.go"), []byte(missingShimSource), 0o644))
+	absent := filepath.Join(tmp, "absent", ShimLibraryName("analytic"))
+	ran := runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=0", "CPPGO_E2E_SHIM=" + absent},
+		"test", "-count=1", "-v", "-run", "^TestMissingShim$", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestMissingShim")
+}
+
+// TestFixturePackagesCompile builds every fixture's generated Go package in a
+// throwaway module: go vet runs asmdecl, which checks each trampoline's frame
+// size and FP offsets against the Go declaration, so a widened or narrowed
+// signature cannot pass unnoticed.
+func TestFixturePackagesCompile(t *testing.T) {
+	goBinary, err := exec.LookPath("go")
 	if err != nil {
 		t.Skip("go is not in PATH")
+	}
+	repo, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	for name, cfg := range goldenFixtures() {
+		name, cfg := name, cfg
+		t.Run(name, func(t *testing.T) {
+			moduleDir := t.TempDir()
+			require.NoError(t, writeModule(t, moduleDir, repo))
+			cfg.Out = filepath.Join(moduleDir, "genpkg")
+			require.NoError(t, Generate(cfg))
+			runGoEnv(t, goBinary, moduleDir, nil, "vet", "./genpkg")
+			runGoEnv(t, goBinary, moduleDir, nil, "build", "./genpkg")
+		})
+	}
+}
+
+// deployBeside stages the default deployment: the user's library beside the
+// shim, which is what the generated Open resolves without any override.
+func deployBeside(t *testing.T, library, shimDir string) {
+	t.Helper()
+	data, err := os.ReadFile(library)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(shimDir, filepath.Base(library)), data, 0o755))
+}
+
+// requireEndToEndTools skips a test whose toolchain is absent, naming it.
+func requireEndToEndTools(t *testing.T) {
+	t.Helper()
+	for _, tool := range []string{"g++", "go", "make", "nm"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not in PATH", tool)
+		}
 	}
 	if _, err := cxx.Load(); err != nil {
 		t.Skipf("libclang is not available: %v", err)
 	}
-	repo, err := filepath.Abs("../..")
-	require.NoError(t, err)
-	fixture, err := filepath.Abs("testdata/mathx")
-	require.NoError(t, err)
-	header := filepath.Join(fixture, "vector.hpp")
-
-	tmp := t.TempDir()
-	cxxDir := filepath.Join(tmp, "cxx")
-	require.NoError(t, copyTree(fixture, cxxDir))
-	lib := filepath.Join(tmp, "libmathx.so")
-	noShim := filepath.Join(tmp, "libmathx_noshim.so")
-
-	// The library without the shim is what the generator cross-checks the
-	// direct binding against; the shim does not exist yet.
-	buildLibrary(t, gxx, cxxDir, noShim, "")
-
-	moduleDir := filepath.Join(tmp, "module")
-	out := filepath.Join(moduleDir, "genpkg")
-	require.NoError(t, Generate(Config{
-		Headers: []string{header},
-		Package: "mathx",
-		Library: noShim,
-		Out:     out,
-	}))
-	// The shim is compiled into the same library, as the contract requires.
-	buildLibrary(t, gxx, cxxDir, lib, filepath.Join(out, ShimSourceFileName))
-
-	// The generated shim must be legal C++ for both compilers, not merely text
-	// that g++ accepted when linking.
-	for _, compiler := range []string{"g++", "clang++"} {
-		path, err := exec.LookPath(compiler)
-		if err != nil {
-			continue
-		}
-		cmd := exec.Command(path, "-std=c++17", "-fsyntax-only", "-I"+cxxDir, filepath.Join(out, ShimSourceFileName))
-		output, err := cmd.CombinedOutput()
-		require.NoErrorf(t, err, "%s rejected the generated shim:\n%s", compiler, output)
-	}
-
-	require.NoError(t, writeModule(t, moduleDir, repo))
-	require.NoError(t, os.WriteFile(filepath.Join(out, "e2e_test.go"), []byte(e2eTestSource), 0o644))
-
-	runGo(t, goBin, moduleDir, "vet", "./genpkg")
-	// The two scenarios run in separate processes: a package's library is
-	// opened once, so a process that loaded the shim-bearing library cannot
-	// then observe the missing-thunk failure.
-	env := []string{"CPPGO_E2E_LIB=" + lib, "CPPGO_E2E_NOSHIM=" + noShim}
-	ran := runGoEnv(t, goBin, moduleDir, env, "test", "-count=1", "-v", "-run", "^TestBindings$", "./genpkg")
-	assert.Contains(t, ran, "--- PASS: TestBindings")
-	ran = runGoEnv(t, goBin, moduleDir, env, "test", "-count=1", "-v", "-run", "^TestMissingShim$", "./genpkg")
-	assert.Contains(t, ran, "--- PASS: TestMissingShim")
 }
 
-// buildLibrary compiles the fixture and, when shim is non-empty, links the
-// generated shim into the same shared object.
-func buildLibrary(t *testing.T, gxx, dir, out, shim string) {
+// goTool is the go tool, which every end-to-end test needs.
+func goTool(t *testing.T) string {
 	t.Helper()
-	args := []string{"-std=c++17", "-O1", "-fPIC", "-shared", "-I" + dir}
-	args = append(args, filepath.Join(dir, "vector.cpp"))
-	if shim != "" {
-		args = append(args, shim)
+	path, err := exec.LookPath("go")
+	require.NoError(t, err)
+	return path
+}
+
+// carrierOf asserts that the report's line for a declaration names the carrier
+// and the reason the contract gives it.
+func carrierOf(t *testing.T, report, declaration, carrier string) {
+	t.Helper()
+	for _, line := range strings.Split(report, "\n") {
+		if !strings.HasPrefix(line, declaration) {
+			continue
+		}
+		assert.Contains(t, line, " "+carrier+" ",
+			"%s must be carried by %s", declaration, carrier)
+		return
 	}
-	args = append(args, "-o", out)
-	output, err := exec.Command(gxx, args...).CombinedOutput()
-	require.NoErrorf(t, err, "g++ failed:\n%s", output)
+	t.Fatalf("%s is not in the report:\n%s", declaration, report)
+}
+
+// runIn runs a command with a working directory and fails with its output.
+func runIn(t *testing.T, dir, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "%s %s failed:\n%s", name, strings.Join(args, " "), output)
+}
+
+// symbolsMatching returns the dynamic symbols of path whose name contains
+// substr, which is how "no cppgo symbol is in the user's library" is measured.
+func symbolsMatching(t *testing.T, path, substr string) []string {
+	t.Helper()
+	nm, err := exec.LookPath("nm")
+	require.NoError(t, err)
+	out, err := exec.Command(nm, "-D", path).Output()
+	require.NoError(t, err)
+	var found []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, substr) {
+			found = append(found, strings.TrimSpace(line))
+		}
+	}
+	return found
+}
+
+// fileDigest returns the file's bytes, which is how "the user's build was not
+// touched" is measured.
+func fileDigest(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(data)
 }
 
 // writeModule writes the throwaway module that holds the generated package. It
@@ -117,23 +237,25 @@ func writeModule(t *testing.T, dir, repo string) error {
 	return os.WriteFile(filepath.Join(dir, "go.sum"), sum, 0o644)
 }
 
-// runGo runs the go tool in a throwaway module.
-func runGo(t *testing.T, goBin, dir string, args ...string) string {
+// runGoEnvMayFail is runGoEnv for a command whose failure is the measurement.
+func runGoEnvMayFail(t *testing.T, goBinary, dir string, extra []string, args ...string) (string, error) {
 	t.Helper()
-	return runGoEnv(t, goBin, dir, nil, args...)
+	cmd := exec.Command(goBinary, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOWORK=off", "GOPROXY=off")
+	cmd.Env = append(cmd.Env, extra...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
 }
 
-// runGoEnv is runGo with extra environment variables.
-func runGoEnv(t *testing.T, goBin, dir string, extra []string, args ...string) string {
+// runGoEnv runs the go tool in a throwaway module, with the environment a
+// consumer has: no network, no workspace, a replace directive instead of a
+// published module.
+func runGoEnv(t *testing.T, goBinary, dir string, extra []string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command(goBin, args...)
+	cmd := exec.Command(goBinary, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"CGO_ENABLED=0",
-		"GOFLAGS=-mod=mod",
-		"GOWORK=off",
-		"GOPROXY=off",
-	)
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOWORK=off", "GOPROXY=off")
 	cmd.Env = append(cmd.Env, extra...)
 	output, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "go %s failed:\n%s", strings.Join(args, " "), output)
@@ -165,126 +287,322 @@ func copyTree(src, dst string) error {
 	})
 }
 
-// e2eTestSource is the test the generated package runs. It is written as Go
-// source rather than built as a string so the coverage of the generated code is
-// the behaviour, not the text.
-const e2eTestSource = `package mathx
+// e2eTestSource is the program the generated package runs. Every assertion is a
+// value the C++ produced, and each one is labeled with the construct it
+// measures.
+const e2eTestSource = `package analytic
 
 import (
 	"math"
+	"os"
+	"testing"
+)
+
+func TestBindings(t *testing.T) {
+	// The programmatic override: the deployment shape that keeps the user's
+	// library somewhere other than beside the shim.
+	CppgoLibraryPath = os.Getenv("CPPGO_E2E_LIB_VAR")
+	if err := Open(os.Getenv("CPPGO_E2E_SHIM")); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// The opaque class: private members, an out-of-line constructor, an inline
+	// accessor (shim), a throwing method (shim, status) and a noexcept one
+	// (direct).
+	s, err := NewSignal(3, 4)
+	if err != nil {
+		t.Fatalf("NewSignal: %v", err)
+	}
+	if g, err := s.Gain(); err != nil || g != 3 {
+		t.Fatalf("Gain = %v, %v", g, err) // inline body, through the shim
+	}
+	if e, err := s.Energy(); err != nil || e != 12 {
+		t.Fatalf("Energy = %v, %v", e, err)
+	}
+	if got := s.Scaled(2.5); got != 7.5 {
+		t.Fatalf("Scaled = %v, want 7.5 (the direct carrier)", got)
+	}
+	if d, err := s.Dot([]float64{1, 1, 1, 1, 1}); err != nil || d != 12 {
+		t.Fatalf("Dot = %v, %v", d, err) // a (pointer, length) slice, capped by taps
+	}
+	// A method that takes a callback: this travels in the first INTEGER slot.
+	if got, err := s.Apply(func(v int32) int32 { return v * 2 }, 5); err != nil || got != 13 {
+		t.Fatalf("Apply = %v, %v (5*2 plus the gain of 3)", got, err)
+	}
+	if v, err := SignalVersion(); err != nil || v != 4 {
+		t.Fatalf("SignalVersion = %v, %v", v, err)
+	}
+	// The copy constructor adds one to the gain: the C++ copy really ran.
+	clone, err := s.Clone()
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	if g, err := clone.Gain(); err != nil || g != 4 {
+		t.Fatalf("cloned Gain = %v, %v", g, err)
+	}
+	if err := clone.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := clone.Close(); err == nil {
+		t.Fatal("a second Close must report ErrClosed")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// A 16-byte POD by value in and out.
+	mid, err := Midpoint(Point{X: 0, Y: 0}, Point{X: 4, Y: 8})
+	if err != nil || mid != (Point{X: 2, Y: 4}) {
+		t.Fatalf("Midpoint = %+v, %v", mid, err)
+	}
+	// A 24-byte POD by value in and out, noexcept: no error channel.
+	blended := Blend(Sample{A: 0, B: 0, C: 0}, Sample{A: 10, B: 20, C: 30}, 0.5)
+	if blended != (Sample{A: 5, B: 10, C: 15}) {
+		t.Fatalf("Blend = %+v", blended)
+	}
+	// A POD by reference, through the direct carrier.
+	scaled := ScaledPoint(&Point{X: 1, Y: 2}, 3)
+	if scaled != (Point{X: 3, Y: 6}) {
+		t.Fatalf("ScaledPoint = %+v", scaled)
+	}
+
+	// std::string in and out.
+	text, err := Describe("signal", 2.5)
+	if err != nil || text != "signal=2.500000" {
+		t.Fatalf("Describe = %q, %v", text, err)
+	}
+	// std::vector in and out.
+	values, err := Window(4)
+	if err != nil || len(values) != 4 || math.Abs(values[3]-1.5) > 1e-12 {
+		t.Fatalf("Window = %v, %v", values, err)
+	}
+	if empty, err := Window(0); err != nil || len(empty) != 0 {
+		t.Fatalf("Window(0) = %v, %v", empty, err)
+	}
+
+	// A C++ exception becomes a Go error.
+	if _, err := Ratio(6, 0); err == nil {
+		t.Fatal("Ratio(6, 0) must report the C++ exception")
+	}
+	if q, err := Ratio(6, 3); err != nil || q != 2 {
+		t.Fatalf("Ratio = %v, %v", q, err)
+	}
+
+	// A std::function the shim builds from the Go function.
+	folded, err := Fold(func(a, b int32) int32 { return a*10 + b }, 4, 2)
+	if err != nil || folded != 42 {
+		t.Fatalf("Fold = %v, %v", folded, err)
+	}
+
+	// A plain function pointer, called twice by the callee. The expected value
+	// is computed here: the integral of x over [0, 2] is 2.
+	integral, err := Integrate(func(x float64) float64 { return x }, 0, 2)
+	if err != nil || math.Abs(integral-2) > 1e-9 {
+		t.Fatalf("Integrate = %v, %v", integral, err)
+	}
+
+	// A noexcept callback: the reentrant carrier with no error channel, so the
+	// result is the signature's only return.
+	if got := Eval(func(x float64) float64 { return x * 3 }, 2); got != 6 {
+		t.Fatalf("Eval = %v, want 6", got)
+	}
+	if !Positive(func(x float64) float64 { return x }, 1) {
+		t.Fatal("Positive must report the callback's true result")
+	}
+	if Positive(func(x float64) float64 { return -x }, 1) {
+		t.Fatal("Positive must report the callback's false result")
+	}
+	if sum := Tally(func(n uint32) uint32 { return n }, 4); sum != 10 {
+		t.Fatalf("Tally = %d, want 1+2+3+4", sum)
+	}
+	called := 0
+	if err := Visit(func(x float64) { called++ }, 5); err != nil || called != 5 {
+		t.Fatalf("Visit = %v, %d calls", err, called)
+	}
+
+	// Two callbacks in one signature, each with its own registration.
+	if got, err := Pair(func(x float64) float64 { return x + 1 }, func(x float64) float64 { return x * 2 }, 4); err != nil || got != 9 {
+		t.Fatalf("Pair = %v, %v", got, err)
+	}
+
+	// A bool argument and a bool result.
+	if !Truthy(func(v bool) bool { return v }, true) {
+		t.Fatal("Truthy must return the callback's true")
+	}
+	if Truthy(func(v bool) bool { return v }, false) {
+		t.Fatal("Truthy must return the callback's false")
+	}
+
+	// A noexcept callback whose result is a record: no error channel at all.
+	fromCallback := CbBlend(func(t float64) float64 { return t }, 2)
+	if fromCallback != (Sample{A: 2, B: 4, C: 6}) {
+		t.Fatalf("CbBlend = %+v", fromCallback)
+	}
+
+	// A panic inside a callback reaches the caller instead of the process.
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("a panicking callback must re-panic in Go")
+			}
+		}()
+		_, _ = Integrate(func(float64) float64 { panic("callback exploded") }, 0, 1)
+	}()
+
+	// The package was opened explicitly; a second Open is a no-op.
+	if err := Open(""); err != nil {
+		t.Fatalf("Open after a successful explicit Open: %v", err)
+	}
+	if err := Open(""); err != nil {
+		t.Fatalf("and again: %v", err)
+	}
+}
+`
+
+// missingShimSource asserts Open's diagnostic for a shim that is not there.
+const missingShimSource = `package analytic
+
+import (
 	"os"
 	"strings"
 	"testing"
 )
 
-func TestBindings(t *testing.T) {
-	if err := Open(os.Getenv("CPPGO_E2E_LIB")); err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-
-	v, err := NewVector(3, 4)
-	if err != nil {
-		t.Fatalf("NewVector: %v", err)
-	}
-	if x, err := v.X(); err != nil || x != 3 {
-		t.Fatalf("X = %v, %v", x, err)
-	}
-	if n, err := v.Norm(); err != nil || math.Abs(n-5) > 1e-12 {
-		t.Fatalf("Norm = %v, %v", n, err)
-	}
-	if d, err := v.Dot([]float64{1, 0}); err != nil || math.Abs(d-3) > 1e-12 {
-		t.Fatalf("Dot = %v, %v", d, err)
-	}
-
-	// The direct carrier: Scale is noexcept and out of line, so this call
-	// never enters the shim.
-	v.Scale(2)
-	if n, err := v.Norm(); err != nil || math.Abs(n-10) > 1e-12 {
-		t.Fatalf("Norm after Scale = %v, %v", n, err)
-	}
-
-	clone, err := v.Clone()
-	if err != nil {
-		t.Fatalf("Clone: %v", err)
-	}
-	if n, err := clone.Norm(); err != nil || math.Abs(n-10) > 1e-12 {
-		t.Fatalf("cloned Norm = %v, %v", n, err)
-	}
-	if err := clone.Close(); err != nil {
-		t.Fatalf("clone Close: %v", err)
-	}
-	if err := clone.Close(); err == nil {
-		t.Fatal("a second Close must report ErrClosed")
-	}
-
-	if dims, err := VectorDims(); err != nil || dims != 2 {
-		t.Fatalf("VectorDims = %v, %v", dims, err)
-	}
-
-	x := []float64{1, 2, 3}
-	y := []float64{10, 20, 30}
-	if err := Saxpy(2, x, y); err != nil {
-		t.Fatalf("Saxpy: %v", err)
-	}
-	want := []float64{12, 24, 36}
-	for i := range want {
-		if y[i] != want[i] {
-			t.Fatalf("Saxpy y[%d] = %v, want %v", i, y[i], want[i])
-		}
-	}
-	if err := Saxpy(2, x, y[:2]); err == nil {
-		t.Fatal("differently sized slices must be an error before the call")
-	}
-
-	// The mirrored POD is a Go value with the C layout.
-	p := Point{X: 1, Y: 2}
-	if p.X+p.Y != 3 {
-		t.Fatalf("Point fields are wrong: %+v", p)
-	}
-	if _, err := NewPoint(); err != nil {
-		t.Fatalf("NewPoint: %v", err)
-	}
-	if c, err := p.Clone(); err != nil || *c != p {
-		t.Fatalf("Point.Clone = %+v, %v", c, err)
-	}
-
-	// The library opened explicitly; the configured path was never needed.
-	if err := Open(""); err != nil {
-		t.Fatalf("Open after a successful explicit Open: %v", err)
-	}
-}
-
 func TestMissingShim(t *testing.T) {
-	err := Open(os.Getenv("CPPGO_E2E_NOSHIM"))
+	err := Open(os.Getenv("CPPGO_E2E_SHIM"))
 	if err == nil {
-		t.Fatal("Open must fail when the shim was not compiled into the library")
+		t.Fatal("Open must fail when the shim does not exist")
 	}
-	if !strings.Contains(err.Error(), "zz_cppgo_shim.cpp") {
-		t.Fatalf("the missing-thunk error must name the shim file, got: %v", err)
+	if !strings.Contains(err.Error(), "libcppgo_analytic.so") {
+		t.Fatalf("the load error must name the shim, got: %v", err)
 	}
 }
 `
 
-// TestFixturePackagesCompile builds every fixture's generated Go package in a
-// throwaway module: go vet runs asmdecl, which checks each trampoline's frame
-// size and FP offsets against the Go declaration, so a widened or narrowed
-// signature cannot pass unnoticed. The shim is compiled separately.
-func TestFixturePackagesCompile(t *testing.T) {
-	goBin, err := exec.LookPath("go")
-	if err != nil {
-		t.Skip("go is not in PATH")
-	}
+// TestGeneratedPackageIsMovable is the deployment proof: the artifacts a run
+// produces carry no build path, so a moved tree still works, the default
+// co-located layout resolves the user's library beside the shim, and the two
+// overrides point at a library somewhere else.
+func TestGeneratedPackageIsMovable(t *testing.T) {
+	requireEndToEndTools(t)
 	repo, err := filepath.Abs("../..")
 	require.NoError(t, err)
-	for name, cfg := range goldenFixtures() {
-		name, cfg := name, cfg
-		t.Run(name, func(t *testing.T) {
-			moduleDir := t.TempDir()
-			require.NoError(t, writeModule(t, moduleDir, repo))
-			cfg.Out = filepath.Join(moduleDir, "genpkg")
-			require.NoError(t, Generate(cfg))
-			runGo(t, goBin, moduleDir, "vet", "./genpkg")
-			runGo(t, goBin, moduleDir, "build", "./genpkg")
-		})
+
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "project")
+	require.NoError(t, copyTree("testdata/project", project))
+	makeBin, err := exec.LookPath("make")
+	require.NoError(t, err)
+	runIn(t, project, makeBin, "library")
+	library := filepath.Join(project, "build", "libanalytic.so")
+
+	moduleDir := filepath.Join(tmp, "module")
+	out := filepath.Join(moduleDir, "analytic")
+	require.NoError(t, Generate(Config{
+		Headers: []string{filepath.Join(project, "include", "analytic", "analytic.hpp")},
+		Package: "analytic",
+		Library: library,
+		Out:     out,
+	}))
+	shim := filepath.Join(out, ShimLibraryName("analytic"))
+
+	// No build path in the generated source's load decisions, and no build
+	// path in the shim's NEEDED entry: the recorded name is the soname.
+	generated := readFileString(t, filepath.Join(out, GenFileName))
+	assert.Contains(t, generated, `cppgoUserLibrary = "libanalytic.so"`)
+	assert.NotContains(t, generated, `cppgoUserLibrary = "`+project)
+	assert.NotContains(t, generated, "CppgoLibraryPath = \""+project)
+	// The only line that may carry a build path is the recorded command, which
+	// is the input the user typed and what regenerates the package.
+	for _, line := range strings.Split(generated, "\n") {
+		if !strings.Contains(line, project) {
+			continue
+		}
+		assert.True(t, strings.HasPrefix(strings.TrimSpace(line), "//"),
+			"a build path may only appear in the recorded command: %q", line)
 	}
+	assert.Equal(t, []string{"libanalytic.so"}, neededLibraries(t, shim),
+		"the shim names the user's library by soname")
+
+	// The deployment: the shim and the user's library beside each other, with
+	// the project tree moved away so nothing can be found by its build path.
+	deploy := filepath.Join(tmp, "deploy")
+	require.NoError(t, os.MkdirAll(deploy, 0o755))
+	copyFile(t, shim, filepath.Join(deploy, filepath.Base(shim)))
+	copyFile(t, library, filepath.Join(deploy, "libanalytic.so"))
+	moved := project + ".moved"
+	require.NoError(t, os.Rename(project, moved))
+
+	require.NoError(t, writeModule(t, moduleDir, repo))
+	require.NoError(t, os.WriteFile(filepath.Join(out, "analytic_test.go"), []byte(e2eTestSource), 0o644))
+	deployed := filepath.Join(deploy, filepath.Base(shim))
+
+	// a. The default layout: the user's library beside the shim.
+	ran := runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=0", "CPPGO_E2E_SHIM=" + deployed},
+		"test", "-count=1", "-v", "-run", "^TestBindings$", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestBindings")
+
+	// b. The library moved away, found through the environment override.
+	elsewhere := filepath.Join(tmp, "elsewhere")
+	require.NoError(t, os.MkdirAll(elsewhere, 0o755))
+	movedLibrary := filepath.Join(elsewhere, "libanalytic.so")
+	require.NoError(t, os.Rename(filepath.Join(deploy, "libanalytic.so"), movedLibrary))
+	ran = runGoEnv(t, goTool(t), moduleDir, []string{
+		"CGO_ENABLED=0", "PPROBE=1",
+		"CPPGO_E2E_SHIM=" + deployed,
+		"CPPGO_LIBRARY_PATH=" + movedLibrary,
+	}, "test", "-count=1", "-v", "-run", "^TestBindings$", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestBindings")
+
+	// c. The library found through CppgoLibraryPath, set before Open.
+	ran = runGoEnv(t, goTool(t), moduleDir, []string{
+		"CGO_ENABLED=0",
+		"CPPGO_E2E_SHIM=" + deployed,
+		"CPPGO_E2E_LIB_VAR=" + movedLibrary,
+	}, "test", "-count=1", "-v", "-run", "^TestBindings$", "./analytic")
+	assert.Contains(t, ran, "--- PASS: TestBindings")
+
+	// d. Nothing to load: Open fails, and the message names the library.
+	ran, err = runGoEnvMayFail(t, goTool(t), moduleDir, []string{"CGO_ENABLED=0", "CPPGO_E2E_SHIM=" + deployed},
+		"test", "-count=1", "-v", "-run", "^TestBindings$", "./analytic")
+	require.Error(t, err, "the library is gone, so the package cannot open")
+	assert.Contains(t, ran, "libanalytic.so", "and the failure names the library it looked for")
+}
+
+// neededLibraries returns the DT_NEEDED entries of a shared object that are not
+// a C/C++ runtime, which is how "the shim names the user's library by soname"
+// is measured rather than assumed.
+func neededLibraries(t *testing.T, path string) []string {
+	t.Helper()
+	readelf, err := exec.LookPath("readelf")
+	require.NoError(t, err)
+	output, err := exec.Command(readelf, "-d", path).Output()
+	require.NoError(t, err)
+	var needed []string
+	for _, line := range strings.Split(string(output), "\n") {
+		if !strings.Contains(line, "(NEEDED)") {
+			continue
+		}
+		start := strings.Index(line, "[")
+		end := strings.LastIndex(line, "]")
+		if start < 0 || end <= start {
+			continue
+		}
+		name := line[start+1 : end]
+		if strings.HasPrefix(name, "libstdc++") || strings.HasPrefix(name, "libm.") ||
+			strings.HasPrefix(name, "libgcc_s") || strings.HasPrefix(name, "libc.") ||
+			strings.HasPrefix(name, "ld-linux") {
+			continue
+		}
+		needed = append(needed, name)
+	}
+	return needed
+}
+
+// copyFile copies one file, which is how the deployed artifacts are staged.
+func copyFile(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dst, data, 0o755))
 }

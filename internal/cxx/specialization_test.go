@@ -10,7 +10,7 @@ import (
 
 // TestSpecializationMirrorsWhenLayoutIsKnown parses a header with no system
 // includes, the case where libclang completes the instantiation: the
-// specialisation must be a normal mirrorable record.
+// specialization must be a normal mirrorable record.
 func TestSpecializationMirrorsWhenLayoutIsKnown(t *testing.T) {
 	skipWithoutLibclang(t)
 	header := fixturePath(t, "spec", "mirror.hpp")
@@ -238,7 +238,7 @@ func TestSpecializationRecordFieldType(t *testing.T) {
 	require.Len(t, wrapper.Fields, 1)
 	inner := wrapper.Fields[0].Type
 	assert.Equal(t, "Box<int>", inner.Spelling, "a dependent record spelling is substituted too")
-	// libclang classifies a dependent specialisation as an unexposed type, so
+	// libclang classifies a dependent specialization as an unexposed type, so
 	// the model keeps it as written; the emitter maps it by that spelling.
 	assert.Equal(t, TypeOther, inner.Kind)
 	assert.Empty(t, inner.RecordName)
@@ -273,7 +273,7 @@ func TestFullExplicitSpecialization(t *testing.T) {
 
 	full, ok := tu.Record("mathx::Spec<int>")
 	require.True(t, ok)
-	assert.False(t, full.Synthesized, "a full explicit specialisation has its own definition")
+	assert.False(t, full.Synthesized, "a full explicit specialization has its own definition")
 	assert.True(t, full.LayoutKnown)
 	assert.Equal(t, int64(4), full.SizeBytes)
 	require.Len(t, full.Fields, 1)
@@ -284,7 +284,7 @@ func TestFullExplicitSpecialization(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, Method, member.Kind)
 
-	// The primary pattern's body is not part of the specialisation.
+	// The primary pattern's body is not part of the specialization.
 	for _, field := range full.Fields {
 		assert.NotEqual(t, "value", field.Name)
 	}

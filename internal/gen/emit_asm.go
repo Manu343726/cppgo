@@ -17,6 +17,12 @@ func (m *packageModel) emitAsm() []byte {
 	b.WriteString(GeneratedBanner + "\n\n")
 	b.WriteString("#include \"textflag.h\"\n")
 	for _, binding := range m.bindings {
+		if binding.Carrier == reentrant {
+			// The reentrant carrier calls through runtime.cgocall from Go
+			// instead of a NOSPLIT trampoline: a callback may grow the stack,
+			// and this trampoline is the one place it must not.
+			continue
+		}
 		b.WriteString("\n")
 		fmt.Fprintf(&b, "// %s\n", trampolineSignature(binding))
 		fmt.Fprintf(&b, "TEXT ·%s(SB), NOSPLIT, $0-%d\n", binding.Trampoline, binding.Frame)

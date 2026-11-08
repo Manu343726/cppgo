@@ -74,7 +74,7 @@ func TestNestedTypes(t *testing.T) {
 	assert.Equal(t, "index", entry.Fields[0].Name)
 
 	inner, ok := tu.Record("mathx::Box<int>::Inner")
-	require.True(t, ok, "a nested type of a specialisation is synthesised from the pattern")
+	require.True(t, ok, "a nested type of a specialization is synthesized from the pattern")
 	assert.True(t, inner.IsTemplateSpecialization == false, "the nested record is a type, not the template")
 	require.Len(t, inner.Fields, 1)
 	assert.Equal(t, "inner", inner.Fields[0].Name)
@@ -161,7 +161,7 @@ func TestTrivialType(t *testing.T) {
 	for i := 0; i < maxTrivialityDepth+1; i++ {
 		deep = Param{Kind: TypeArray, Element: &deep}
 	}
-	assert.False(t, e.trivialType(deep, 0), "the recursion budget is honoured")
+	assert.False(t, e.trivialType(deep, 0), "the recursion budget is honored")
 }
 
 func TestArraySizeSubstitution(t *testing.T) {
@@ -245,7 +245,7 @@ func TestNestedEnums(t *testing.T) {
 	tu := recordFixture(t)
 
 	kind, ok := tu.Enum("mathx::Box<int>::Kind")
-	require.True(t, ok, "a nested enum of a specialisation is synthesised from the pattern")
+	require.True(t, ok, "a nested enum of a specialization is synthesized from the pattern")
 	assert.True(t, kind.IsScoped)
 	assert.Equal(t, TypeInteger, kind.Underlying.Kind)
 	assert.Equal(t, int64(4), kind.Underlying.SizeBytes)

@@ -44,7 +44,7 @@ const (
 
 	// tempPattern is the prefix os.CreateTemp fills in for the file that is
 	// about to be renamed into place. CreateTemp creates it with O_EXCL and
-	// 0600 inside the private cache directory, so the name is randomised and
+	// 0600 inside the private cache directory, so the name is randomized and
 	// can never be a world-writable path somebody prepared in advance.
 	tempPattern = ".cppgo-extract-*"
 )
@@ -74,7 +74,7 @@ func CacheDir() (string, error) {
 // It is the cache-clear helper a program runs to reclaim disk or to start from
 // a known state: a later OpenFS extracts again from whatever it is given.
 // Removing the cache while another goroutine or process is loading from it is
-// not synchronised — an object already mapped stays mapped, and a process that
+// not synchronized — an object already mapped stays mapped, and a process that
 // extracts again recreates the entry — so a program calls it when it is the
 // only user of the cache, normally at startup or shutdown.
 func CleanCache() error {
@@ -90,7 +90,7 @@ func CleanCache() error {
 	return nil
 }
 
-// OpenFS loads a shared object that is embedded in the program, materialising
+// OpenFS loads a shared object that is embedded in the program, materializing
 // every shared object of fsys in a private cache first.
 //
 // fsys is any file system: an embed.FS produced by //go:embed is the intended
@@ -252,7 +252,7 @@ func setDigest(objects []object) string {
 	return hex.EncodeToString(digest[:])
 }
 
-// extract materialises every object in a cache directory named after the set
+// extract materializes every object in a cache directory named after the set
 // and returns it.
 func extract(fsys fs.FS, objects []object) (string, error) {
 	root, err := CacheDir()
@@ -269,7 +269,7 @@ func extract(fsys fs.FS, objects []object) (string, error) {
 	}
 
 	for _, o := range objects {
-		if err := materialise(fsys, dir, o); err != nil {
+		if err := materialize(fsys, dir, o); err != nil {
 			return "", err
 		}
 	}
@@ -312,8 +312,8 @@ func privateDir(dir string) error {
 	return nil
 }
 
-// materialise writes o into dir unless a correct copy is already there.
-func materialise(fsys fs.FS, dir string, o object) error {
+// materialize writes o into dir unless a correct copy is already there.
+func materialize(fsys fs.FS, dir string, o object) error {
 	target := filepath.Join(dir, o.name)
 
 	reuse, err := reusable(target, o)

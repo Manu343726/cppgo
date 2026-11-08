@@ -495,7 +495,7 @@ func includes(source, headerBase string) bool {
 	return false
 }
 
-// splitCommand splits a shell command line into words, honouring single and
+// splitCommand splits a shell command line into words, honoring single and
 // double quotes and backslash escapes. A compile_commands.json "command" is a
 // shell string, so this is the only correct way to read it.
 func splitCommand(command string) ([]string, error) {

@@ -45,7 +45,7 @@ func (e *SymbolError) Error() string {
 func (e *SymbolError) Unwrap() error { return e.Err }
 
 // ExtractError reports an embedded shared object that could not be
-// materialised in the cache.
+// materialized in the cache.
 type ExtractError struct {
 	// Name is the file name the object takes in the cache, or the name
 	// OpenFS was asked for when no such entry exists.
