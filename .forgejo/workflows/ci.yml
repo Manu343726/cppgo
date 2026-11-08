@@ -43,22 +43,28 @@ name: CI
 #
 # 2. THE RUNNER LABEL.
 #
-#      runs-on: [docker, homelab]
+#      runs-on: docker
 #
 #    The instance has two runners, both registered at instance level (`owner_id 0`,
-#    `repo_id 0`): `forgejo-runner-108` on VM 108, labels `docker` + `homelab`, and
-#    `forgejo-runner-pcgordo` in PCGORDO's WSL, labels `docker` + `wsl`. `ubuntu-latest` —
-#    what this workflow asked for while it was GitHub's — is a label no runner declares, and a
-#    job whose `runs-on` nothing serves is never assigned: it waits until
-#    `[actions] ABANDONED_JOB_TIMEOUT` cancels it. That is the whole of runs #664–#676.
+#    `repo_id 0`) and both declaring `docker`:
 #
-#    `[docker, homelab]` is an intersection, so it pins every job to VM 108. The reason is
-#    measured, not assumed: that is the only host where the pull of this private Harbor
-#    project's image was proven (`docker pull …:1914e8c`, then `docker run --rm … go version`),
-#    and the gate must not depend on which host the scheduler happens to pick. The cost is
-#    capacity 1 on that runner, so this file's two jobs run one after the other. Lifting the
-#    pin to `runs-on: docker` is a one-line change on the day a job is measured green on the
-#    other host.
+#      forgejo-runner-108       VM 108        docker, homelab   capacity 1
+#      forgejo-runner-pcgordo   PCGORDO WSL   docker, wsl       capacity 1
+#
+#    `ubuntu-latest` — what this workflow asked for while it was GitHub's — is a label no runner
+#    declares, and a job whose `runs-on` nothing serves is never assigned: it waits until
+#    `[actions] ABANDONED_JOB_TIMEOUT` cancels it. That is the whole of runs #664–#676, and of
+#    every run still waiting on a branch that carries only `.github/workflows/ci.yml`.
+#
+#    `docker` and not `[docker, homelab]`: the pull of this private Harbor image through the
+#    `container.credentials` below is measured on **both** hosts (run #711 on VM 108, run #712
+#    on PCGORDO, which pulled it and ran `go version` inside), so no host needs a docker login
+#    and no job is pinned to one machine. `capacity: 1` on each runner is the instance's only
+#    parallelism — one job here and one on the other host — so these two jobs may run at the
+#    same time. The price, and it is the estate's rule: a job may land on either, so **nothing
+#    in it may depend on host-local state** — no absolute host path, nothing outside its own
+#    checkout, no service that exists on only one machine. `[docker, homelab]` is the pin to
+#    reach for on the day a job genuinely needs VM 108.
 #
 # ---------------------------------------------------------------------------
 # Why this file is here and not in `.github/workflows/`.
@@ -137,7 +143,7 @@ env:
 jobs:
   test:
     name: test
-    runs-on: [docker, homelab]
+    runs-on: docker
     # The runner's ceiling is 5h; this is the job's own, well inside it. A job killed by its own
     # `timeout-minutes` reports as the step that hung, which is the report a reader can act on.
     timeout-minutes: 90
@@ -244,7 +250,7 @@ jobs:
     # from go.dev into `/tmp`, which is the same question asked without a third-party action and
     # without a second environment: the job still runs in the pinned image, so the compiler's
     # host and its C++ side are the ones under test.
-    runs-on: [docker, homelab]
+    runs-on: docker
     timeout-minutes: 30
     container:
       # The literal and not `${{ env.CI_IMAGE }}`: the `env` context is not available to
