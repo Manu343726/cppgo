@@ -181,7 +181,13 @@ func TestTemplateArgumentsFromHeader(t *testing.T) {
 	assert.Equal(t, "int", arg.Spelling)
 	assert.Equal(t, TypeInteger, arg.Type.Kind)
 	assert.Equal(t, int64(4), arg.Type.SizeBytes)
-	assert.False(t, specialization.LayoutKnown, "libclang defers the instantiated layout, so it is not mirrored")
+	// Whether libclang completes this instantiation depends on the standard
+	// headers the environment provides, so the test asserts the contract, not
+	// one outcome: a known layout is real, an unknown one is -1, and the
+	// specialisation carries its fields either way.
+	assertLayoutIsContractual(t, specialization)
+	require.Len(t, specialization.Fields, 1, "the specialisation carries its fields regardless of layout")
+	assert.Equal(t, "value", specialization.Fields[0].Name)
 
 	// An integral argument survives end to end: the field type's name carries
 	// both arguments, which is what the generator names the Go type from.

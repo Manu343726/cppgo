@@ -39,21 +39,25 @@ func fixture(t *testing.T) func(string) unsafe.Pointer {
 }
 
 // TestArgsLayout pins the argument block's memory layout: the assembly reads
-// I at offsets 0..40 and F at 48..104. Changing Args without changing the
-// trampoline would otherwise produce calls with garbage arguments.
+// I at offsets 0..40, F at 48..104, and writes the two result slots at
+// 112..120. Changing Args without changing the trampolines would otherwise
+// produce calls with garbage arguments.
 func TestArgsLayout(t *testing.T) {
 	var args asm.Args
 
 	// The two register banks, back to back, no padding.
 	assert.Equal(t, uintptr(48), unsafe.Sizeof(args.I))
 	assert.Equal(t, uintptr(64), unsafe.Sizeof(args.F))
-	assert.Equal(t, uintptr(112), unsafe.Sizeof(args))
+	assert.Equal(t, uintptr(128), unsafe.Sizeof(args))
 	assert.Equal(t, uintptr(8), unsafe.Alignof(args))
 
-	// The assembly addresses F as a fixed offset from I.
+	// The assembly addresses F as a fixed offset from I, and the results
+	// follow F.
 	assert.Equal(t, uintptr(0), unsafe.Offsetof(args.I))
 	assert.Equal(t, uintptr(48), unsafe.Offsetof(args.F))
 	assert.Equal(t, unsafe.Offsetof(args.I)+unsafe.Sizeof(args.I), unsafe.Offsetof(args.F))
+	assert.Equal(t, uintptr(112), unsafe.Offsetof(args.Ret))
+	assert.Equal(t, uintptr(120), unsafe.Offsetof(args.RetF))
 
 	var zero asm.Args
 	assert.Equal(t, zero, asm.Args{})
