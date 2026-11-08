@@ -9,7 +9,7 @@ import (
 // dead and drop the call being measured.
 var (
 	sinkFloat float64
-	sinkInt   int
+	sinkCount uint64
 	sinkPtr   *float64
 )
 
@@ -129,13 +129,13 @@ func BenchmarkCountAbove(b *testing.B) {
 	b.Run("cppgo", func(b *testing.B) {
 		b.SetBytes(int64(8 * len(xs)))
 		for i := 0; i < b.N; i++ {
-			sinkInt = CountAbove(xs, 0.5)
+			sinkCount = CountAbove(xs, 0.5)
 		}
 	})
 	b.Run("go", func(b *testing.B) {
 		b.SetBytes(int64(8 * len(xs)))
 		for i := 0; i < b.N; i++ {
-			sinkInt = goCountAbove(xs, 0.5)
+			sinkCount = goCountAbove(xs, 0.5)
 		}
 	})
 }

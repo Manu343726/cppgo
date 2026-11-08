@@ -1,129 +1,78 @@
-# stats, a large  `[]float64`, in both directions
+# stats — a large `[]float64`, in both directions
 
-This is the case a Go program actually calls out to C++ for. Arithmetic over a
-big slice of numbers. Every function takes its data as `(pointer, length)`, 
-which is what a Go slice already is, and the results are written into a buffer
-the caller owns. Nothing is copied or marshalled in either direction.
+This is the case a Go program actually calls out to C++ for: arithmetic over a
+big slice of numbers. Every function takes its data as `(pointer, length)` —
+which is what a Go slice already is — and the result is written into a buffer
+the caller owns, so nothing is copied or marshalled in either direction.
+
+The header is the source of truth. `cppgo gen` reads it, decides per function
+whether the call can go straight to the library or needs the shim, writes the Go
+API and the assembly, and compiles the shim itself.
 
 ```console
 $ cd examples/stats
-$ make          # build libstats.so, generate, test, vet
+$ make          # build libstats.so, generate, test (no cgo, then -race), vet
 $ make bench    # the C++ calls against the pure-Go equivalents
 ```
 
-## What this example teaches
+## The header, and what the generator does with it
 
-| what | where |
-|---|---|
-| a slice crossing as `(pointer, length)`, no copy | `Mean`, `Stddev`, `CountAbove` |
-| the same for an **output** slice | `Histogram` writes into the caller's bins |
-| proof that nothing was copied | `data_pointer` returns the address it was given |
-| a direct C++ call that can fail | `histogram` returns an `int32_t` status, read as `error` |
-| what a call actually costs, measured | `make bench`, numbers below |
+```cpp
+namespace stats {
 
-The pure-Go implementations the tests and benchmarks compare against are in
-[`stats_test.go`](stats_test.go), `goMean`, `goStddev`, `goCountAbove`,
-`goHistogram`. The comparison is against code you can read.
+double mean(const double *xs, size_t n) noexcept;
+double stddev(const double *xs, size_t n) noexcept;
+size_t count_above(const double *xs, size_t n, double threshold) noexcept;
+const double *data_pointer(const double *xs, size_t n) noexcept;
+void histogram(const double *xs, size_t n, double *bins, size_t nbins,
+               double lo, double hi);
 
-## Layout
-
-```
-examples/stats/
-├── include/stats/stats.hpp    declarations only, defined out of line
-├── src/stats.cpp              the loops, and the cppgo_last_error accessor
-├── stats.go                   the //cppgo: directives (rewritten in place by gen)
-├── stats_test.go              assertions, the pointer-identity check, Go reference impls
-├── stats_bench_test.go        the benchmark, C++ arm and Go arm
-├── zz_cppgo.gen.go            generated: wrappers, lazy binding, Go side of the ABI
-├── zz_cppgo_amd64.s           generated: one trampoline per symbol
-├── Makefile                   builds the .so, runs gen, test, vet and bench
-├── go.mod                     its own module, replace ../..
-└── build/                     ignored: libstats.so, the cppgo binary, the CDB
+} // namespace stats
 ```
 
-## The binding, in full
+The generated API is:
 
 ```go
-//cppgo:library libstats
-//cppgo:header include/stats/stats.hpp
+func Open(path string) error
 
-//cppgo:function stats::mean
 func Mean(xs []float64) float64
-
-//cppgo:function stats::stddev
 func Stddev(xs []float64) float64
-
-//cppgo:function stats::count_above
-func CountAbove(xs []float64, threshold float64) int
-
-//cppgo:function stats::data_pointer
+func CountAbove(xs []float64, threshold float64) uint64
 func DataPointer(xs []float64) *float64
-
-//cppgo:function stats::histogram
-func Histogram(xs, bins []float64, lo, hi float64) error
+func Histogram(xs []float64, bins []float64, lo float64, hi float64) error
 ```
 
-A Go slice spends **two** C++ parameters, pointer, then length, at its own
-position in the declaration. That is why `histogram` is
+`make gen` says why each one was carried the way it was:
 
-```cpp
-int32_t histogram(const double *xs, size_t n, double *bins, size_t nbins, double lo, double hi);
+```
+stats::count_above(const double *, size_t, double) noexcept direct _ZN5stats11count_aboveEPKdmd  noexcept, not virtual, register class; the library exports the symbol
+stats::data_pointer(const double *, size_t) noexcept        direct _ZN5stats12data_pointerEPKdm   noexcept, not virtual, register class; the library exports the symbol
+stats::histogram(const double *, size_t, double *, size_t, double, double) thunk cppgo_thunk_2f7a…  not noexcept: an exception would unwind into Go
+stats::mean(const double *, size_t) noexcept                direct _ZN5stats4meanEPKdm             noexcept, not virtual, register class; the library exports the symbol
+stats::stddev(const double *, size_t) noexcept              direct _ZN5stats6stddevEPKdm           noexcept, not virtual, register class; the library exports the symbol
+cppgo: built libcppgo_stats.so with /usr/bin/g++
 ```
 
-and not six arguments in some other order. A slice is two integer arguments
-(pointer, length) and a `double` is one XMM argument, assigned in declaration
-order. [register assignment](https://manu343726.github.io/cppgo/manual/calling-convention/)
-has the full table.
+Four functions are `noexcept` and defined out of line, so their mangled symbols
+are in `libstats.so` and the trampoline calls them directly. `histogram` is not
+`noexcept`, so it is a shim call. Two consequences are visible in the Go API:
 
-Note the `size_t` in the header and the `using std::size_t;` above it. The
-generator reports a result type as it is spelled in the source, and
-`std::size_t` in a *result* position trips the same rule that refuses
-`std::string`. In a parameter position it is the length half of a `(pointer,
-length)` pair and is fine either way.
+- `Mean`, `Stddev`, `CountAbove` and `DataPointer` return **no error**. A call
+  that cannot fail does not get an always-nil error in Go.
+- `Histogram` returns **only** an `error`. It has no status return in C++ and
+  none appears in Go.
 
-## The error channel
+## The binding, explained
 
-A direct C++ call has no shim to catch an exception. Failure travels as an
-ordinary return value. `histogram` returns `int32_t`:
+### A slice spends two arguments
 
-```cpp
-if (!(hi > lo)) {
-    return fail("histogram: hi must be greater than lo");
-}
-```
+A Go slice is a pointer and a length, and that is exactly what the C++ side
+declares: `Mean(xs []float64)` becomes `mean(const double *, size_t)`. The
+pointer is borrowed for the duration of the call. A million elements cost the
+same to hand over as three.
 
-and the Go binding declares **only** an `error`. That tells the generator to
-read the integer as a status:
-
-```go
-//cppgo:function stats::histogram
-func Histogram(xs, bins []float64, lo, hi float64) error
-```
-
-The wrapper it emits is worth reading:
-
-```go
-cppgoStatus := cppgo__ZN5stats9histogramEPKdmPdmdd(cppgoSymHistogram, …)
-cppgo.KeepAlive(xs, bins)
-if cppgoStatus != 0 {
-    if err := cppgo.LastError(cppgoLib); err != nil {
-        return fmt.Errorf("stats::histogram: %w", err)
-    }
-    return fmt.Errorf("stats::histogram: call failed with status %d", cppgoStatus)
-}
-return nil
-```
-
-`cppgo.LastError` looks up `cppgo_last_error` in the library and copies the
-message out. That accessor is the one symbol in this example that is deliberately
-`extern "C"`, a return register cannot carry a message, and it is optional. A
-library that never fails needs no accessor. `TestHistogramErrorPath` asserts both
-the message and the `stats::histogram` prefix the wrapper adds.
-
-## "No copy", proved rather than claimed
-
-`data_pointer` returns the pointer it was given. The test then checks both halves
-of the claim:
+`data_pointer` returns the pointer it was given. `TestSliceIsNotCopied` checks
+both halves of the claim:
 
 ```go
 got := DataPointer(xs)
@@ -132,100 +81,149 @@ if got != &xs[0] {
 }
 
 *got = 100
-if xs[0] != 100 {
-	t.Fatalf("writing through the returned pointer left xs[0] = %v: not the same memory", xs[0])
+if xs[0] != 100 { /* not the same memory */ }
+```
+
+The pointer that arrived is the pointer that left, and writing through it
+changes the Go slice, because it is Go memory. `TestHistogramWritesThroughTheSlice`
+does the same for the output direction: the counts appear in the caller's
+`bins`, and a second call starts from zero because the C++ `std::fill` cleared
+that same array.
+
+### The error channel is the C++ one
+
+`histogram` reports a bad range by throwing `std::invalid_argument`:
+
+```cpp
+if (!(hi > lo)) {
+    throw std::invalid_argument("histogram: hi must be greater than lo");
 }
 ```
 
-The pointer that arrived is the pointer that left, and writing through it changes
-the Go slice, because it is Go memory. `TestHistogramWritesThroughTheSlice` does
-the same for the output direction. The counts appear in the caller's `bins`, and
-a second call starts from zero because the C++ `std::fill` cleared that same
-array.
+The shim wraps the call in `try`/`catch`, stores the exception's `what()` on the
+calling thread and returns a status. The generated binding reads the message and
+returns a `*cppgo.CallError`:
+
+```go
+err := Histogram([]float64{1, 2, 3}, make([]float64, 4), 8, 0)
+var call *cppgo.CallError
+errors.As(err, &call) // call.Symbol == "stats::histogram"
+// err.Error() contains "histogram: hi must be greater than lo"
+```
+
+There is no `cppgo_last_error` accessor to write, and no status convention to
+declare. The exception is the interface, and the shim is where it becomes a Go
+error. `TestHistogramErrorPath` asserts both the text and the symbol.
 
 ## Measured numbers
 
 `make bench` runs
 
 ```console
-$ go test -run '^$' -bench . -benchmem ./...
+$ CGO_ENABLED=0 go test -run '^$' -bench . -benchmem .
 ```
 
-with the library path in the environment. Median of three runs, with boost
-disabled and the CPU pinned at **964.8 MHz**:
+with the library paths in the environment. One run:
 
-| benchmark | cppgo | pure Go | ratio | per element (cppgo) |
-|---|---|---|---|---|
-| `Mean`, 8 elements | 44 ns | 21 ns | **2.1x slower** | — |
-| `Mean`, 1 048 576 | 3.40 ms | 3.48 ms | 0.98x | 3.1 cycles |
-| `Stddev`, 1 048 576 | 6.87 ms | 7.14 ms | 0.96x | 6.3 cycles |
-| `Histogram`, 1 048 576 | 11.9 ms | 12.1 ms | 0.98x | 10.9 cycles |
-| `CountAbove`, 1 048 576 | 1.63 ms | 2.34 ms | 0.69x | 1.5 cycles |
-| `DataPointer` (the call itself) | 35.0 ns | 2.2 ns | 15.7x | — |
+| benchmark | cppgo | pure Go | ratio |
+|---|---|---|---|
+| `Mean`, 8 elements | 49.90 ns | 13.06 ns | 3.8x slower |
+| `Mean`, 1 048 576 | 3.354 ms | 3.320 ms | 1.01x |
+| `Stddev`, 1 048 576 | 6.682 ms | 6.715 ms | 1.00x |
+| `Histogram`, 1 048 576 | 11.77 ms | 12.47 ms | 0.94x |
+| `CountAbove`, 1 048 576 | 1.595 ms | 2.299 ms | 0.69x |
+| `DataPointer` (the call itself) | 43.16 ns | 2.13 ns | 20x slower |
 
-Later runs, taken while three other builds were in progress, read 51–69 ns for
-the 8-element case and 37–56 ns for the bare call. The absolute numbers move with
-the load. The **ratio** between the million-element arms and the fact that the
-crossing is a fixed ~35 ns did not. Run it on an idle machine, or compare cycles
-rather than nanoseconds.
-
-**Read the ratios.** The clock is pinned at 964.8 MHz. Everything absolute is
-inflated by roughly 4.5x against the same code running with boost. The cycle column is derived from the ns at 0.9648 GHz and is the
-number that travels.
+**Read the ratios, not the nanoseconds.** The absolute values are a property of
+the clock the run happened at, of the machine's power profile and of whatever
+else was running. This run was not taken at a pinned clock, so its nanoseconds
+are not comparable with the numbers in the project's design document, which were
+measured at 964.8 MHz with boost disabled. The ratios and the per-element cost
+are what travel.
 
 What the rows mean:
 
-- **The crossing is a constant, and that is the whole point.** 35 ns is ~80% of
-  the 44 ns an 8-element `Mean` costs, and 0.001% of the 3.40 ms a million-element
-  one costs. Per element at n = 1 048 576 it is 0.03 ns. That is why the shape is
-  "one call over the slice". The boundary stays constant and the data scales.
+- **The crossing is a constant, and that is the point.** 43 ns is ~86% of the
+  50 ns an 8-element `Mean` costs, and 0.001% of the 3.35 ms a million-element
+  one costs. Per element at n = 1 048 576 it is 0.04 ns. That is the argument
+  for the shape "one call over the slice": the boundary does not scale, the data
+  does.
 - **At a million elements the two arms are the same code in a different
-  compiler.** Both means run at ~3.1 cycles per element. That is the latency of
-  a serial `double` add dependency chain: 8 MiB in 3.4 ms is only ~2.5 GB/s, and
-  the loop is bound by the three-cycle FP add. `Histogram` is ~11 cycles per
-  element in both. That is the `divsd` latency. Both gaps belong to the examples.
-- **`CountAbove` is 1.45x faster on the C++ side.** That is a compiler
-  difference. G++ 16 at `-O2` vectorises the compare-and-count loop. The Go
-  compiler leaves the loop scalar. It is included precisely
-  because it is the kind of thing that makes calling out to C++ worth it, and
-  because the boundary is nowhere in the 1.5-vs-2.2 cycles gap.
-- **A call per element would be a disaster.** Rebuild the math with the 35 ns
-  figure. One call per element over a million elements is 35 ms of boundary alone,
-  ten times the whole bulk call. That is the argument for the shape this example
-  binds, and the site's [bulk data](https://manu343726.github.io/cppgo/tutorials/bulk-data/)
-  tutorial makes it in full.
+  compiler.** `Mean` runs at ~3.2 ns per element in both arms, and `Stddev` at
+  ~6.4 ns: those are the arithmetic, not the boundary. The million-element
+  `Mean` gap is 1%, which is run-to-run noise.
+- **`CountAbove` is ~1.4x faster on the C++ side**, and that is a compiler
+  difference, not a boundary one: the C++ compiler vectorises the
+  compare-and-count loop at `-O2`, the Go compiler does not. It is included
+  precisely because it is the kind of thing that makes calling out to C++ worth
+  it.
+- **`Histogram` crosses through the shim and is still not slower.** The shim is
+  one extra C++ frame; at a million elements the loop dominates it completely.
+- **A call per element would be a disaster.** At 43 ns of crossing, one call per
+  element over a million elements is 43 ms of boundary alone, several times the
+  whole bulk call. The example binds the loop, not the accessor.
 
-Where the 35 ns goes. The repository's own benchmark puts the bare trampoline at
-~14 ns (13.9 ns / ~13 cycles at the same clock). The rest is the generated
-wrapper around it, the lazy  `dlopen` check, `ProbeStack()`, the argument
-marshalling and the `KeepAlive`. A constant per call.
+`B/op` and `allocs/op` are zero in every arm: a slice crossing the boundary
+allocates nothing, in either direction.
 
-`make bench` reproduces all of it. The arms are labelled `cppgo` and `go`, and
-`SetBytes` is set inside each arm so the throughput column is populated. The small-element rows therefore read higher than the table above. An idle box
-is worth the rerun:
+The raw output of the run above:
 
-```console
-$ make bench
-BenchmarkMean/n=8/cppgo-16         	16936789	        69.48 ns/op	 921.19 MB/s	       0 B/op	       0 allocs/op
-BenchmarkMean/n=8/go-16            	35118909	        29.64 ns/op	2159.58 MB/s	       0 B/op	       0 allocs/op
-BenchmarkMean/n=1048576/cppgo-16   	     346	   3407476 ns/op	2461.82 MB/s	       0 B/op	       0 allocs/op
-BenchmarkMean/n=1048576/go-16      	     351	   3442597 ns/op	2436.71 MB/s	       0 B/op	       0 allocs/op
-BenchmarkStddev/cppgo-16           	     175	   6834428 ns/op	1227.40 MB/s	       0 B/op	       0 allocs/op
-BenchmarkStddev/go-16              	     153	   7819489 ns/op	1072.78 MB/s	       0 B/op	       0 allocs/op
-BenchmarkHistogram/cppgo-16        	      98	  12285650 ns/op	 682.80 MB/s	       0 B/op	       0 allocs/op
-BenchmarkHistogram/go-16           	      90	  13285082 ns/op	 631.43 MB/s	       0 B/op	       0 allocs/op
-BenchmarkCall/cppgo-16             	20035719	        56.41 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCall/go-16                	342561806	         3.153 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCountAbove/cppgo-16       	     555	   2451902 ns/op	3421.27 MB/s	       0 B/op	       0 allocs/op
-BenchmarkCountAbove/go-16          	     261	   5478591 ns/op	1531.16 MB/s	       0 B/op	       0 allocs/op
+```
+BenchmarkMean/n=8/cppgo-16         	24334094	        49.90 ns/op	1282.53 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMean/n=8/go-16            	88661422	        13.06 ns/op	4899.58 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMean/n=1048576/cppgo-16   	     360	   3353696 ns/op	2501.30 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMean/n=1048576/go-16      	     358	   3320295 ns/op	2526.46 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStddev/cppgo-16           	     181	   6682132 ns/op	1255.38 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStddev/go-16              	     177	   6714782 ns/op	1249.27 MB/s	       0 B/op	       0 allocs/op
+BenchmarkHistogram/cppgo-16        	      99	  11770692 ns/op	 712.67 MB/s	       0 B/op	       0 allocs/op
+BenchmarkHistogram/go-16           	      98	  12466080 ns/op	 672.91 MB/s	       0 B/op	       0 allocs/op
+BenchmarkCall/cppgo-16             	28220121	        43.16 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCall/go-16                	562008502	         2.128 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountAbove/cppgo-16       	     746	   1594503 ns/op	5260.95 MB/s	       0 B/op	       0 allocs/op
+BenchmarkCountAbove/go-16          	     513	   2299309 ns/op	3648.32 MB/s	       0 B/op	       0 allocs/op
 ```
 
-The `go` arm of `CountAbove` at 5.5 ms in that listing, against 2.3 ms in the
-clean run, is what contention looks like. It hits whichever arm is running when
-the other work lands.
+## Layout
 
-`B/op` and `allocs/op` being zero is part of the result. A slice crossing the
-boundary makes no allocation in either direction.
+```
+examples/stats/
+├── include/stats/stats.hpp    declarations only
+├── src/stats.cpp              the loops; compiled into the user's library
+├── .clangd                    the project's flags for the parser
+├── Makefile                   lib, gen, test, vet, check, bench, clean
+├── stats_test.go              assertions, the pointer-identity check, Go reference impls
+├── stats_bench_test.go        the benchmark, C++ arm and Go arm
+├── zz_cppgo.gen.go            generated: the Go API, Open, the trampolines' declarations
+├── zz_cppgo_amd64.s           generated: one NOSPLIT trampoline per binding
+├── cppgo_shim/                generated: the shim's C++ sources
+├── libcppgo_stats.so          built by cppgo gen (ignored, not committed)
+├── go.mod                     its own module, replace ../..
+└── build/                     ignored: libstats.so and the locally built cppgo
+```
+
+The generated sources are committed so the example can be read without running
+the generator. `make gen` reproduces them, `make check` proves they are current,
+and the compiled objects are ignored:
+
+```console
+$ make check
+build/cppgo check -header include/stats/stats.hpp -package stats -library build/libstats.so -out .
+.: generated files are up to date
+```
+
+The pure-Go implementations the tests and benchmarks compare against are in
+[`stats_test.go`](stats_test.go) — `goMean`, `goStddev`, `goCountAbove`,
+`goHistogram` — so the comparison is against code you can read, not a number in
+this file.
+
+## Where the shared objects come from at run time
+
+The generated package loads `libstats.so` first and then `libcppgo_stats.so`.
+The shim names the user's library in its `DT_NEEDED` entry by soname, which is
+why the Makefile links with `-Wl,-soname,libstats.so`; loading the library first
+is what makes that name resolve to the object the process already holds. The
+test sets the two paths with `CppgoLibraryPath` and `Open`, and
+`CPPGO_STATS_LIB` / `CPPGO_STATS_SHIM` are what the Makefile passes it.
 
 ## Requirements
 
@@ -240,13 +238,11 @@ no global install is needed.
 ## Other targets
 
 ```console
-$ make test     # go test only (builds the library and regenerates first)
+$ make lib      # just the user's library
+$ make gen      # just the binding (Go API, assembly, shim sources, shim .so)
+$ make test     # go test, CGO_ENABLED=0 then -race
 $ make vet      # go vet, including the generated assembly declarations
-$ make check    # cppgo check: are the committed generated files up to date?
+$ make check    # cppgo check: are the committed generated sources current?
+$ make bench    # the benchmark table above
 $ make clean
 ```
-
-The test binary reads `CPPGO_STATS_LIB` if it is set (the Makefile sets it) and
-otherwise looks for `build/libstats.so` relative to the package directory. The
-loader does not search the current directory, and `//cppgo:library libstats` is
-just the name the bindings would use in a real deployment.

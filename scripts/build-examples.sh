@@ -1,24 +1,30 @@
 #!/usr/bin/env bash
 #
-# build-examples.sh — compile every C++ fixture under examples/.
+# build-examples.sh — build, generate and test every example under examples/.
 #
-# cppgo itself never compiles C++: the fixtures are built here only so the
-# tests (`make test`, CI) can dlopen a real shared library.
+# Each example owns its build. Its Makefile does the three things a v4 example
+# has to do, in this order:
 #
-# A fixture directory (examples/<name>/) is built with the first of:
-#   Makefile        -> make -C <dir>
-#   CMakeLists.txt  -> cmake -S <dir> -B <dir>/build && cmake --build
-#   *.cpp / *.cc    -> $CXX -std=c++17 -O2 -fPIC -shared -> <dir>/lib<name>.so
+#   1. compiles the user's C++ library with the project's own flags and its own
+#      soname;
+#   2. runs `cppgo gen`, which reads the header, writes the Go API, the
+#      assembly and the shim sources, and compiles the shim itself against that
+#      library;
+#   3. runs the example's tests and vet.
 #
-# Directories with none of the above are reported and skipped; examples/ being
-# absent or empty is not an error (the tree may be incomplete).
+# This script only finds the examples and runs their default target. It never
+# compiles C++ itself, which is what keeps the contract's line intact: no
+# cppgo-generated translation unit can end up in a user's library.
 #
-# Environment: CXX (default g++), CXXFLAGS (extra flags for the plain-.cpp path).
+# Directories without a Makefile are reported and skipped; examples/ being
+# absent is not an error (the tree may be incomplete).
+#
+# Environment: MAKE (default make); CXX and CXXFLAGS reach the examples' own
+# Makefiles through the environment, as they always did.
 
 set -euo pipefail
 
-CXX="${CXX:-g++}"
-CXXFLAGS="${CXXFLAGS:-}"
+MAKE="${MAKE:-make}"
 EXAMPLES_DIR="${1:-examples}"
 
 if [[ ! -d $EXAMPLES_DIR ]]; then
@@ -35,33 +41,14 @@ for dir in "$EXAMPLES_DIR"/*/; do
 
   if [[ -f "$dir/Makefile" || -f "$dir/makefile" ]]; then
     echo "== $name: make"
-    make -C "$dir"
+    "$MAKE" -C "$dir"
     built=$((built + 1))
     continue
   fi
 
-  if [[ -f "$dir/CMakeLists.txt" ]]; then
-    echo "== $name: cmake"
-    cmake -S "$dir" -B "$dir/build" -DCMAKE_BUILD_TYPE=Release
-    cmake --build "$dir/build" --parallel
-    built=$((built + 1))
-    continue
-  fi
-
-  sources=("$dir"/*.cpp "$dir"/*.cc)
-  if [[ ${#sources[@]} -gt 0 ]]; then
-    out="$dir/lib${name}.so"
-    echo "== $name: $CXX -shared -> $(basename "$out")"
-    # shellcheck disable=SC2086 # CXXFLAGS is intentionally word-split
-    "$CXX" -std=c++17 -O2 -fPIC -shared -I"$dir" $CXXFLAGS \
-      -o "$out" "${sources[@]}"
-    built=$((built + 1))
-    continue
-  fi
-
-  echo "-- $name: no Makefile, CMakeLists.txt or C++ sources — skipped"
+  echo "-- $name: no Makefile — skipped (a v4 example owns its build there)"
   skipped=$((skipped + 1))
 done
 
 echo
-echo "example fixtures: $built built, $skipped skipped"
+echo "examples: $built built, $skipped skipped"

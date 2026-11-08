@@ -1,14 +1,19 @@
-# stats — a large []float64 crossing the boundary, with a benchmark.
+# stats — a large []float64 in both directions, with a benchmark.
 #
-#   make              build libstats.so, generate the bindings, test and vet
-#   make bench        benchmark the C++ call against the pure-Go equivalent
-#   make check        prove the committed generated files are up to date
+#   make        build the user's library, generate the binding, test and vet
+#   make lib    build build/libstats.so with the project's own command
+#   make gen    run cppgo gen: the Go API, the assembly, the shim sources and
+#               the shim libcppgo_stats.so
+#   make test   go test, once with CGO_ENABLED=0 and once with the race detector
+#   make bench  the C++ calls against the pure-Go equivalents
+#   make check  prove the committed generated sources are up to date
 #   make clean
 #
-# Everything is built under build/, which is git-ignored: the shared library, the
-# cppgo binary (built from the repository this example lives in, so there is no
-# install step and no chance of testing a different cppgo than the one next door)
-# and the compilation database.
+# Everything is built under build/, which is git-ignored: the user's shared
+# object and the locally built cppgo. The shim binary cppgo writes beside the
+# package (libcppgo_stats.so) is ignored too. The generated *sources* are
+# committed, because the example is teaching material: `make gen` reproduces
+# them and `make check` proves they are current.
 
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -18,55 +23,53 @@ GO       ?= go
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -fPIC -Wall -Wextra
 
-BUILD := build
-ROOT  := ../..
-LIB   := $(BUILD)/libstats.so
-CPPGO := $(BUILD)/cppgo
-CDB   := $(BUILD)/compile_commands.json
+BUILD  := build
+ROOT   := ../..
+LIB    := $(BUILD)/libstats.so
+CPPGO  := $(BUILD)/cppgo
+SHIM   := libcppgo_stats.so
 
-SOURCES  := src/stats.cpp
-HEADERS  := include/stats/stats.hpp
-INCLUDES := -Iinclude -Iinclude/stats
+HEADER   := include/stats/stats.hpp
+SOURCE   := src/stats.cpp
+INCLUDES := -Iinclude
 
-# The generator is given the same compilation database the compiler gets, so the
-# header is parsed with this project's real flags and the report says
-# "abi from compile_commands.json" instead of warning that the flags are a guess.
-CPPGO_ARGS := -dir . -compile-commands $(CURDIR)/$(CDB)
-TEST_ENV   := CPPGO_STATS_LIB=$(CURDIR)/$(LIB)
+# The exact generation command, with paths relative to this directory, so the
+# command in the generated file's banner is one a reader can copy. The .clangd
+# beside this Makefile is the project's compilation configuration.
+GEN_ARGS := -header $(HEADER) -package stats -library $(LIB) -out .
+
+TEST_ENV := CPPGO_STATS_LIB=$(CURDIR)/$(LIB) CPPGO_STATS_SHIM=$(CURDIR)/$(SHIM)
 
 .PHONY: all lib gen test vet check bench clean
 
-all: test vet
+all: gen test vet
 
-## --- the C++ side ----------------------------------------------------------
+## --- the user's library ----------------------------------------------------
 
 lib: $(LIB)
 
-$(LIB): $(SOURCES) $(HEADERS) | $(BUILD)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -shared -o $(LIB) $(SOURCES)
+$(LIB): $(SOURCE) $(HEADER) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -shared -Wl,-soname,libstats.so -o $@ $(SOURCE)
 
-# What a CMake build writes with CMAKE_EXPORT_COMPILE_COMMANDS=ON. Written by
-# hand only because this example does not need a whole build system.
-$(CDB): $(SOURCES) $(HEADERS) | $(BUILD)
-	@printf '[{"directory": "%s", "arguments": ["%s", "-std=c++17", "-fPIC", "-I%s/include", "-I%s/include/stats", "-c", "%s/src/stats.cpp"], "file": "%s/src/stats.cpp"}]\n' \
-		"$(CURDIR)" "$(CXX)" "$(CURDIR)" "$(CURDIR)" "$(CURDIR)" "$(CURDIR)" > $(CDB)
+## --- the generated binding -------------------------------------------------
 
-## --- the Go side -----------------------------------------------------------
+gen: $(CPPGO) $(LIB)
+	$(CPPGO) gen $(GEN_ARGS)
 
-gen: $(CPPGO) $(CDB)
-	$(CPPGO) gen $(CPPGO_ARGS)
-
-test: lib gen
-	$(TEST_ENV) $(GO) test -count=1 -v ./...
+test: gen
+	CGO_ENABLED=0 $(TEST_ENV) $(GO) test -count=1 -v .
+	CGO_ENABLED=1 $(TEST_ENV) $(GO) test -race -count=1 .
 
 vet: gen
-	$(GO) vet ./...
+	CGO_ENABLED=0 $(GO) vet .
 
-check: $(CPPGO) $(CDB)
-	$(CPPGO) check $(CPPGO_ARGS)
+check: $(CPPGO) $(LIB)
+	$(CPPGO) check $(GEN_ARGS)
 
-bench: lib gen
-	$(TEST_ENV) $(GO) test -run '^$$' -bench . -benchmem ./...
+bench: gen
+	CGO_ENABLED=0 $(TEST_ENV) $(GO) test -run '^$$' -bench . -benchmem .
+
+## --- tools and housekeeping ------------------------------------------------
 
 $(CPPGO): | $(BUILD)
 	cd $(ROOT) && CGO_ENABLED=0 $(GO) build -trimpath -o $(CURDIR)/$(CPPGO) ./cmd/cppgo
@@ -75,4 +78,4 @@ $(BUILD):
 	@mkdir -p $(BUILD)
 
 clean:
-	rm -rf $(BUILD)
+	rm -rf $(BUILD) $(SHIM)
