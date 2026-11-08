@@ -46,8 +46,10 @@ M outside a foreign call, and a callback reached that way kills the process
 (`fatal error: morestack on g0`, measured). A binding whose signature passes a Go
 function to C++ therefore gets this carrier.
 
-Template calls go through this carrier as well, because a template member may
-take a callback and the two-phase shim cannot know at generation time.
+Template calls go through this carrier as well: the generated generic code calls
+`cppgo.CallReentrant`, so a template binding costs what the reentrant carrier
+costs. That is one implementation detail the generated package exposes in its
+source, not in its API.
 
 ## What each costs
 

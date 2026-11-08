@@ -26,7 +26,7 @@ There are three kinds of limit, and they behave differently:
 | A function-like macro that *is* the API cannot be bound | libclang sees a macro's expansion, not its declaration | `DESIGN.md` § *Hard limits* |
 | A template instantiation nobody asked for does not exist | a template only exists where it is instantiated; the two-phase flow is the answer | `TestTwoPhaseGenerics` (`int64` subtest) |
 | `long double` and `__int128` have no Go value type | there is no Go type of that width | `TestGenerationErrors` (`longdouble.hpp`, `int128.hpp`) |
-| The shim and the library must share a C++ ABI and standard library | the shim calls the library across that boundary | the generator records the compiler and rejects a mismatch; `internal/gen` carrier tests |
+| The shim and the library must share a C++ ABI and standard library | the shim calls the library across that boundary; nothing at load time detects a mismatch | the report names the compiler that built the shim, so the two can be compared by hand. Recording the version and `_GLIBCXX_USE_CXX11_ABI` and refusing a mismatch is designed, not implemented |
 
 ## Not emitted yet
 

@@ -96,8 +96,10 @@ Harder, and stated plainly:
   rather than guesses — see [Limits]({{< ref "explanation/limits.md" >}}). Today
   that refusal list includes enums, inheritance, operators and smart pointers;
 - **the shim must match your library's C++ ABI**: same compiler family, same
-  standard library, same `_GLIBCXX_USE_CXX11_ABI`. Mixing them is a generation
-  error, not a crash at the first call.
+  standard library, same `_GLIBCXX_USE_CXX11_ABI`. Nothing detects a mismatch
+  for you: cppgo reports the compiler it built the shim with, and keeping the
+  two in step is a build decision. Mixing them is not a build error; it is
+  undefined behaviour at the first call.
 
 ## When cppgo is not the answer
 

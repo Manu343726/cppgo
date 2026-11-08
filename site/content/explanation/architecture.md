@@ -17,10 +17,11 @@ produces.
 | generator | `internal/gen`, `internal/cxx`, `cmd/cppgo` | parsing C++ through libclang, flag discovery, binding selection, carrier routing, emitting Go, assembly and the shim, and compiling the shim | anything, including libclang and a C++ compiler |
 
 The runtime **never imports `internal/cxx`**, directly or transitively, and has
-no libclang dependency. That is a test, not a convention: a test in the root
-package fails when libclang appears in its dependency graph. A program built with
-a generated package needs no libclang and no C++ compiler; it needs the two
-shared objects at run time.
+no libclang dependency. That is a test, not a convention:
+`TestRuntimeHasNoGeneratorDependency` in the root package runs `go list -deps`
+and fails when `internal/cxx`, `cmd/cppgo` or `internal/gen` appears in the
+runtime's dependency graph. A program built with a generated package needs no
+libclang and no C++ compiler; it needs the two shared objects at run time.
 
 ## Three artefacts
 
@@ -90,8 +91,11 @@ only in the shim, which is C++ and can legally construct them:
 - `std::string_view` and `std::span` are borrowed as `(pointer, length)` and are
   valid only for the call;
 - the shim and your library must use the same standard library and the same
-  `_GLIBCXX_USE_CXX11_ABI`. The generator records the compiler it used and
-  rejects a mismatch rather than hoping.
+  `_GLIBCXX_USE_CXX11_ABI`. cppgo compiles the shim with the flags it
+  discovered and reports the compiler it used; it does not inspect the
+  library's standard library, so keeping the two in step is a build decision.
+  Recording the version and `_GLIBCXX_USE_CXX11_ABI` and refusing a mismatch is
+  designed ([Limits]({{< ref "explanation/limits.md" >}})).
 
 ## Building the shim
 
