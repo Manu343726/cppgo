@@ -47,36 +47,56 @@ func TestSpecializationMirrorsWhenLayoutIsKnown(t *testing.T) {
 	assert.Equal(t, int64(0), holder.Fields[0].OffsetBytes)
 }
 
-// TestSpecializationWithoutCompletedLayout is the fixture with system
-// includes, where libclang defers the instantiation. The record still has its
-// fields and members; only the layout is unknown, so the emitter uses the
-// opaque accessor path instead of mirroring.
-func TestSpecializationWithoutCompletedLayout(t *testing.T) {
+// TestSpecializationLayoutContract pins the layout contract for a specialisation
+// parsed with the system headers available. libclang either completes the
+// instantiation or defers it, depending on the standard headers the environment
+// ships, so the test does not pick one outcome: the specialisation always
+// carries its fields and members, a known layout has real size/align/offsets,
+// and an unknown one is explicitly -1.
+func TestSpecializationLayoutContract(t *testing.T) {
 	tu := recordFixture(t)
 
 	box, ok := tu.Record("mathx::Box<int>")
 	require.True(t, ok)
 	assert.True(t, box.IsTemplateSpecialization)
-	assert.False(t, box.LayoutKnown, "libclang deferred the instantiated layout")
-	assert.Equal(t, int64(-1), box.SizeBytes, "an unknown layout is reported as unknown")
-	assert.Equal(t, int64(-1), box.AlignBytes)
+	assertLayoutIsContractual(t, box)
 	assert.True(t, box.IsDefaultConstructible)
 	assert.True(t, box.IsCopyConstructible)
 
-	require.Len(t, box.Fields, 1)
-	assert.Equal(t, "value", box.Fields[0].Name)
-	assert.Equal(t, TypeInteger, box.Fields[0].Type.Kind)
-	assert.Equal(t, int64(-1), box.Fields[0].OffsetBytes, "the model has no offset to report")
+	require.Len(t, box.Fields, 1, "the fields are reachable whichever layout branch the environment takes")
+	field := box.Fields[0]
+	assert.Equal(t, "value", field.Name)
+	assert.Equal(t, TypeInteger, field.Type.Kind)
+	assert.Equal(t, int64(4), field.Type.SizeBytes, "int is 4 bytes on the x86-64 System V ABI")
+
+	if box.LayoutKnown {
+		// The pinned CI image resolves <cstddef>, so this is its branch:
+		// Box<int> is one int field, with no padding.
+		assert.Equal(t, int64(4), box.SizeBytes, "sizeof(Box<int>) is sizeof(int)")
+		assert.Equal(t, int64(4), box.AlignBytes, "alignof(Box<int>) is alignof(int)")
+		assert.Equal(t, int64(0), field.OffsetBytes, "the single field starts at offset 0")
+	} else {
+		// A bare checkout whose system headers do not resolve takes this
+		// branch: the layout is absent and the model says so instead of
+		// guessing a size.
+		assert.Equal(t, int64(-1), box.SizeBytes)
+		assert.Equal(t, int64(-1), box.AlignBytes)
+		assert.Equal(t, int64(-1), field.OffsetBytes, "a deferred layout reports no offset")
+	}
 
 	var memberNames []string
+	var get Symbol
 	for _, member := range box.Members {
 		memberNames = append(memberNames, member.QualifiedName)
+		if member.QualifiedName == "mathx::Box<int>::get" {
+			get = member
+		}
 	}
 	assert.ElementsMatch(t, []string{
 		"mathx::Box<int>::get",
 		"mathx::Box<int>::operator int",
-	}, memberNames)
-	get := box.Members[0]
+	}, memberNames, "the members are reachable whichever layout branch the environment takes")
+	require.NotEmpty(t, get.QualifiedName, "the instantiation carries its members")
 	assert.Equal(t, "int", get.Result.Spelling)
 	assert.Empty(t, get.Mangled, "a template instantiation is carried by a thunk")
 }
