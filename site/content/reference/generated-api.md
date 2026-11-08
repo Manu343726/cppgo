@@ -5,42 +5,37 @@ weight: 20
 ---
 
 This page describes the package `cppgo gen` writes. The snippets are copied from
-the generated files in the examples and from the generator's golden files, so
-they are the output, not a sketch of it.
+generated packages in the examples, so they are the output, not a sketch of it.
 
 ## Package entry
 
 Every generated package has one way in:
 
 ```go
-// Open loads the cppgo-built shim and, when the package has one, the user's
-// library it was linked against, then resolves every symbol this package binds.
+// Open loads what the package needs and resolves its bindings.
 //
-// path names the shim cppgo compiled beside this package. A path of "" uses the
+// path names the C++ file cppgo built beside this package. A path of "" uses the
 // name the package was generated with. It is safe to call Open more than once;
 // the first successful call wins.
 func Open(path string) error
 
-// CppgoLibraryPath overrides where the user's library is loaded from, for a
-// deployment that does not keep it beside the shim. It must be set before the
-// first Open: the two objects are loaded once, and a later change is not
-// observed.
+// CppgoLibraryPath overrides where your C++ library is loaded from, for a
+// deployment that does not keep it beside the generated file. It must be set
+// before the first Open; a later change is not observed.
 var CppgoLibraryPath string
 ```
 
 The generated methods call `Open("")` themselves when the package is not open
-yet, so a program that keeps the objects where the package can find them needs no
-explicit call. A missing shim symbol is reported once, as
+yet, so a program that keeps the two files where the package can find them needs
+no explicit call. A missing binding is reported once, as
 `the shim cppgo compiled is stale; run cppgo gen again`.
 
 ## Records
 
-### A mirrorable record becomes a Go struct
+### A record with a natural layout becomes a Go struct
 
-A record is mirrorable when all its fields are public, its layout is the natural
-Go layout, and no field is a bitfield, a reference, a pointer, a union member or
-a non-mirrorable type. Its Go value *is* the C layout, and the generated file
-asserts that at compile time:
+A C++ record whose fields are all public and whose layout matches Go's becomes a
+Go struct with the same fields:
 
 ```go
 // Point is mathx::Point: a POD, 16 bytes, X at offset 0, Y at offset 8.
@@ -49,13 +44,6 @@ type Point struct {
 	Y float64
 }
 
-// The C++ layout is proven at compile time: a wrong size, alignment or
-// field offset does not compile.
-var _ [16]byte = [unsafe.Sizeof(Point{})]byte{}
-var _ [8]byte = [unsafe.Alignof(Point{})]byte{}
-var _ [0]byte = [unsafe.Offsetof(Point{}.X)]byte{}
-var _ [8]byte = [unsafe.Offsetof(Point{}.Y)]byte{}
-
 // NewPoint returns a zero Point.
 func NewPoint() (*Point, error)
 
@@ -63,10 +51,10 @@ func NewPoint() (*Point, error)
 func (p *Point) Clone() (*Point, error)
 ```
 
-A `Point` crosses by value, and the shim copies it in and out. A record that is
-not mirrorable becomes an opaque value instead: a Go struct with unexported
-storage, `Close()` from the destructor, `Clone()` from the copy constructor when
-there is one, and generated accessors for the public fields.
+A `Point` is passed and returned by value. A record that does not qualify
+becomes an opaque value instead: Go storage the C++ side owns, with `Close`,
+`Clone` when the C++ type is copyable, and generated accessors for the public
+fields.
 
 ### A class becomes a struct with a lifetime
 
@@ -87,15 +75,15 @@ The rules that hold for every class:
 
 - `New<Type>` is a constructor. Constructor overloads carry the same parameter
   suffix as functions, applied to `New<Type>`.
-- `Close` runs the destructor. There is no finalizer, so closing is the caller's
+- `Close` releases the object. There is no finalizer, so closing is the caller's
   job.
-- `Clone` is the copy constructor. A move constructor stays internal.
+- `Clone` is the copy constructor. A move constructor is not exposed.
 - A static member with no `this` becomes a package function named after its type:
   `func VectorDims() (int32, error)` is `mathx::Vector::dims()`.
 - Accessors keep their names: `X`, `Y`, `Norm`, `Dot`, `At`, `Validate`,
   `Scale`.
 
-### Zero values are invalid, and behave differently by carrier
+### Zero and closed values
 
 A method on a nil or closed value returns `cppgo.ErrClosed`:
 
@@ -108,8 +96,8 @@ func (v *Vector) X() (float64, error) {
 }
 ```
 
-A **direct** binding has no error channel to return, so it panics instead. This
-is the generated `Scale`, unchanged:
+A method whose declaration cannot fail has no error result to return, so it
+panics instead. This is the generated `Scale`, unchanged:
 
 ```go
 func (v *Vector) Scale(k float64) {
@@ -120,14 +108,14 @@ func (v *Vector) Scale(k float64) {
 }
 ```
 
-That difference follows from the signature, not from a preference: `scale` is
-`noexcept`, so its Go signature has no error result to put `ErrClosed` in.
+The difference follows from the signature, not from a preference: `scale` cannot
+fail, so its Go signature has nowhere to put an error.
 
 ## Functions and overloads
 
 A free or static function becomes a package function. An overload takes a suffix
 built from the Go parameter types, in order, and one declaration keeps the bare
-name. From the generator's overload fixture:
+name:
 
 ```go
 func AddFloat64Float64(a float64, b float64) float64
@@ -149,7 +137,7 @@ parameter and the caller passes the default. `int add(int a, int b = 2)` becomes
 |---|---|---|
 | `bool` | `bool` | |
 | `char`, `signed char`, `unsigned char` | `int8`, `uint8` | |
-| `short`, `int`, `long`, `long long` and unsigned | `int16`/`int32`/`int64`, unsigned alike | LP64, sizes validated against libclang |
+| `short`, `int`, `long`, `long long` and unsigned | `int16`/`int32`/`int64`, unsigned alike | LP64 |
 | `std::int8_t` … `std::uint64_t` | the same width | |
 | `std::size_t`, `std::ptrdiff_t` | `uint64`, `int64` | |
 | `float`, `double` | `float32`, `float64` | |
@@ -165,7 +153,7 @@ parameter and the caller passes the default. `int add(int a, int b = 2)` becomes
 | `T[N]` as a record field | `[N]T` | fixed-size array |
 | function pointer, `std::function<R(Args…)>` | `func(…) R` | see *Callbacks* |
 
-The shipped signatures, from the standard-library golden file:
+For a header that uses them, the generated signatures look like this:
 
 ```go
 func Describe(prefix string, suffix string) (string, error)
@@ -185,42 +173,32 @@ Some shapes are refused rather than guessed — `long double`, `__int128`,
 tests.
 
 **A `char *` parameter does not bind in this build.** `const char *` is mapped to
-`*int8`, and the shim then fails to compile with `invalid conversion from
-'const int8_t*' {aka 'const signed char*'} to 'const char*'` — with or without a
-paired length. Use `std::string` or `std::string_view` at the boundary until the
-mapping is fixed.
+`*int8`, and generation fails with `invalid conversion from 'const int8_t*
+{aka 'const signed char*'} to 'const char*'` — with or without a paired length.
+Use `std::string` or `std::string_view` at the boundary until the mapping is
+fixed.
 
 ## Callbacks
 
 A parameter that takes a function pointer or a `std::function` becomes a Go
-function value. The binding registers it in the callback table, calls the thunk
-through the **reentrant** carrier, and releases the registration when the call
-returns:
+function value. The limits:
 
-```go
-cppgo.CallReentrant(fn, &cppgoFrame)
-```
+- the call carries at most **six integer and eight floating-point arguments**,
+  and one result. A callback that needs more is a generation error naming the
+  argument;
+- argument and result types are scalars, and pointers to them. A `std::string`
+  parameter or a record passed by value in a callback is a generation error;
+- a panic inside the callback does not reach C++: the result is zeroed and the
+  panic is re-raised in Go when the foreign call returns;
+- a callback that has to report a failure writes a status and the C++ side checks
+  it. An exception raised across a callback into Go terminates the process.
 
-The limits are the ABI's, not the generator's convenience:
-
-- at most **six INTEGER and eight SSE arguments**, and one register result.
-  A callback that needs more is a generation error naming the argument;
-- argument and result types are scalars (and pointers to them), plus the shapes
-  the register file can carry. A `std::string` parameter or a record passed by
-  value in a callback is a generation error;
-- a panic inside the callback does not unwind into C++: it is captured, the
-  result is zeroed, and the binding re-panics in Go after the call returns;
-- a callback that wants to report a failure writes a status into its frame; the
-  C++ side checks it. An exception raised across a Go callback frame terminates
-  the process.
-
-The mechanism is measured in `internal/callback` and `internal/shim`. There is no
-example in `examples/` that passes a callback yet.
+There is no example in `examples/` that passes a callback yet.
 
 ## Templates
 
 A class or function template becomes a Go generic type or function, and the
-concrete C++ specialisations are collected by `cppgo build -scan`:
+concrete C++ types are provided by `cppgo build -scan`:
 
 ```go
 type Box[T any] struct{ obj *cppgo.Object }
@@ -247,21 +225,20 @@ A C++ name that maps to an existing Go name and cannot be separated by a suffix
 is a generation error asking for `-rename`. A `-rename` that matches nothing is
 also an error.
 
-## The evidence line
+## The comment on every binding
 
-Every binding carries one line naming the C++ declaration and the reason for its
-carrier:
+Every generated declaration carries a comment naming the C++ declaration it came
+from and how cppgo calls it:
 
 ```
 // C++: mathx::Vector::at(std::size_t) const, _ZNK5mathx6Vector2atEm (thunk cppgo_thunk_79aeb346bd10, not noexcept: an exception would unwind into Go), verified against libmathx.so
 ```
 
-A direct binding says so instead, and a template says `two-phase template`. This
-comment is the record of what the call does; it is also the first thing to read
-when a generated method surprises you.
+It is the first thing to read when a generated method surprises you. The fields
+are explained in [Architecture]({{< ref "explanation/architecture.md" >}}#generation-parse-selection-determinism).
 
 ## Related
 
 - How to produce this package: [Generate a binding for your own library]({{< ref "how-to/generate.md" >}}).
-- What each carrier costs: [Carrier table]({{< ref "explanation/carriers.md" >}}).
+- How a call is made and what it costs: [Carriers and the construct table]({{< ref "explanation/carriers.md" >}}).
 - The runtime the package imports: [Runtime]({{< ref "reference/runtime.md" >}}).

@@ -4,11 +4,9 @@ description: "The cppgo package: loading, calls, objects, wire helpers and error
 weight: 30
 ---
 
-Generated packages import one non-standard package:
-`github.com/Manu343726/cppgo`. This page is its surface, copied from the package
-source. It has no cgo and no libclang dependency; the only third-party
-dependency is `github.com/ebitengine/purego v0.11.3` (`go.mod`), used for
-`dlopen`/`dlsym` only.
+Generated packages import one non-standard package,
+`github.com/Manu343726/cppgo`. This page documents its surface for a hand-written
+binding; a program that only calls a generated package does not need it.
 
 ```go
 import "github.com/Manu343726/cppgo"
@@ -38,7 +36,7 @@ func (l *Library) Symbol(name string) (uintptr, error)
 // missing symbol.
 func (l *Library) MustSymbol(name string) uintptr
 
-// LastError reads cppgo_last_error from lib and returns it as an error.
+// LastError reads the message the library stored for its most recent failure.
 func LastError(lib *Library) error
 ```
 
@@ -46,11 +44,9 @@ A `Library` is safe for concurrent use. `Close` waits for no call already runnin
 inside the library, so closing a library another goroutine is still calling is a
 use-after-free; close once, after the work is done.
 
-`LastError` is the accessor a generated binding uses after a thunk reports a
-non-zero status. It returns `nil` when the library has no such symbol (a library
-that cannot fail) and when the stored C string is empty, and it copies the
-message out immediately: the C string is valid only until the next call into the
-library.
+`LastError` returns `nil` when the library has no message accessor and when the
+stored message is empty. It copies the message out immediately: the string is
+valid only until the next call into the library.
 
 ## Embedded objects
 
@@ -71,10 +67,9 @@ func CleanCache() error
 const LibraryPathEnv = "CPPGO_LIBRARY_PATH"
 ```
 
-The cache layout is `os.UserCacheDir()/cppgo/<sha256 of the whole set>/<name>`;
-directories are `0700`, objects `0600`, and a file is reused only when its size
-and SHA-256 match the embedded bytes. The full contract, including `$ORIGIN`, is
-in [Embed the C++ side in the Go binary]({{< ref "how-to/embed.md" >}}).
+The files are unpacked into a cache private to your user, reused while they are
+unchanged, and refused if the cache path is not private. The steps are in
+[Embed the C++ side in the Go binary]({{< ref "how-to/embed.md" >}}).
 
 ## Stack headroom
 
@@ -88,11 +83,10 @@ const StackReserve = 32 << 10   // 32 KiB
 func ProbeStack()
 ```
 
-A foreign call runs on the goroutine's stack and the trampoline switches the
-stack pointer, so the runtime cannot grow the stack for the C frames. The
-generated trampolines call `ProbeStack` before every call, from the same
-goroutine and before any pointer into the caller's frame is taken. If you write a
-binding by hand, the order is your responsibility.
+A foreign call cannot grow the goroutine stack for the C frames, so it needs room
+underneath. Generated code calls `ProbeStack` before every call, from the same
+goroutine. If you write a binding by hand, call it first, before taking a pointer
+into the caller's frame.
 
 ## Objects
 
@@ -114,10 +108,8 @@ func (o *Object) Retain()
 func (o *Object) Release()
 ```
 
-`Object` pins its storage with `runtime.Pinner`, so the address a generated
-constructor passes to C++ does not move. There is no package-level object
-registry; the one piece of process-global state in the runtime is the callback
-table.
+An `Object` is storage the Go side owns and the C++ side writes into. Hold the
+`*Object`, never a copy; the zero value is unusable.
 
 ## Wire helpers
 
@@ -162,13 +154,10 @@ func TakeCallbackPanic() *CallbackPanic
 type CallbackPanic = callback.Panic
 ```
 
-`CallReentrant` is the carrier of every binding whose signature passes a Go
-function to C++. The runtime only accepts a callback on a thread that is already
-inside a foreign call, and this entry establishes that state. It is the slow
-path by design: 151 ns per call against 15.9 ns for the direct carrier, with one
-16-byte allocation, because the argument block cannot live on a goroutine stack a
-callback may grow (measured 2026-11-08; see the
-[carrier table]({{< ref "explanation/carriers.md" >}})).
+`CallReentrant` is the entry that lets the callee call back into Go. Register the
+Go function with `RegisterCallback`, pass its address to the C++ side, call
+through `CallReentrant`, and release the registration afterwards; check
+`TakeCallbackPanic` after the call returns and re-raise what it returns.
 
 ## Errors
 
@@ -179,7 +168,7 @@ callback may grow (measured 2026-11-08; see the
 | `*SymbolError` | a symbol that could not be resolved. `Name` and `Err` |
 | `*ExtractError` | an embedded object that could not be materialised. `Name`, `Dir`, `Err` |
 | `ErrInsecureCache` | a cache path that fails the private-directory check |
-| `*NativeError` | a failure the library reported through `cppgo_last_error`, with the C string verbatim in `Message` |
+| `*NativeError` | a failure the library reported, with the message verbatim in `Message` |
 | `*CallError` | a bound call that failed. `Symbol` names the C++ declaration, `Err` wraps the native failure |
 
 All of them implement `Unwrap` except the sentinels, so `errors.As` finds the
