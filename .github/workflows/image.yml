@@ -1,10 +1,19 @@
 name: Image
 
-# Builds and publishes the pinned CI toolchain image:
+# Builds and publishes the pinned CI toolchain image, from this repository's
+# `Dockerfile` and nothing else:
 #
+#   ghcr.io/manu343726/cppgo-ci:recipe-<first 12 hex of sha256(Dockerfile)>
 #   ghcr.io/manu343726/cppgo-ci:latest
 #   ghcr.io/manu343726/cppgo-ci:sha-<12 chars of the commit>
 #
+# `recipe-…` is the address `ci.yml` runs in, and the same address names the image
+# on Harbor for the Forgejo workflow: two registries, one address, one recipe. It is
+# content-addressed on purpose — it can be computed from the file before the commit
+# that changes it exists, so a Dockerfile change and the workflow that consumes it
+# land in one commit, and rebuilding the same bytes keeps the same address instead of
+# inventing a second one. `latest` is for humans and no workflow runs in it; `sha-…`
+# is history.
 # The image exists so CI stops depending on what ubuntu-latest happens to ship
 # that week (it dropped libclang once, internal/cxx skipped itself and the 99%
 # coverage gate failed for an environmental reason). ci.yml is switched onto
@@ -49,6 +58,13 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short=12 HEAD)" >>"$GITHUB_OUTPUT"
 
+      - name: Recipe tag
+        # The recipe's content address. Not the commit's sha: that one only exists after
+        # the commit is made, which would force a second commit to point `ci.yml` at the
+        # image its own tree produces.
+        id: recipe
+        run: echo "tag=recipe-$(sha256sum Dockerfile | cut -c1-12)" >>"$GITHUB_OUTPUT"
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -71,6 +87,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
+            ${{ env.IMAGE }}:${{ steps.recipe.outputs.tag }}
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:sha-${{ steps.sha.outputs.short }}
           labels: |
@@ -80,5 +97,7 @@ jobs:
           cache-from: type=gha,scope=cppgo-ci
           cache-to: type=gha,mode=max,scope=cppgo-ci
 
-      - name: Report the published manifest
-        run: docker buildx imagetools inspect "$IMAGE:sha-${{ steps.sha.outputs.short }}"
+      - name: Report the published manifests
+        run: |
+          docker buildx imagetools inspect "$IMAGE:${{ steps.recipe.outputs.tag }}"
+          docker buildx imagetools inspect "$IMAGE:sha-${{ steps.sha.outputs.short }}"
