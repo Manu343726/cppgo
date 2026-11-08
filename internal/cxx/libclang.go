@@ -406,6 +406,14 @@ type libclangFuncs struct {
 	getTemplateArgumentUnsignedValue func(CXCursor, uint32) uint64
 	getSpecializedCursorTemplate     func(CXCursor) CXCursor
 
+	// Diagnostics.
+	getNumDiagnostics     func(uintptr) uint32
+	getDiagnostic         func(uintptr, uint32) uintptr
+	getDiagnosticSeverity func(uintptr) int32
+	getDiagnosticSpelling func(uintptr) CXString
+	getDiagnosticLocation func(uintptr) CXSourceLocation
+	disposeDiagnostic     func(uintptr)
+
 	// Locations.
 	getFileLocation          func(CXSourceLocation, *uintptr, *uint32, *uint32, *uint32)
 	locationIsFromMainFile   func(CXSourceLocation) int32
@@ -490,6 +498,12 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_Cursor_getTemplateArgumentValue", &f.getTemplateArgumentValue},
 		{"clang_Cursor_getTemplateArgumentUnsignedValue", &f.getTemplateArgumentUnsignedValue},
 		{"clang_getSpecializedCursorTemplate", &f.getSpecializedCursorTemplate},
+		{"clang_getNumDiagnostics", &f.getNumDiagnostics},
+		{"clang_getDiagnostic", &f.getDiagnostic},
+		{"clang_getDiagnosticSeverity", &f.getDiagnosticSeverity},
+		{"clang_getDiagnosticSpelling", &f.getDiagnosticSpelling},
+		{"clang_getDiagnosticLocation", &f.getDiagnosticLocation},
+		{"clang_disposeDiagnostic", &f.disposeDiagnostic},
 		{"clang_getFileLocation", &f.getFileLocation},
 		{"clang_Location_isFromMainFile", &f.locationIsFromMainFile},
 		{"clang_Location_isInSystemHeader", &f.locationIsInSystemHeader},

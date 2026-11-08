@@ -2,6 +2,7 @@ package gen
 
 import (
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,32 +17,32 @@ func TestGenerationErrors(t *testing.T) {
 		header string
 		want   string
 	}{
-		{"bigresult.hpp", "record by value as a result"},
-		{"byvalue.hpp", "passing a record by value"},
-		{"bitfield.hpp", "field accessors for an opaque record"},
-		{"classtemplate.hpp", "class template"},
+		{"bigresult.hpp", "is returned by value"},
+		{"bitfield.hpp", "public field"},
+		{"byvalue.hpp", "is passed by value"},
+		{"classtemplate.hpp", "class template is not a type"},
+		{"freeoperator.hpp", "operators and conversion operators"},
 		{"incomplete.hpp", "not part of the generated API"},
 		{"int128.hpp", "no Go value type"},
-		{"longdouble.hpp", "long double"},
+		{"int128ptr.hpp", "no Go value type"},
+		{"longdouble.hpp", "no Go value type"},
 		{"manyfloats.hpp", "argument block"},
 		{"manyints.hpp", "argument block"},
-		{"membertemplate.hpp", "member function templates"},
-		{"mixedaccess.hpp", "field accessors for an opaque record"},
-		{"nestedfield.hpp", "field accessors for an opaque record"},
+		{"membertemplate.hpp", "member function template"},
+		{"mixedaccess.hpp", "public field"},
+		{"nestedfield.hpp", "public field"},
 		{"nullptrarg.hpp", "nullptr_t"},
-		{"opaquefield.hpp", "field accessors for an opaque record"},
-		{"opaquevalue.hpp", "opaque record by value"},
-		{"operand.hpp", "operators"},
-		{"freeoperator.hpp", "operators"},
-		{"int128ptr.hpp", "__int128"},
-		{"packed.hpp", "field accessors for an opaque record"},
-		{"pointerresult.hpp", "pointer to an opaque record as a result"},
-		{"staticdata.hpp", "static data members"},
-		{"templfunc.hpp", "template is not a type until it is instantiated"},
-		{"unionrecord.hpp", "field accessors for an opaque record"},
-		{"variadic.hpp", "variadic functions"},
-		{"variadicmethod.hpp", "variadic functions"},
-		{"voidptr.hpp", "void pointers"},
+		{"opaquefield.hpp", "public field"},
+		{"opaquevalue.hpp", "is passed by value"},
+		{"operand.hpp", "operators and conversion operators"},
+		{"packed.hpp", "public field"},
+		{"pointerresult.hpp", "pointer to an opaque record"},
+		{"staticdata.hpp", "static data member"},
+		{"templfunc.hpp", "function template"},
+		{"unionrecord.hpp", "public field"},
+		{"variadic.hpp", "variadic function"},
+		{"variadicmethod.hpp", "variadic function"},
+		{"voidptr.hpp", "void pointer"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -70,5 +71,46 @@ func TestEnumDiagnostic(t *testing.T) {
 	}
 	_, err := Render(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "enum err::Color")
+	assert.Contains(t, err.Error(), "err::Color: enums are not emitted")
+}
+
+// TestUnimplementedErrorShape checks the contract's exact one-line shape:
+// cppgo: <file>:<line>: <symbol>: <what is wrong>; <fix>.
+func TestUnimplementedErrorShape(t *testing.T) {
+	cfg := Config{
+		Headers: []string{"testdata/errors/stdstring.hpp"},
+		Package: "err",
+		Library: "liberr",
+	}
+	_, err := build(cfg)
+	require.Error(t, err)
+	pattern := regexp.MustCompile(`^cppgo: .+:\d+: .+: .+; .+$`)
+	assert.Regexp(t, pattern, err.Error())
+	assert.Contains(t, err.Error(), "standard-library type")
+}
+
+// TestInheritedAndNestedRejections covers the two constructs the verifier saw
+// silently omitted.
+func TestInheritedAndNestedRejections(t *testing.T) {
+	cases := []struct {
+		header string
+		want   string
+	}{
+		{"inherited.hpp", "inherited members and base views"},
+		{"nestedtype.hpp", "nested inside a record"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.header, func(t *testing.T) {
+			t.Parallel()
+			cfg := Config{
+				Headers: []string{filepath.Join("testdata", "errors", tc.header)},
+				Package: "err",
+				Library: "liberr",
+			}
+			_, err := build(cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
 }

@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Manu343726/cppgo/internal/cxx"
 )
@@ -50,7 +51,15 @@ type mapper struct {
 }
 
 // mapType maps one C++ type, rejecting only what this build cannot emit yet.
+//
+// A standard-library type is recognised by its declaration spelling, before the
+// canonical kind is consulted: libclang's canonical form of a reference to a
+// class template alias can be wrong (std::string & resolves to int & on some
+// versions), so the spelling is the reliable half exactly as it is for streams.
 func (m *mapper) mapType(p cxx.Param) (*goType, error) {
+	if name, ok := stdTypeName(p); ok {
+		return m.mapStd(p, name)
+	}
 	switch p.Kind {
 	case cxx.TypeVoid:
 		return &goType{Kind: goVoid, Go: "", Param: p}, nil
@@ -63,12 +72,52 @@ func (m *mapper) mapType(p cxx.Param) (*goType, error) {
 	case cxx.TypeRecord:
 		return m.mapRecord(p)
 	case cxx.TypeEnum:
-		return nil, unsupported(p, "enum values")
+		return nil, pending(fmt.Sprintf("%q is an enum", p.Spelling), "pass the value as its underlying integer at the C++ boundary")
 	case cxx.TypeArray:
-		return nil, unsupported(p, "array values")
+		return nil, pending(fmt.Sprintf("%q is a C array", p.Spelling), "decay it to a pointer and a length at the C++ boundary")
 	default:
-		return nil, unsupported(p, "this type")
+		return nil, pending(fmt.Sprintf("%q is not a type this build classifies", p.Spelling), "expose it as a scalar, a pointer, a reference or a supported std:: type")
 	}
+}
+
+// mapStd maps a standard-library type. Every type in DESIGN.md's table is
+// implemented by the marshalling unit; until then the construct is named, not
+// guessed.
+func (m *mapper) mapStd(p cxx.Param, name string) (*goType, error) {
+	return nil, pending(fmt.Sprintf("%q is a standard-library type", name), "pass the data as a supported value (a scalar, a pointer and length, or a POD) at the C++ boundary")
+}
+
+// stdTypeName recognises a standard-library type by its spelling and returns
+// the normalised name. It only fires for record-shaped declarations: a
+// std::size_t parameter is a scalar and is mapped as one.
+func stdTypeName(p cxx.Param) (string, bool) {
+	record := p.Kind == cxx.TypeRecord
+	if p.Kind == cxx.TypePointer && p.Pointee != nil {
+		record = p.Pointee.Kind == cxx.TypeRecord
+	}
+	if !record {
+		return "", false
+	}
+	s := strings.TrimSpace(p.Spelling)
+	for {
+		switch {
+		case strings.HasPrefix(s, "const "):
+			s = strings.TrimSpace(s[len("const "):])
+		case strings.HasPrefix(s, "volatile "):
+			s = strings.TrimSpace(s[len("volatile "):])
+		default:
+			goto trimmed
+		}
+	}
+trimmed:
+	s = strings.TrimSuffix(s, "&&")
+	s = strings.TrimSuffix(s, "&")
+	s = strings.TrimSuffix(s, "*")
+	s = strings.TrimSpace(s)
+	if s == "std::nullptr_t" || !strings.HasPrefix(s, "std::") {
+		return "", false
+	}
+	return s, true
 }
 
 // mapInteger maps every integer width the type map covers, and checks the LP64
@@ -79,11 +128,11 @@ func (m *mapper) mapInteger(p cxx.Param) (*goType, error) {
 		return &goType{Kind: goBool, Go: "bool", C: "bool", Cxx: "bool", Param: p}, nil
 	}
 	if (p.ClangKind == "Long" || p.ClangKind == "ULong") && p.SizeBytes != 8 {
-		return nil, fmt.Errorf("cppgo: %s: long is %d bytes on this target, not 8; the type map is LP64 and a silent reinterpretation is not emitted", p.Spelling, p.SizeBytes)
+		return nil, pending(fmt.Sprintf("%q is %d bytes on this target, not 8", p.Spelling, p.SizeBytes), "the type map is LP64; expose a 64-bit value at the C++ boundary")
 	}
 	goName, cName, ok := integerType(p.SizeBytes, p.Unsigned)
 	if !ok {
-		return nil, fmt.Errorf("cppgo: %s: a %d-byte integer has no Go value type in the type map", p.Spelling, p.SizeBytes)
+		return nil, pending(fmt.Sprintf("%q has a %d-byte width with no Go value type", p.Spelling, p.SizeBytes), "widen or narrow it to a fixed-width integer at the C++ boundary")
 	}
 	return &goType{Kind: goInteger, Go: goName, C: cName, Cxx: cName, Param: p}, nil
 }
@@ -128,7 +177,7 @@ func (m *mapper) mapFloat(p cxx.Param) (*goType, error) {
 	case 8:
 		return &goType{Kind: goFloat, Go: "float64", C: "double", Cxx: "double", Param: p}, nil
 	default:
-		return nil, fmt.Errorf("cppgo: %s: long double and __int128 have no Go value type; widen or narrow it at the C++ boundary to double or int64, or wrap it in a representable type", p.Spelling)
+		return nil, pending(fmt.Sprintf("%q has no Go value type", p.Spelling), "widen or narrow it at the C++ boundary to double or int64, or wrap it in a representable type")
 	}
 }
 
@@ -137,10 +186,10 @@ func (m *mapper) mapFloat(p cxx.Param) (*goType, error) {
 // the object the opaque Go type owns.
 func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 	if p.Spelling == "std::nullptr_t" || p.ClangKind == "NullPtr" {
-		return nil, unsupported(p, "nullptr_t")
+		return nil, pending(fmt.Sprintf("%q is nullptr_t", p.Spelling), "pass a typed null pointer at the C++ boundary")
 	}
 	if p.Pointee == nil {
-		return nil, fmt.Errorf("cppgo: %s: a pointer libclang did not describe cannot be mapped", p.Spelling)
+		return nil, pending(fmt.Sprintf("%q is a pointer libclang did not describe", p.Spelling), "include the pointed-to definition in the header")
 	}
 	var elem *goType
 	if p.Pointee.Kind == cxx.TypeRecord {
@@ -149,7 +198,7 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 		// of the object it owns.
 		record, ok := m.records[p.Pointee.RecordName]
 		if !ok {
-			return nil, fmt.Errorf("cppgo: %s: the record is not part of the generated API", p.Spelling)
+			return nil, missingRecord(*p.Pointee)
 		}
 		elem = &goType{Kind: goRecord, Go: record.GoName, Cxx: "::" + record.CxxName, Record: record, Param: *p.Pointee}
 	} else {
@@ -160,7 +209,7 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 		elem = mapped
 	}
 	if elem.Kind == goVoid {
-		return nil, unsupported(p, "void pointers")
+		return nil, pending(fmt.Sprintf("%q is a void pointer", p.Spelling), "expose a typed pointer at the C++ boundary")
 	}
 	if elem.Kind == goRecord {
 		// A record pointer crosses as void *: the shim header stays standalone
@@ -202,10 +251,10 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
 	record, ok := m.records[p.RecordName]
 	if !ok {
-		return nil, fmt.Errorf("cppgo: %s: the record is not part of the generated API", p.Spelling)
+		return nil, missingRecord(p)
 	}
 	if !record.Mirrored {
-		return nil, unsupported(p, "passing an opaque record by value")
+		return nil, pending(fmt.Sprintf("%q is passed by value but is not a POD", p.Spelling), "take it by const reference, or make it a POD that Go can mirror")
 	}
 	return &goType{
 		Kind:   goRecord,
@@ -217,9 +266,13 @@ func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
 	}, nil
 }
 
-// unsupported names a construct this build does not emit yet. It is not a
-// refusal of the construct: DESIGN.md's carrier model covers it, and phase 2b
-// of the emitter workstream implements it.
-func unsupported(p cxx.Param, what string) error {
-	return fmt.Errorf("cppgo: %s: emitting %s is not implemented by this build yet", p.Spelling, what)
+// missingRecord is the error for a record the generated API does not hold. A
+// template specialisation is the common cause: it exists as a type but the
+// manifest has not named it.
+func missingRecord(p cxx.Param) error {
+	fix := "include its complete definition in the header"
+	if strings.Contains(p.RecordName, "<") {
+		fix = "name it with -instantiate '" + p.RecordName + "'"
+	}
+	return pending(fmt.Sprintf("%q is not part of the generated API", p.Spelling), fix)
 }

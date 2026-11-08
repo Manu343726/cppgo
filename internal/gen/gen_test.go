@@ -160,12 +160,14 @@ func TestInvocationRendersEveryFlag(t *testing.T) {
 		CompileCommands: "build/compile_commands.json",
 		Bind:            []string{"ns::A"},
 		Exclude:         []string{"ns::B"},
+		Instantiate:     []string{"ns::Box<int>"},
 		Rename:          []string{"ns::C::m=Met"},
 	}
 	invocation := cfg.invocation()
 	for _, want := range []string{
 		"-header a.hpp", "-header b.hpp", "-package p", "-library libp", "-out out",
 		"-compile-commands build/compile_commands.json", "-bind ns::A", "-exclude ns::B",
+		"-instantiate ns::Box<int>",
 		"-rename ns::C::m=Met",
 	} {
 		assert.Contains(t, invocation, want)

@@ -187,6 +187,7 @@ type packageModel struct {
 	cfg      Config
 	mapper   *mapper
 	name     string
+	flags    []string
 	library  string
 	headers  []string
 	records  []*recordModel
@@ -207,8 +208,17 @@ type builder struct {
 	// order records the insertion order of records, for deterministic output.
 	order    []string
 	bindings []*binding
-	verified string
-	warnings []string
+	// synthMembers are the members of included template specialisations. The
+	// model reads them from the pattern, because libclang exposes no cursor for
+	// the instantiated definition, so they are not in the project's symbol list.
+	synthMembers []cxx.Symbol
+	// instantiateMatched tracks the -instantiate entries a record matched.
+	instantiateMatched []bool
+	verified           string
+	warnings           []string
+	// flags are the compilation flags the headers were parsed with. The shim
+	// self-check parses the generated translation unit with the same ones.
+	flags []string
 }
 
 // build loads the headers and turns the model into a package model.
@@ -222,8 +232,11 @@ func build(cfg Config) (*packageModel, error) {
 	if cfg.Library == "" {
 		return nil, fmt.Errorf("cppgo: -library is required: name the shared object Open loads")
 	}
-	b := &builder{cfg: cfg, records: map[string]*recordModel{}}
+	b := &builder{cfg: cfg, records: map[string]*recordModel{}, instantiateMatched: make([]bool, len(cfg.Instantiate))}
 	if err := b.load(); err != nil {
+		return nil, err
+	}
+	if err := b.rejectUnimplemented(); err != nil {
 		return nil, err
 	}
 	b.mapper = &mapper{records: b.records}
@@ -256,6 +269,9 @@ func (b *builder) load() error {
 		project, err := cxx.Open(cxx.Options{Header: header, CompileCommands: b.cfg.CompileCommands})
 		if err != nil {
 			return fmt.Errorf("cppgo: %s: %w", header, err)
+		}
+		if b.flags == nil {
+			b.flags = append([]string(nil), project.Flags.Args...)
 		}
 		if project.Flags.Assumed() {
 			b.warnings = append(b.warnings, fmt.Sprintf("the compilation flags for %s are an assumption (%s); a parse without the project's real flags can misread the header", header, project.Flags.Detail))
@@ -296,21 +312,20 @@ func (b *builder) buildRecords() error {
 	sort.Slice(b.rawRecords, func(i, j int) bool {
 		return b.rawRecords[i].QualifiedName < b.rawRecords[j].QualifiedName
 	})
-	if len(b.rawEnums) > 0 {
-		return fmt.Errorf("cppgo: enum %s: emitting enums is not implemented by this build yet", b.rawEnums[0].QualifiedName)
-	}
 	for _, rec := range b.rawRecords {
 		if rec.IsTemplate {
-			return fmt.Errorf("cppgo: %s: a class template is not a type until it is instantiated; name the instantiation with -instantiate", rec.QualifiedName)
+			continue
 		}
-		if len(rec.StaticFields) > 0 {
-			return fmt.Errorf("cppgo: %s::%s: emitting static data members is not implemented by this build yet", rec.QualifiedName, rec.StaticFields[0].Name)
-		}
-		if len(rec.MemberTemplates) > 0 {
-			return fmt.Errorf("cppgo: %s::%s: emitting member function templates is not implemented by this build yet", rec.QualifiedName, rec.MemberTemplates[0].QualifiedName)
+		if rec.IsTemplateSpecialization {
+			// A specialisation is part of the API only when the manifest names
+			// it: the user chooses which concrete types to emit.
+			if !b.instantiationNamed(rec.QualifiedName) {
+				continue
+			}
+			b.synthMembers = append(b.synthMembers, rec.Members...)
 		}
 		model := &recordModel{
-			GoName:               exportName(simpleName(rec.QualifiedName)),
+			GoName:               goRecordName(rec.QualifiedName),
 			CxxName:              rec.QualifiedName,
 			Size:                 rec.SizeBytes,
 			Align:                rec.AlignBytes,
@@ -321,7 +336,9 @@ func (b *builder) buildRecords() error {
 		if !model.Mirrored {
 			for _, field := range rec.Fields {
 				if field.Access == cxx.AccessPublic {
-					return fmt.Errorf("cppgo: %s: field accessors for an opaque record are not implemented by this build yet", rec.QualifiedName)
+					return recordError(rec, pending(
+						fmt.Sprintf("the public field %s of an opaque record is not emitted by this build yet", field.Name),
+						"make the field private and expose an accessor in C++, or make the record a POD"))
 				}
 			}
 		}
@@ -337,6 +354,11 @@ func (b *builder) buildRecords() error {
 		}
 		b.records[rec.QualifiedName] = model
 		b.order = append(b.order, rec.QualifiedName)
+	}
+	for i, entry := range b.cfg.Instantiate {
+		if !b.instantiateMatched[i] {
+			return fmt.Errorf("cppgo: -instantiate %s: it names no instantiation this header declares; add an explicit instantiation such as 'template struct ...;' to the header", entry)
+		}
 	}
 	return nil
 }
@@ -420,10 +442,8 @@ func mirrorFieldType(p cxx.Param) *goType {
 // buildBindings turns every public declaration into a binding, before
 // selection and naming.
 func (b *builder) buildBindings() error {
-	for _, sym := range b.symbols {
-		if sym.IsTemplate {
-			return fmt.Errorf("cppgo: %s: a template is not a type until it is instantiated; name the instantiation with -instantiate", sym.QualifiedName)
-		}
+	symbols := append(append([]cxx.Symbol(nil), b.symbols...), b.synthMembers...)
+	for _, sym := range symbols {
 		owner := b.records[sym.Parent]
 		if owner == nil {
 			if sym.Kind != cxx.FreeFunc {
@@ -431,15 +451,9 @@ func (b *builder) buildBindings() error {
 				// to bind it to.
 				continue
 			}
-			if sym.IsOperator || sym.IsConversion {
-				return fmt.Errorf("cppgo: %s: binding operators is not implemented by this build yet", sym.QualifiedName)
-			}
-			if sym.IsVariadic {
-				return fmt.Errorf("cppgo: %s: variadic functions are not implemented by this build yet", sym.QualifiedName)
-			}
 			binding, err := b.newBinding(sym, nil)
 			if err != nil {
-				return err
+				return symbolError(sym, err)
 			}
 			b.bindings = append(b.bindings, binding)
 			continue
@@ -456,7 +470,7 @@ func (b *builder) buildBindings() error {
 			case sym.IsCopyConstructor:
 				clone, err := b.newBinding(sym, owner)
 				if err != nil {
-					return err
+					return symbolError(sym, err)
 				}
 				clone.IsConstructor = false
 				clone.IsClone = true
@@ -469,7 +483,7 @@ func (b *builder) buildBindings() error {
 			default:
 				ctor, err := b.newBinding(sym, owner)
 				if err != nil {
-					return err
+					return symbolError(sym, err)
 				}
 				owner.Ctors = append(owner.Ctors, ctor)
 				b.bindings = append(b.bindings, ctor)
@@ -487,15 +501,9 @@ func (b *builder) buildBindings() error {
 			if sym.IsPureVirtual || sym.IsDeleted {
 				continue
 			}
-			if sym.IsVariadic {
-				return fmt.Errorf("cppgo: %s: variadic functions are not implemented by this build yet", sym.QualifiedName)
-			}
-			if sym.IsOperator || sym.IsConversion {
-				return fmt.Errorf("cppgo: %s: binding operators is not implemented by this build yet", sym.QualifiedName)
-			}
 			method, err := b.newBinding(sym, owner)
 			if err != nil {
-				return err
+				return symbolError(sym, err)
 			}
 			if sym.Kind == cxx.StaticMethod {
 				owner.Statics = append(owner.Statics, method)
@@ -622,14 +630,14 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	if !binding.IsConstructor && !binding.IsDestructor {
 		result, err := b.mapper.mapType(sym.Result)
 		if err != nil {
-			return nil, fmt.Errorf("cppgo: %s: %w", sym.QualifiedName, err)
+			return nil, fmt.Errorf("result: %w", err)
 		}
 		if result.Kind != goVoid {
 			if result.Kind == goRecord {
-				return nil, unsupported(sym.Result, "a record by value as a result")
+				return nil, pending(fmt.Sprintf("%q is returned by value", sym.Result.Spelling), "return it through an out parameter or a reference at the C++ boundary")
 			}
 			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored {
-				return nil, unsupported(sym.Result, "a pointer to an opaque record as a result")
+				return nil, pending(fmt.Sprintf("%q is a pointer to an opaque record", sym.Result.Spelling), "return it as a std::unique_ptr or std::shared_ptr result")
 			}
 			binding.Result = result
 		}
@@ -753,10 +761,10 @@ func (b *builder) lowerParams(binding *binding) error {
 		}
 		mapped, err := b.mapper.mapType(p)
 		if err != nil {
-			return fmt.Errorf("cppgo: %s: parameter %s: %w", binding.sym.QualifiedName, p.Name, err)
+			return fmt.Errorf("parameter %s: %w", p.Name, err)
 		}
 		if mapped.Kind == goRecord {
-			return fmt.Errorf("cppgo: %s: passing a record by value is not implemented by this build yet", binding.sym.QualifiedName)
+			return pending(fmt.Sprintf("the record parameter %q is passed by value", p.Spelling), "take it by const reference or by pointer at the C++ boundary")
 		}
 		name := uniqueName(paramName(p.Name, visible), taken)
 		visible++
@@ -939,6 +947,7 @@ func (b *builder) model() *packageModel {
 		bindings: b.bindings,
 		verified: b.verified,
 		warn:     b.warnings,
+		flags:    b.flags,
 	}
 }
 

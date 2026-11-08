@@ -81,7 +81,7 @@ func TestMapFloat(t *testing.T) {
 		{"double", cxx.Param{Kind: cxx.TypeFloat, Spelling: "double", ClangKind: "Double", SizeBytes: 8, Float: true}, "float64", ""},
 		{"long double", cxx.Param{Kind: cxx.TypeFloat, Spelling: "long double", ClangKind: "LongDouble", SizeBytes: 16, Float: true}, "", "long double"},
 		{"long double 8", cxx.Param{Kind: cxx.TypeFloat, Spelling: "long double", ClangKind: "LongDouble", SizeBytes: 8, Float: true}, "", "long double"},
-		{"bad float", cxx.Param{Kind: cxx.TypeFloat, Spelling: "half", ClangKind: "Half", SizeBytes: 2, Float: true}, "", "long double"},
+		{"bad float", cxx.Param{Kind: cxx.TypeFloat, Spelling: "half", ClangKind: "Half", SizeBytes: 2, Float: true}, "", "no Go value type"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -151,12 +151,12 @@ func TestMapPointer(t *testing.T) {
 		{
 			name:    "void pointer",
 			param:   pointerParam(cxx.Param{Kind: cxx.TypeVoid, Spelling: "void", ClangKind: "Void"}, "void *", "Pointer"),
-			wantErr: "void pointers",
+			wantErr: "void pointer",
 		},
 		{
 			name:    "pointer libclang did not describe",
 			param:   cxx.Param{Kind: cxx.TypePointer, Spelling: "mystery *", Ptr: true},
-			wantErr: "cannot be mapped",
+			wantErr: "libclang did not describe",
 		},
 		{
 			name:    "nullptr",
@@ -201,7 +201,7 @@ func TestMapRecord(t *testing.T) {
 	vector := cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Vector", ClangKind: "Record", SizeBytes: 16, RecordName: "mathx::Vector"}
 	_, err = m.mapType(vector)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "opaque record by value")
+	assert.Contains(t, err.Error(), "passed by value but is not a POD")
 
 	_, err = m.mapType(cxx.Param{Kind: cxx.TypeRecord, Spelling: "ns::Unknown", ClangKind: "Record", RecordName: "ns::Unknown"})
 	require.Error(t, err)
@@ -212,9 +212,9 @@ func TestMapRecord(t *testing.T) {
 func TestMapUnsupported(t *testing.T) {
 	m := testMapper()
 	cases := map[string]cxx.Param{
-		"enum values":  {Kind: cxx.TypeEnum, Spelling: "mathx::Axis", ClangKind: "Enum"},
-		"array values": {Kind: cxx.TypeArray, Spelling: "int[4]", ClangKind: "ConstantArray"},
-		"this type":    {Kind: cxx.TypeOther, Spelling: "__int128", ClangKind: "Int128"},
+		"is an enum":   {Kind: cxx.TypeEnum, Spelling: "mathx::Axis", ClangKind: "Enum"},
+		"is a C array": {Kind: cxx.TypeArray, Spelling: "int[4]", ClangKind: "ConstantArray"},
+		"not a type":   {Kind: cxx.TypeOther, Spelling: "__int128", ClangKind: "Int128"},
 		"void":         {Kind: cxx.TypeVoid, Spelling: "void", ClangKind: "Void"},
 	}
 	for want, param := range cases {
@@ -227,4 +227,51 @@ func TestMapUnsupported(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), want)
 	}
+}
+
+// TestStdTypeName checks the spelling-based standard-library detection that
+// runs before libclang's canonical form, which can be wrong.
+func TestStdTypeName(t *testing.T) {
+	vector := cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<double>", ClangKind: "Record"}
+	name, ok := stdTypeName(vector)
+	assert.True(t, ok)
+	assert.Equal(t, "std::vector<double>", name)
+
+	volatileRef := cxx.Param{
+		Kind: cxx.TypePointer, Ptr: true, Spelling: "volatile std::string &",
+		Pointee: &cxx.Param{Kind: cxx.TypeRecord, RecordName: "std::string"},
+	}
+	name, ok = stdTypeName(volatileRef)
+	assert.True(t, ok)
+	assert.Equal(t, "std::string", name)
+
+	stringRef := cxx.Param{
+		Kind: cxx.TypePointer, Ptr: true, Spelling: "const std::string &",
+		Pointee: &cxx.Param{Kind: cxx.TypeRecord, RecordName: "std::string"},
+	}
+	name, ok = stdTypeName(stringRef)
+	assert.True(t, ok)
+	assert.Equal(t, "std::string", name)
+
+	scalar := cxx.Param{Kind: cxx.TypeInteger, Spelling: "std::size_t", SizeBytes: 8}
+	_, ok = stdTypeName(scalar)
+	assert.False(t, ok, "std::size_t is a scalar, not a library type")
+
+	nullptr := cxx.Param{
+		Kind: cxx.TypePointer, Ptr: true, Spelling: "std::nullptr_t",
+		Pointee: &cxx.Param{Kind: cxx.TypeRecord},
+	}
+	_, ok = stdTypeName(nullptr)
+	assert.False(t, ok, "nullptr_t has its own error")
+
+	_, ok = stdTypeName(cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Vector"})
+	assert.False(t, ok)
+}
+
+// TestMissingRecordFix checks that a specialisation error names -instantiate.
+func TestMissingRecordFix(t *testing.T) {
+	specialization := missingRecord(cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Box<int>", RecordName: "mathx::Box<int>"})
+	assert.Contains(t, specialization.Error(), "-instantiate 'mathx::Box<int>'")
+	plain := missingRecord(cxx.Param{Kind: cxx.TypeRecord, Spelling: "ns::Missing", RecordName: "ns::Missing"})
+	assert.Contains(t, plain.Error(), "include its complete definition")
 }

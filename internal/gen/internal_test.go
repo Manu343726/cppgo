@@ -193,7 +193,7 @@ func TestRenderModelEmitterErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "record pointer the model does not know")
 
 		// The same model exercises emitShim's own error return and shimBody's.
-		_, _, err = m.emitShim()
+		_, _, _, err = m.emitShim()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "record pointer the model does not know")
 	})
@@ -257,4 +257,17 @@ func TestGenerateFailurePaths(t *testing.T) {
 		assert.Contains(t, warnings.String(), "cppgo: warning:")
 		assert.Contains(t, report.String(), "thunk")
 	})
+}
+
+// TestShimSelfValidation is the proof that an uncompilable thunk never reaches
+// disk: the instantiation's member body does not compile for int, and the
+// generator must say so, naming the binding and the compiler line.
+func TestShimSelfValidation(t *testing.T) {
+	cfg := fixtureConfig("badshim", "badshim.hpp")
+	cfg.Instantiate = []string{"bad::Bad<int>"}
+	_, err := Render(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "badshim.hpp:")
+	assert.Contains(t, err.Error(), "the generated shim does not compile")
+	assert.Contains(t, err.Error(), "bad::Bad<int>::get")
 }

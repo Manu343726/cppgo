@@ -136,3 +136,57 @@ func TestSimpleName(t *testing.T) {
 	assert.Equal(t, "Vector", simpleName("Vector"))
 	assert.Equal(t, "norm", simpleName("a::b::norm"))
 }
+
+// TestGoRecordName checks the template-specialisation naming rule from
+// DESIGN.md.
+func TestGoRecordName(t *testing.T) {
+	cases := map[string]string{
+		"mathx::Vector":               "Vector",
+		"mathx::Box<int>":             "BoxInt",
+		"mathx::Box<mathx::Vector>":   "BoxVector",
+		"mathx::Pair<int, double>":    "PairIntFloat64",
+		"tmpl::Cell<double>":          "CellFloat64",
+		"mathx::Fixed<double, 4>":     "FixedFloat644",
+		"mathx::Box<mathx::Box<int>>": "BoxBoxInt",
+		"Box<bool>":                   "BoxBool",
+		"Box<std::size_t>":            "BoxSize",
+		"Box<int> extra":              "BoxInt",
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, goRecordName(in), in)
+	}
+}
+
+// TestSplitTemplateArgs checks the top-level comma split.
+func TestSplitTemplateArgs(t *testing.T) {
+	assert.Equal(t, []string{"int"}, splitTemplateArgs("int"))
+	assert.Equal(t, []string{"int", "double"}, splitTemplateArgs("int, double"))
+	assert.Equal(t, []string{"Box<int, double>", "char"}, splitTemplateArgs("Box<int, double>, char"))
+	assert.Empty(t, splitTemplateArgs(""))
+}
+
+// TestCPPArgGoName checks the argument names the specialisation type uses.
+func TestCPPArgGoName(t *testing.T) {
+	cases := map[string]string{
+		"int":           "Int",
+		"unsigned int":  "Uint",
+		"long":          "Long",
+		"long long":     "LongLong",
+		"bool":          "Bool",
+		"char":          "Char",
+		"unsigned char": "Uchar",
+		"float":         "Float32",
+		"double":        "Float64",
+		"const double":  "Float64",
+		"std::size_t":   "Size",
+		"std::uint64_t": "Uint64",
+		"int8_t":        "Int8",
+		"4":             "4",
+		"mathx::Vector": "Vector",
+		"Box<int>":      "BoxInt",
+		"":              "X",
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, cppArgGoName(in), in)
+	}
+}

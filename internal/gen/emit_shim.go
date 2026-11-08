@@ -14,16 +14,22 @@ import (
 // other C++ code. The source includes the bound header and performs the calls
 // as C++, which is what makes virtual dispatch, inline bodies, and this
 // adjustment work at all.
-func (m *packageModel) emitShim() ([]byte, []byte, error) {
-	header, source, err := m.renderShim()
-	if err != nil {
-		return nil, nil, err
-	}
-	return header, source, nil
+func (m *packageModel) emitShim() ([]byte, []byte, []thunkSpan, error) {
+	return m.renderShim(nil)
 }
 
-// renderShim renders both shim files.
-func (m *packageModel) renderShim() ([]byte, []byte, error) {
+// thunkSpan is one thunk's line range in the generated translation unit. It is
+// how a compiler diagnostic is turned back into the binding that produced it.
+type thunkSpan struct {
+	start  int
+	end    int
+	symbol string
+}
+
+// renderShim renders both shim files and the line range of every thunk. When
+// only is non-nil, the source contains just that binding's thunk, which is how
+// the self-check isolates the culprit of a compiler diagnostic.
+func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, error) {
 	guard := "CPPGO_" + guardName(m.name) + "_SHIM_H"
 	var h strings.Builder
 	h.WriteString("/*" + GeneratedBanner[2:] + " */\n")
@@ -61,8 +67,9 @@ func (m *packageModel) renderShim() ([]byte, []byte, error) {
 	s.WriteString("\treturn cppgo_error_message.c_str();\n")
 	s.WriteString("}\n")
 
+	var spans []thunkSpan
 	for _, binding := range m.bindings {
-		if binding.Carrier != thunk {
+		if binding.Carrier != thunk || (only != nil && binding != only) {
 			continue
 		}
 		h.WriteString("\n")
@@ -70,17 +77,22 @@ func (m *packageModel) renderShim() ([]byte, []byte, error) {
 		fmt.Fprintf(&h, "%s %s(%s);\n", shimReturnType(binding), binding.Thunk, shimParams(binding))
 		body, err := m.shimBody(binding)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		s.WriteString("\n")
+		start := shimLine(&s)
 		fmt.Fprintf(&s, "extern \"C\" %s %s(%s) {\n", shimReturnType(binding), binding.Thunk, shimParams(binding))
 		s.WriteString(body)
 		s.WriteString("}\n")
+		spans = append(spans, thunkSpan{start: start, end: shimLine(&s), symbol: binding.sym.QualifiedName})
 	}
 
 	fmt.Fprintf(&h, "\n#ifdef __cplusplus\n}\n#endif\n\n#endif /* %s */\n", guard)
-	return []byte(h.String()), []byte(s.String()), nil
+	return []byte(h.String()), []byte(s.String()), spans, nil
 }
+
+// shimLine is the line number the next write lands on.
+func shimLine(b *strings.Builder) int { return strings.Count(b.String(), "\n") + 1 }
 
 // shimReturnType is the C return type of a thunk: the status when the call can
 // fail, the value itself when it cannot.
@@ -176,7 +188,7 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 	case cxx.Constructor:
 		return "new (self) ::" + owner + "(" + list + ")", nil
 	case cxx.Destructor:
-		return "static_cast<::" + owner + " *>(self)->~" + simpleName(owner) + "()", nil
+		return "static_cast<::" + owner + " *>(self)->~" + destructorSimpleName(owner) + "()", nil
 	case cxx.Method:
 		cast := "static_cast<::" + owner + " *>(self)"
 		if binding.sym.IsConst {

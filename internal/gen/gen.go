@@ -60,6 +60,10 @@ type Config struct {
 	Bind []string
 	// Exclude removes a root. An unmatched entry is an error.
 	Exclude []string
+	// Instantiate names the concrete template specialisations the API uses,
+	// e.g. "mathx::Box<int>". An instantiation must be visible to libclang as
+	// an explicit instantiation or a reachable type.
+	Instantiate []string
 	// Rename maps a qualified name or signature to a Go name.
 	Rename []string
 	// Report receives one line per binding. Nil discards it.
@@ -112,8 +116,11 @@ func renderModel(model *packageModel) (*Result, error) {
 		return nil, err
 	}
 	asmFile := model.emitAsm()
-	shimHeader, shimSource, err := model.emitShim()
+	shimHeader, shimSource, spans, err := model.emitShim()
 	if err != nil {
+		return nil, err
+	}
+	if err := model.validateShim(shimHeader, shimSource, spans); err != nil {
 		return nil, err
 	}
 	outs := []Output{
@@ -194,6 +201,9 @@ func (c Config) invocation() string {
 	}
 	for _, exclude := range c.Exclude {
 		parts = append(parts, "-exclude "+exclude)
+	}
+	for _, instantiate := range c.Instantiate {
+		parts = append(parts, "-instantiate "+instantiate)
 	}
 	for _, rename := range c.Rename {
 		parts = append(parts, "-rename "+rename)

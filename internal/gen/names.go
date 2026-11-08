@@ -216,3 +216,125 @@ func validGoPackage(name string) bool {
 	}
 	return true
 }
+
+// goRecordName is the Go type name of a record: its own name, or for a
+// template specialisation the template name followed by its arguments, as
+// DESIGN.md specifies: mathx::Box<int> -> BoxInt, Box<mathx::Vector> ->
+// BoxVector, Pair<int, double> -> PairIntFloat64.
+func goRecordName(qualified string) string {
+	if open := strings.Index(qualified, "<"); open >= 0 {
+		closing := strings.LastIndex(qualified, ">")
+		if closing > open {
+			var b strings.Builder
+			b.WriteString(exportName(simpleName(qualified[:open])))
+			for _, arg := range splitTemplateArgs(qualified[open+1 : closing]) {
+				b.WriteString(typeSuffix(cppArgGoName(arg)))
+			}
+			return b.String()
+		}
+	}
+	return exportName(simpleName(qualified))
+}
+
+// splitTemplateArgs splits a template argument list at its top-level commas.
+func splitTemplateArgs(args string) []string {
+	parts := make([]string, 0, 2)
+	depth, from := 0, 0
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case '<', '(', '[':
+			depth++
+		case '>', ')', ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, strings.TrimSpace(args[from:i]))
+				from = i + 1
+			}
+		}
+	}
+	if rest := strings.TrimSpace(args[from:]); rest != "" {
+		parts = append(parts, rest)
+	}
+	return parts
+}
+
+// cppArgGoName names a template argument the way the Go type map would.
+func cppArgGoName(arg string) string {
+	name := strings.TrimSpace(arg)
+	for {
+		switch {
+		case strings.HasPrefix(name, "const "):
+			name = strings.TrimSpace(name[len("const "):])
+		case strings.HasPrefix(name, "volatile "):
+			name = strings.TrimSpace(name[len("volatile "):])
+		default:
+			goto trimmed
+		}
+	}
+trimmed:
+	if mapped, ok := scalarArgNames[name]; ok {
+		return mapped
+	}
+	if name != "" && name[0] >= '0' && name[0] <= '9' {
+		return name
+	}
+	if strings.Contains(name, "<") {
+		return goRecordName(name)
+	}
+	return exportName(simpleName(name))
+}
+
+// scalarArgNames maps the scalar spellings a template argument uses to the
+// name DESIGN.md gives the specialisation: Box<int> is BoxInt and
+// Pair<int, double> is PairIntFloat64, so the integer spelling is capitalised
+// while the floating-point one is named by its Go width.
+var scalarArgNames = map[string]string{
+	"bool":               "Bool",
+	"char":               "Char",
+	"signed char":        "Schar",
+	"unsigned char":      "Uchar",
+	"short":              "Short",
+	"unsigned short":     "Ushort",
+	"int":                "Int",
+	"unsigned int":       "Uint",
+	"unsigned":           "Uint",
+	"long":               "Long",
+	"unsigned long":      "Ulong",
+	"long long":          "LongLong",
+	"unsigned long long": "UlongLong",
+	"float":              "Float32",
+	"double":             "Float64",
+	"std::size_t":        "Size",
+	"size_t":             "Size",
+	"std::int8_t":        "Int8",
+	"int8_t":             "Int8",
+	"std::uint8_t":       "Uint8",
+	"uint8_t":            "Uint8",
+	"std::int16_t":       "Int16",
+	"int16_t":            "Int16",
+	"std::uint16_t":      "Uint16",
+	"uint16_t":           "Uint16",
+	"std::int32_t":       "Int32",
+	"int32_t":            "Int32",
+	"std::uint32_t":      "Uint32",
+	"uint32_t":           "Uint32",
+	"std::int64_t":       "Int64",
+	"int64_t":            "Int64",
+	"std::uint64_t":      "Uint64",
+	"uint64_t":           "Uint64",
+	"wchar_t":            "Wchar",
+	"char16_t":           "Char16",
+	"char32_t":           "Char32",
+}
+
+// destructorSimpleName is the name a destructor is called by: the simple name
+// of the type without its template arguments, because C++ spells
+// Cell<int>::~Cell() and never ~Cell<int>().
+func destructorSimpleName(qualified string) string {
+	name := simpleName(qualified)
+	if open := strings.Index(name, "<"); open >= 0 {
+		return name[:open]
+	}
+	return name
+}

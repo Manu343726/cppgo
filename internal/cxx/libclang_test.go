@@ -177,6 +177,9 @@ func fakeLibclangSource() string {
 		"clang_Cursor_getNumTemplateArguments", "clang_Cursor_getTemplateArgumentKind",
 		"clang_Cursor_getTemplateArgumentType", "clang_Cursor_getTemplateArgumentValue",
 		"clang_Cursor_getTemplateArgumentUnsignedValue", "clang_getSpecializedCursorTemplate",
+		"clang_getNumDiagnostics", "clang_getDiagnostic",
+		"clang_getDiagnosticSeverity", "clang_getDiagnosticSpelling",
+		"clang_getDiagnosticLocation", "clang_disposeDiagnostic",
 		"clang_getFileLocation", "clang_Location_isFromMainFile",
 		"clang_Location_isInSystemHeader", "clang_getFileName",
 	}
