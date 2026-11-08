@@ -471,6 +471,13 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		default:
 			b.WriteString("\treturn nil\n")
 		}
+	case binding.Out != nil:
+		// A value the thunk writes into Go storage; a call that cannot fail has
+		// no error to report, so the result is the signature's only return.
+		fmt.Fprintf(b, "\tvar cppgoResult %s\n", binding.OutLocal)
+		fmt.Fprintf(b, "\t%s\n", call)
+		m.emitKeepAlive(b, binding, ctx)
+		fmt.Fprintf(b, "\treturn %s\n", convertResult(binding, "cppgoResult"))
 	case binding.Result != nil:
 		// A thunk that cannot throw returns the value directly, and a direct
 		// call has no error channel at all.
@@ -633,7 +640,7 @@ func zeroValue(t *goType) string {
 		return `""`
 	case goSlice:
 		return "nil"
-	case goArray:
+	case goArray, goRecord:
 		return t.Go + "{}"
 	default:
 		return "0"

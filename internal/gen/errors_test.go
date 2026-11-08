@@ -17,9 +17,7 @@ func TestGenerationErrors(t *testing.T) {
 		header string
 		want   string
 	}{
-		{"bigresult.hpp", "is returned by value"},
 		{"bitfield.hpp", "public field"},
-		{"byvalue.hpp", "is passed by value"},
 		{"classtemplate.hpp", "class template is not a type"},
 		{"freeoperator.hpp", "operators and conversion operators"},
 		{"incomplete.hpp", "not part of the generated API"},

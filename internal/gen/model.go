@@ -198,6 +198,9 @@ type binding struct {
 	Frame int
 	// hasStd is true when the signature names a standard-library type.
 	hasStd bool
+	// hasByValue is true when a mirrored record is passed or returned by value,
+	// which is a shim binding whatever the register class says.
+	hasByValue bool
 	// StdResult is true when the result is a standard-library value, which the
 	// thunk copies out through out-parameters.
 	StdResult bool
@@ -695,7 +698,9 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				return nil, pending(fmt.Sprintf("%q is a smart-pointer result", sym.Result.Spelling), "return the object by value or through a reference at the C++ boundary")
 			}
 			if result.Kind == goRecord {
-				return nil, pending(fmt.Sprintf("%q is returned by value", sym.Result.Spelling), "return it through an out parameter or a reference at the C++ boundary")
+				// A mirrored record comes back through a pointer the Go side
+				// owns, so its size and its sret form are the thunk's problem.
+				binding.hasByValue = true
 			}
 			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored {
 				return nil, pending(fmt.Sprintf("%q is a pointer to an opaque record", sym.Result.Spelling), "return it through a reference at the C++ boundary")
@@ -711,10 +716,11 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	if err := b.checkRegisters(binding); err != nil {
 		return nil, err
 	}
-	if binding.Carrier == thunk && binding.Status && binding.Result != nil {
-		if binding.StdResult {
+	if binding.Carrier == thunk && binding.Result != nil {
+		switch {
+		case binding.StdResult:
 			b.addStdResult(binding)
-		} else {
+		case binding.Status || binding.Result.Kind == goRecord:
 			binding.Out = binding.Result
 			binding.OutLocal = outLocalType(binding.Result)
 			binding.Wire = append(binding.Wire, &wireArg{
@@ -853,17 +859,41 @@ func (b *builder) lowerParams(binding *binding) error {
 		if err != nil {
 			return fmt.Errorf("parameter %s: %w", p.Name, err)
 		}
-		if mapped.Kind == goRecord {
-			return pending(fmt.Sprintf("the record parameter %q is passed by value", p.Spelling), "take it by const reference or by pointer at the C++ boundary")
-		}
 		name := uniqueName(paramName(p.Name, visible), taken)
 		visible++
 		binding.Params = append(binding.Params, &goParam{Name: name, Type: mapped})
+		if mapped.Kind == goRecord {
+			// A mirrored record is a Go value with the C layout: the thunk
+			// takes its address and copies it into the call, which is the one
+			// place the C++ copy constructor exists.
+			b.byValueParam(binding, name, mapped, p, addWire)
+			continue
+		}
 		wire := b.paramWire(name, mapped, p)
 		wire.label = "a" + itoa(len(binding.Wire))
 		addWire(wire)
 	}
 	return nil
+}
+
+// byValueParam lowers a mirrored record passed by value: the wire word is a
+// pointer to the Go value, and the thunk copies the record into the call. The
+// caller keeps the value alive across the call with KeepAlive, and no pointer
+// into a Go frame outlives the thunk's first statement.
+func (b *builder) byValueParam(binding *binding, name string, mapped *goType, p cxx.Param, add func(*wireArg)) {
+	arg := &wireArg{
+		label:    "a" + itoa(len(binding.Wire)),
+		slotType: "unsafe.Pointer",
+		class:    classInt,
+		size:     8,
+		expr:     "unsafe.Pointer(&" + name + ")",
+		keep:     name,
+		cType:    "void *",
+		cName:    name,
+		param:    p,
+	}
+	add(arg)
+	binding.hasByValue = true
 }
 
 // stdParamWire lowers one standard-library parameter. The Go value is the
@@ -1058,6 +1088,9 @@ func (b *builder) chooseCarrier(binding *binding) {
 	case binding.hasStd:
 		binding.Carrier = thunk
 		binding.Reason = "standard-library type: the thunk constructs, copies and destroys it"
+	case binding.hasByValue:
+		binding.Carrier = thunk
+		binding.Reason = "a record passed or returned by value: the thunk copies it"
 	case sym.IsTemplate:
 		binding.Carrier = thunk
 		binding.Reason = "template: no symbol until it is instantiated"
@@ -1243,6 +1276,10 @@ func (b *builder) layout() {
 			// The status is the only result register use; a value, if any,
 			// travels through the out-pointer already in the wire.
 			slots = append(slots, &slot{label: "ret", goType: "int32", class: classInt, size: 4})
+		} else if binding.Out != nil {
+			// A value delivered through an out-pointer has no register result:
+			// a record above 16 bytes is returned through memory by C++ itself,
+			// and a record the caller owns is written where the caller says.
 		} else if binding.Result != nil {
 			slots = append(slots, resultSlot(binding.Result))
 		}
@@ -1291,6 +1328,10 @@ func outParamType(result *goType) string {
 	switch result.Kind {
 	case goBool:
 		return "bool *"
+	case goRecord:
+		// The record's layout is never written in the C prototype: the thunk
+		// casts the pointer in the translation unit where the layout exists.
+		return "void *"
 	case goPointer:
 		return result.C + "*"
 	default:

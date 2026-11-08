@@ -482,6 +482,11 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 
 // mapRecord maps a record by value. Only a mirrored aggregate can be a Go
 // value; an opaque one has no layout Go may copy, and crosses by pointer.
+//
+// A mirrored record in Go *is* its C layout, so the Go value is the record
+// itself and the shim receives a pointer to it: the thunk copies it into the
+// call, which is where the C++ copy constructor lives and where a value above
+// 16 bytes is materialised without any Go-side stack knowledge.
 func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
 	record, ok := m.records[p.RecordName]
 	if !ok {
