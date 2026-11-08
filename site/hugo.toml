@@ -1,0 +1,11 @@
+# Hugo configuration for the placeholder in site/.
+#
+# The real documentation is being rewritten (issue #29); this site exists so
+# that the GitHub Pages deployment serves a notice instead of the pages that
+# were taken down. Replace it, do not extend it.
+
+baseURL = "https://manu343726.github.io/cppgo/"
+title = "cppgo"
+locale = "en-us"
+
+disableKinds = ["taxonomy", "term", "RSS", "sitemap", "robotsTXT", "404"]
