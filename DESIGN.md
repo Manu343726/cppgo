@@ -1,41 +1,96 @@
-# cppgo — design contract (v3)
+# cppgo — design contract (v4)
 
 This file is the contract for every workstream. If something is not written here, do not invent it:
-ask the orchestrator. Where the tree and this file disagree during the migration it describes, this
-file is right; the decisions it replaces are recorded in
+ask the orchestrator. The decisions v4 reverses are recorded in
+[ADR-0002](docs/adr/0002-cppgo-built-shim.md), which supersedes
 [ADR-0001](docs/adr/0001-header-first-bindings.md).
+
+v4 changes one thing about v3 and nothing else: **who builds the C++ shim**. v3 generated
+`zz_cppgo_shim.cpp` for the *user's* build to compile into their library, which made a cppgo-generated
+file a dependency of a build cppgo does not own. v4 has **cppgo generate and compile the shim itself**,
+into an object of its own that links the user's library. The user's sources and build are never
+modified and never include generated code.
 
 ## What this is
 
-`cppgo` calls C++ from Go with **no cgo at build time** and **no `import "C"`**. A generator reads
-C++ headers, proves at build time what every binding compiles to, and emits:
+`cppgo` calls C++ from Go with **no cgo at build time** and **no `import "C"`**. The primary path is:
+point cppgo at the headers and the compilation configuration, and it generates the equivalent Go API.
+The user writes no binding declarations. A hand-written declaration file remains as a fallback for a
+project that does not want libclang in the loop; it is a separate, documented mode and it is not the
+product.
 
-- a Go package, the only API the caller sees;
-- one `NOSPLIT` assembly trampoline per symbol the Go side calls;
-- a C++ translation unit (`zz_cppgo_shim.cpp` + header) with one `extern "C"` thunk per binding
-  that the direct ABI cannot express.
+Three claims, each measurable in this repository:
 
-Every construct that carries data across the bound API is supported. A construct the direct ABI
-cannot call is not refused: it goes through a generated thunk, and the thunk is ordinary C++ that
-the user's build compiles into the library. **Completeness is the product; the direct ABI is the
-fast path, not the boundary of what can be bound.**
+- **complete**: every construct in the bound headers is reachable, including the ones the System V
+  register convention cannot express;
+- **Go-side generated**: the artefacts cppgo emits are Go, Go assembly, and one C++ translation unit
+  that cppgo compiles itself. The user's build sees none of them;
+- **measured where it claims**: every row of the table below either names the test in
+  `internal/callback` or `internal/shim` that measures it, or says **designed** and names the v3
+  behaviour it is derived from. A designed row is not a claim that the construct works yet — it is
+  the next workstream's specification — and every hard limit is stated with the measurement that
+  found it.
+
+## The three artefacts
+
+| artefact | who owns it | what it is |
+|---|---|---|
+| **the user's library** | the user | their sources, their compiler flags, their build. `libuser.so` in the tests. cppgo never writes into it and never asks it to include anything |
+| **the cppgo shim** | cppgo | `zz_cppgo_shim.cpp`, generated from the same header parse as the Go API, **compiled by cppgo** into `libcppgo_shim.so` (or `.a` for a static link), linked against the user's library. One `extern "C"` thunk per binding the direct ABI cannot express |
+| **the generated Go package** | cppgo | the API the caller sees, plus one `NOSPLIT` trampoline per thunk and per direct symbol; loads the shim, which pulls in the user's library through its `DT_NEEDED` |
+
+The dotted line is the contract's edge: **the user's build is untouched, and generated code is not in
+it.** Everything else follows from that line.
+
+**Status of the tree.** This contract states the target. The mechanisms it relies on are measured and
+have tests in this repository (`internal/callback` for the reverse direction, `internal/shim` for the
+construct matrix, `internal/errormap` for the error projection and its configuration, and the
+emitters' existing direct-carrier selection with its own tests). What `internal/gen` and `cmd/cppgo`
+do **not** do yet, and therefore what the next workstreams owe:
+
+1. **the shim rewrite**: emit `zz_cppgo_shim.cpp` for cppgo to compile itself, instead of the v3 file
+   the user's build compiles;
+2. **the error pass**: call `errormap.Apply` over the parsed signatures (with the shape inference fed
+   from libclang's members), and refuse to emit when a declaration can fail and its convention is
+   neither inferred nor configured;
+3. **the thunk error-block templates**: the `try`/`catch`, the status-and-block shape, the *pinned*
+   block the thunk writes into, and the cloned message — as `internal/errormap`'s fixtures write them
+   by hand;
+4. **the Go side of the mapping**: `(T, error)` signatures from the rules, and the `ErrorCode` /
+   `Message` constructors;
+5. **`cppgo.yaml` as a generation input**, so `cppgo check` covers it.
+
+Until then the error bindings in `internal/errormap` are written by hand, and every statement in
+*Errors from C++ to Go* is the emitter's contract rather than a description of `internal/gen`.
+
+Consequences worth stating:
+
+- the user's `CMakeLists.txt`/`Makefile` gains nothing. A project that only wants to *consume* a
+  cppgo-generated package installs two shared objects instead of one;
+- the shim and the user's library must agree on the C++ ABI and the standard library, because the shim
+  calls into the library across that boundary. The generator compiles the shim with the flags it
+  discovered for the header (`compile_commands.json`, `.clangd`) and the same standard library, and
+  refuses to mix a libstdc++ shim with a libc++ library (see *The `std::` ABI*);
+- a header-only library with no `.so` at all is a supported case: the shim is all there is, and the
+  "library" the generated package loads is the shim.
 
 ## The two layers
 
-The runtime and the generator are separate products with separate dependencies, and the line between
+The runtime and the generator stay separate products with separate dependencies, and the line between
 them is part of this contract.
 
 | layer | package | owns | may depend on |
 |---|---|---|---|
-| **runtime** | `github.com/Manu343726/cppgo` (repository root) | dynamic loading, symbol resolution, the C ABI and its trampolines, stack probing, foreign-object storage, wire helpers, error types | the standard library, `internal/asm`, `internal/rtl`, `purego` |
-| **generator** | `internal/gen`, `internal/cxx`, `cmd/cppgo` | parsing C++ through libclang, flag discovery, binding selection, carrier routing, emitting Go, assembly and the shim | anything, including libclang through `purego` |
+| **runtime** | `github.com/Manu343726/cppgo` (repository root) | dynamic loading, symbol resolution, the C ABI and its trampolines, the reentrant carrier, stack probing, foreign-object storage, wire helpers, error types, the callback table | the standard library, `internal/asm`, `internal/rtl`, `internal/callback`, `purego` |
+| **generator** | `internal/gen`, `internal/cxx`, `cmd/cppgo` | parsing C++ through libclang, flag discovery, binding selection, carrier routing, emitting Go, assembly and the shim, **and the shim's own C++ compile** | anything, including libclang through `purego` and the C++ compiler |
 
 The runtime **never imports `internal/cxx`, directly or transitively, and has no libclang
 dependency**. libclang is generation-time only. The runtime builds and its tests run with
-`CGO_ENABLED=0` on a machine with no libclang installed; the generator needs libclang and says so
-with `ErrLibclangNotFound` when it is absent.
+`CGO_ENABLED=0` on a machine with no libclang installed; the generator needs libclang and says so with
+`ErrLibclangNotFound` when it is absent, and needs a C++ compiler to build the shim and says so with a
+message naming the compiler when it cannot find one.
 
-What the generated code uses from the runtime, and nothing else:
+What generated code uses from the runtime, and nothing else:
 
 ```go
 func Open(path string) (*Library, error)     // purego dlopen/dlsym underneath
@@ -47,11 +102,9 @@ func ProbeStack()                            // StackReserve bytes of goroutine 
 const StackReserve = 32 << 10
 
 func NewObject(size, align uintptr, release func()) *Object
-                                            // Go storage whose layout Go does not know;
-                                            // release runs the concrete destructor
-func (o *Object) Addr() uintptr             // pinned, aligned address handed to C++
-func (o *Object) Retain()                   // a view shares ownership with the object
-func (o *Object) Release()                  // drops one reference; release runs at zero
+func (o *Object) Addr() uintptr
+func (o *Object) Retain()
+func (o *Object) Release()
 
 func Ptr[T any](s []T) unsafe.Pointer       // wire helpers
 func StrPtr(s string) unsafe.Pointer
@@ -61,117 +114,117 @@ func LastError(lib *Library) error
 type Handle uintptr                          // low-level only; never in a generated signature
 ```
 
-`Object` pins its storage with `runtime.Pinner`, so there is no package-level object registry: the
-storage is reachable from the generated Go value that owns it, and it does not move while pinned.
+and from the two internal packages, through the generated assembly only: `asm.Call` (the direct
+carrier), `asm.CallReentrant` (the callback-capable carrier), `asm.Probe`, and `callback.Register` /
+`callback.Release` / `callback.TakePanic`.
 
-### Runtime additions introduced by this contract
+`Object` pins its storage with `runtime.Pinner`, so there is no package-level object registry. The one
+piece of process-global state in the runtime is the callback table, and *Why the callback table is
+global* states why it cannot be anything else.
 
-Some of the surface above does not exist in the tree yet. It is **planned API**, not stale text: the
-emitter phase adds it, and the contract is what defines it.
-
-| name | layer | status | what it guarantees |
-|---|---|---|---|
-| `Object`, `NewObject(size, align, release)`, `Addr`, `Retain`, `Release` | runtime | **planned** | a pinned, aligned Go block; a Go-side reference count; the concrete destructor (`release`) runs exactly once, when the last reference goes |
-| `*cppgo.CallError{Symbol, Err}` | runtime | **planned** | a failed binding, with the C++ symbol and the native message; wraps `*NativeError` so `errors.As` works |
-| `Open(path string) error`, generated in each bound package | generator output | **planned** | loads the library, resolves every direct symbol **and every thunk**, and reports the generated shim file when one is missing |
-| `Open`, `Library`, `Symbol`, `Close`, `Path`, `MustSymbol`, `ProbeStack`, `StackReserve`, `Ptr`, `StrPtr`, `KeepAlive`, `LastError`, `OpenError`, `SymbolError`, `NativeError`, `ErrClosed` | runtime | **in the tree** | the loader, the wire helpers and the typed errors as they exist today |
-| `Handle` | runtime | **in the tree, not used by generated code** | a low-level uintptr for hand-written callers only |
-
-`Object` serves two shapes of ownership and `release` is what tells them apart: for a value whose
-layout libclang could not complete, the shim heap-allocates it and `release` deletes it; for a value
-constructed into Go-pinned storage, `release` calls its destructor. The generated Go value never
-needs to know which one it holds, and `Close` is correct for both.
-
-## How a binding is carried: direct or thunk
+## Carriers
 
 Every binding is assigned exactly one **carrier** before anything is emitted. The generator never
 leaves a declaration unbound and never emits a call it has not established a carrier for.
 
 ### Direct
 
-The Go trampoline calls the mangled C++ symbol itself. The rules are those the trampoline was
-measured on, and all of them must hold:
+The generated trampoline calls the mangled C++ symbol in the user's library. Measured at 15.9 ns/op
+against 151 ns/op for the reentrant carrier on the same trivial callee (`internal/callback`'s
+benchmarks). All of these must hold:
 
-- the declaration has an out-of-line body and external linkage (a dynamic symbol exists);
-- it is **not virtual** (no vtable walk is needed: the call is to a fixed address);
-- it is **`noexcept`** (the direct path has no handler, so nothing may escape);
-- the signature is register-representable: scalars, enums, pointers and references, a slice/string
-  as `(pointer, length)`, and a POD of at most 16 bytes with no MEMORY-class part. No `std::` type
-  and no template that has not been instantiated into a normal symbol.
+- the declaration has an out-of-line body and the mangled name is in the user's `.dynsym` (the ELF
+  tier checks it, as in v3 — a header-only declaration whose mangled name happens to be exported is
+  direct, and that rule is kept, with its tests);
+- it is **not virtual** (the call is to a fixed address; dispatch is a shim concern);
+- it is **`noexcept`** (the direct path has no handler, and an escaping exception terminates the
+  process — measured);
+- the signature is register-representable: scalars, enums, pointers and references, and a POD of at
+  most 16 bytes with no MEMORY-class part. No `std::` type.
 
-A declaration outside that shape is **not refused**: it goes through a thunk. A >16-byte or
-MEMORY-class POD is copied by the thunk as an argument and returned through the sret pointer into Go
-storage; a non-POD by value is copied the same way.
+### Shim
 
-### Thunk
+Everything else is carried by a thunk in `zz_cppgo_shim.cpp`, which is C++ compiled by cppgo against
+the same headers and the same flags, and linked against the user's library:
 
-Everything else is carried by a generated `extern "C"` thunk in `zz_cppgo_shim.cpp`. The thunk is
-C++ compiled against the same headers, with the same flags, inside the user's build:
-
-| what the declaration is | what the thunk does |
-|---|---|
-| inline / header-only body | includes the header and calls the function: the definition is right there |
-| virtual method, virtual destructor | calls it as C++ does — **real dispatch through the vtable**, including through a base pointer or reference |
-| template | instantiates the concrete specialisation (`template struct Box<int>;`, `template T max<T>(T,T);`) and calls it |
-| `std::string` / `string_view` / `vector` / `span` / `array` / `optional` | constructs the C++ value, converts, copies in or out (see *Type map*) |
-| POD above 16 bytes / MEMORY class by value | copies it into the call; for a result, passes the hidden sret pointer aimed at Go storage |
-| non-POD by value | copies the Go-held object into the call, destroys it at the end, or placement-news the result into Go storage |
-| exception-throwing call | wraps the call in `try`/`catch`, converts `std::exception` and `...` into a `cppgo_last_error()` message |
-| multiple inheritance / virtual base | performs the `static_cast`/`dynamic_cast` that adjusts `this`, in C++, where the layout is known |
-| more than 6 INTEGER or 8 SSE arguments | takes a pointer to a packed argument block declared by the generated header, unpacks it and calls |
-| anything with an out parameter | writes through the pointer the Go side provides |
+| what the declaration is | what the thunk does | measured by |
+|---|---|---|
+| inline / header-only body | includes the header and calls it: the body is compiled into the shim | `TestInlineHeaderOnlyIsReachableOnlyThroughTheShim` |
+| virtual method, virtual destructor | calls it as C++ does — real dispatch through the vtable | `TestVirtualDispatchAndVirtualDestructor` |
+| template | instantiates the concrete specialisation and calls it | `TestTemplateInstantiation` |
+| `std::string` / `std::vector` | constructs the C++ value, converts, copies in or out | `TestStdStringAndVector` |
+| `string_view` / `span` / `array` / `optional` / `unique_ptr` / `shared_ptr` | constructs the C++ value, converts, copies in or out | designed, not measured (see the per-construct table) |
+| POD above 16 bytes / MEMORY class by value | copies it into the call; a result is written through an out-pointer | designed, not measured |
+| non-POD by value | copies the Go-held object in, or constructs the result in Go storage | `TestNonPODByValue` |
+| exception-throwing call | wraps the call in `try`/`catch`, converts `std::exception` and `...` into the thread-local message | `TestExceptionsBecomeErrors` |
+| multiple inheritance / virtual base | performs the `static_cast`/`dynamic_cast` that adjusts `this` | `TestMultipleInheritanceAdjustment` |
+| more than 6 INTEGER or 8 SSE arguments | takes a pointer to an argument block and unpacks it | designed, not measured |
+| anything with an out parameter | writes through the pointer the Go side provides | every row above |
+| a callback parameter | constructs the `std::function` from the Go function pointer | `TestCallbackThroughTheShim` |
 
 Both carriers are ordinary C ABI functions from Go's point of view: `Open` resolves a `uintptr`,
-`ProbeStack` runs, and one NOSPLIT trampoline calls it. The Go wrapper is generated from the same
-signature table either way, so the carrier is invisible in the API and visible in the report:
+`ProbeStack` runs, and one NOSPLIT trampoline calls it. The carrier is invisible in the API and
+visible in the report:
 
 ```
-mathx::Vector::norm     thunk  cppgo_thunk_9f2c1a4b7e03   not noexcept
-mathx::Vector::scale    direct _ZN5mathx6Vector5scaleEd   noexcept, out of line, register class
-mathx::Box<int>::get    thunk  cppgo_thunk_41d0ee9a2c77   inline body, template instantiation
+user::Circle::area      shim    shim_shape_area        virtual
+user::checked_div       direct  _ZN4user11checked_divEii   noexcept, out of line, register class
+user::maxof<double>     shim    shim_maxof_double      template instantiation
 ```
 
-### The shim artefacts
+### The callback-capable call
 
-- `zz_cppgo_shim.h` — the `extern "C"` declarations, the argument-block structs, and the
-  thread-local error API (`cppgo_last_error`) the Go side reads. It is plain C++ and may be
-  included by other C++ code.
-- `zz_cppgo_shim.cpp` — the definitions, the template instantiations, the casts and the `try`/
-  `catch` bodies. It is compiled by the user's normal C++ build into the same library the Go side
-  loads. It is not a separate shared object.
-- `cppgo gen` parses the shim it is about to write through libclang with the same flags, and
-  **fails generation on a diagnostic**; the user's build compiles it for real. A binding whose thunk
-  would not compile is a generation error with the compiler's message, never a symbol that fails at
-  the first call.
-- `Open` resolves **every** symbol the package needs, direct and thunk, before any binding can run.
-  A library built without the generated shim fails at `Open` with the missing thunk's name and the
-  file to compile.
+A binding whose signature takes a function pointer or a `std::function` is called through
+`asm.CallReentrant` instead of `asm.Call`. That is one runtime entry, not a second ABI:
+
+- `asm.Call` calls the C function from a NOSPLIT trampoline on the goroutine's stack. Fast, and the
+  only carrier a plain function call needs;
+- `asm.CallReentrant` calls `runtime.cgocall` (reached by linkname, so still no cgo at build time)
+  with a generated assembly wrapper that loads the six INTEGER and eight SSE registers. The M is
+  inside a foreign call, which is exactly the state `runtime.cgocallback` requires.
+
+A callback invoked through the direct carrier kills the process: the runtime's callback entry reaches
+`exitsyscall` on an M that never entered a syscall, and the runtime dies with
+`fatal error: morestack on g0`. That is measured in a child process by
+`TestCallbackOnTheDirectTrampolineIsFatal`; it is why the carrier choice is part of the contract and
+not an optimisation.
+
+The reentrant carrier runs the C frames on the M's system stack instead of the goroutine's, so
+`ProbeStack`'s 32 KiB reserve is not what protects them: `TestReentrantCarrierStackBudget` puts the
+same 28 KiB frame through both carriers and both reach the fixture's result, which is the measurement
+that the reentrant carrier is not spending the goroutine's reserve — the budget is the thread stack,
+not the 32 KiB the probe guarantees. It costs one 16-byte allocation per call, because the argument
+block that carries the target cannot live on the goroutine's stack: a callback may grow that stack,
+and the C side holds the block's address.
+
+## What the user writes
+
+**Primary path — nothing.** The input is the headers plus the compilation configuration:
+
+```
+cppgo gen -header include/user.hpp -package user -out ./user
+          [-library libuser.so] [-compile-commands build/compile_commands.json]
+          [-instantiate '<template specialization>']... [-rename '<signature>=<GoName>']...
+```
+
+`cppgo gen` parses the headers through libclang, selects every public declaration (a header is the
+unit of selection, not a hand-picked subset), emits the Go package and the shim, compiles the shim,
+and writes the invocation into the generated file so the regeneration command lives in the repository.
+`cppgo check` runs the same work, writes nothing, and exits non-zero when a file is stale.
+
+**Fallback — a declaration file.** For a project that does not want libclang, the same emitters take a
+hand-written description of the symbols and signatures to bind. It produces the same artefacts and is
+documented separately; it is never the recommended path, and the header is still what the shim
+includes.
 
 ## The generated API
 
 The input is C++. For this header:
 
 ```cpp
-namespace mathx {
+namespace user {
 
 struct Point { double x, y; };
-
-class Vector {
-public:
-    Vector(double x, double y);
-    Vector(const Vector &other);              // user-declared copy constructor
-    ~Vector();
-    double x() const;                         // inline in the class
-    double norm() const;                      // out of line, can throw
-    double dot(const double *ys, std::size_t n) const;
-    void scale(double k) noexcept;
-    static int dims();
-private:
-    double x_, y_;
-};
-
-struct Tiny { int value; ~Tiny(); };          // non-POD by value
-Tiny produce();                               // non-POD by-value result
 
 class Shape {
 public:
@@ -185,321 +238,423 @@ public:
     ~Circle() override;
     double area() const override;
     double radius() const;
-private:
-    double r_;
 };
 
-// y[i] = a * x[i] + y[i] for i in [0, n).
-void saxpy(double a, const double *x, double *y, std::size_t n);
+inline double twice(double v) { return 2 * v; }      // header-only
 
-std::string describe(const std::string &prefix, std::string_view suffix);
+std::string greet(const std::string &prefix, const std::string &name);
 std::vector<double> doubled(const std::vector<double> &values);
-double sum(std::span<const double> values);
-double dot3(std::array<double, 3> a, std::array<double, 3> b);
-std::optional<double> maybe_norm(const Vector &v);
-std::unique_ptr<Vector> make_vector(double x, double y);
-std::shared_ptr<Vector> share(const std::shared_ptr<Vector> &v);
-void consume_tiny(Tiny value);
+std::int32_t checked_div(std::int32_t a, std::int32_t b);
 
-template <typename T>
-struct Box { T value; T get() const { return value; } };
-
-} // namespace mathx
+} // namespace user
 ```
 
-`cppgo gen` writes this package — this is the API, not an illustration.
-
-### Classes, values and PODs
+`cppgo gen` writes this package — this is the API, not an illustration:
 
 ```go
 // Code generated by cppgo gen. DO NOT EDIT.
-//
-//	cppgo gen -header include/mathx/vector.hpp -package mathx -library libmathx \
-//	          -instantiate mathx::Box<int> -out ./mathx
+// cppgo gen -header include/user.hpp -package user -out ./user
 
-package mathx
+package user
 
 import "github.com/Manu343726/cppgo"
 
-// Point is mathx::Point: a POD, 16 bytes, fields at offsets 0 and 8.
+// Point is user::Point: a POD, 16 bytes, fields at offsets 0 and 8.
 type Point struct {
 	X float64
 	Y float64
 }
 
-// Vector is mathx::Vector. The object belongs to C++; obj is where it lives.
-type Vector struct {
-	obj *cppgo.Object
-}
+// Circle is user::Circle. The object belongs to C++; obj is where it lives.
+type Circle struct{ obj *cppgo.Object }
 
-// NewVector constructs a mathx::Vector.
+// NewCircle constructs a user::Circle.
 //
-// C++: mathx::Vector::Vector(double, double), _ZN5mathx6VectorC1Edd
-func NewVector(x, y float64) (*Vector, error) { /* Open, NewObject(16, 8, releaseVector), thunk */ }
+// C++: user::Circle::Circle(double), _ZN4user6CircleC1Ed
+func NewCircle(r float64) (*Circle, error)
 
 // Close destroys the object. It returns cppgo.ErrClosed when the receiver has
 // no live object: a nil pointer, the zero value, or a second Close.
+func (c *Circle) Close() error
+
+// Area calls the virtual method: the shim dispatches through the vtable, so a
+// Circle reached as a *Shape runs Circle's override.
 //
-// C++: mathx::Vector::~Vector(), _ZN5mathx6VectorD1Ev
-func (v *Vector) Close() error { /* concrete destructor at the last reference */ }
+// C++: user::Circle::area() const, _ZNK4user6Circle4areaEv
+func (c *Circle) Area() (float64, error)
 
-// Clone copies the object through its copy constructor. Clone is generated
-// when the record is classified copy-constructible.
-//
-// C++: mathx::Vector::Vector(const Vector &), _ZN5mathx6VectorC1ERKS0_
-func (v *Vector) Clone() (*Vector, error)
+// Radius is the non-virtual member.
+func (c *Circle) Radius() (float64, error)
 
-// X returns the x component.
-//
-// C++: mathx::Vector::x() const, _ZNK5mathx6Vector1xEv
-func (v *Vector) X() (float64, error) // not noexcept: thunk, error
+// Twice is the header-only inline function. It goes through the shim.
+func Twice(v float64) (float64, error)
 
-// Norm returns the Euclidean norm.
-//
-// C++: mathx::Vector::norm() const, _ZNK5mathx6Vector4normEv
-func (v *Vector) Norm() (float64, error)
+// Greet copies the Go strings into std::strings and the result back out.
+func Greet(prefix, name string) (string, error)
 
-// Dot returns the dot product of v with ys. The slice is borrowed for the call.
-//
-// C++: mathx::Vector::dot(const double *, std::size_t) const, _ZNK5mathx6Vector3dotEPKdm
-func (v *Vector) Dot(ys []float64) (float64, error)
+// Doubled copies the slice into a std::vector and the result into a fresh slice.
+func Doubled(values []float64) ([]float64, error)
 
-// Scale multiplies both components by k. This one is noexcept and register
-// representable, so it is called directly and cannot fail.
-//
-// C++: mathx::Vector::scale(double) noexcept, _ZN5mathx6Vector5scaleEd
-func (v *Vector) Scale(k float64)
+// CheckedDiv returns an error when the C++ function throws.
+func CheckedDiv(a, b int32) (int32, error)
 
-// VectorDims is the static member mathx::Vector::dims.
-//
-// C++: mathx::Vector::dims(), _ZN5mathx6Vector4dimsEv
-func VectorDims() (int32, error)
-
-// Saxpy computes y[i] = a*x[i] + y[i] in place. x and y share the C++ length
-// parameter and must have the same length in Go; a mismatch is an error before
-// the call is made.
-//
-// C++: mathx::saxpy(double, const double *, double *, std::size_t), _Z5saxpydPKdPdm
-func Saxpy(a float64, x, y []float64) error
-
-// Tiny is mathx::Tiny: a non-POD value. It owns C++ storage and is copied into
-// a call when a function takes it by value.
-type Tiny struct {
-	obj *cppgo.Object
-}
-
-// Close destroys the value. Clone copies it through its copy constructor.
-func (t *Tiny) Close() error
-func (t *Tiny) Clone() (*Tiny, error)
-
-// Value and SetValue are the generated accessors for the public field value.
-// Reading or writing an int cannot throw, so neither carries an error.
-func (t *Tiny) Value() int32
-func (t *Tiny) SetValue(value int32)
-
-// ConsumeTiny takes mathx::Tiny by value: the thunk copies the Go-held object
-// into the call, so t stays valid afterwards.
-//
-// C++: mathx::consume_tiny(Tiny)
-func ConsumeTiny(t *Tiny) error
-
-// Produce returns mathx::Tiny by value: the result is constructed in Go-owned
-// storage and returned as an owning value.
-//
-// C++: mathx::produce(), _ZN5mathx7produceEv
-func Produce() (*Tiny, error)
+// AsShape returns the same object seen as its base. The shim performs the cast,
+// so a non-zero base offset is never computed in Go.
+func (c *Circle) AsShape() *Shape
 ```
 
 Rules that the API shape follows:
 
 - **Mirrorable record → Go struct with matching exported fields.** A record is mirrorable when its
-  fields are all public, its layout is the natural Go layout, and no field is a bitfield, a
-  reference, a pointer, a union member, or a non-mirrorable type. The generator reads `sizeof`,
-  `alignof` and every offset from libclang and asserts them at compile time in the generated file.
-- **Every other record → opaque value type**: a Go struct with unexported storage, `Close()` from
-  the destructor, `Clone()` from the copy constructor (when one exists), and generated accessors for
-  every public field (`Field()` / `SetField(v)`, mapped by the same type map). Bitfields, packed
-  layouts, private members, non-POD members, and a layout libclang could not complete all take this
-  path; **nothing is left unreachable** and nothing is refused.
-- **Members are modelled by kind.** A record carries its public data fields (`Field`: type, access,
-  byte offset); its constructors, destructor, methods and static member functions — in
-  `Record.Members` for a synthesised specialisation, in the project's symbols for a full explicit
-  body and for non-template records (`Record.Synthesized` is the discriminator); **operators**
-  (`Symbol.IsOperator`,
-  `Symbol.Operator`) and **conversion operators** (`Symbol.IsConversion`, target type in
-  `Symbol.Result`); **static data members** (`Record.StaticFields`: type, access, `IsConst`, and the
-  definition's mangled name when libclang names the instantiation's definition — empty for a
-  specialisation's static member, whose pattern mangling is not the instantiation's); **nested types**
-  as records of their own (`Outer::Inner`, plus nested enums); and **member
-  function templates** as patterns (`Record.MemberTemplates`) plus the concrete instantiations the
-  manifest names (`Project.InstantiateMember`). A member function template without an instantiation
-  is not bindable, and the error names the `-instantiate` entry to add.
-- **Template specialisations have a precedence: full, partial, primary.** A **full explicit
-  specialisation** (`template <> struct Q<int> { … }`) has its own definition cursor, so its fields,
-  constructors, destructor, methods (with their manglings), static data, nested records and enums,
-  bases and layout are read from **its own body**; it is never synthesised from the primary. A
-  **partial specialisation** (`template <typename T> struct Q<T *> { … }`) is a pattern with its own
-  cursor: an instantiation selects the best match by arity, then by the number of argument components
-  that are not a bare parameter (more specific wins), ties in declaration order, and synthesises from
-  that partial with both its parameters and the remaining ones substituted. An instantiation with no
-  matching partial synthesises from the **primary**. Only these two cases synthesise: libclang emits
-  no definition cursor for an implicit instantiation. `Record.LayoutKnown` says which case applies:
-  **true** → the Go type is the mirrored struct (fields at their offsets, compile-time assertions);
-  **false** → the same type is opaque with field accessors. Either way the record's fields, members,
-  operators, static data and nested types are in the model; a member template is present as its
-  pattern until an instantiation is named. A specialisation reached only through a field's type is
-  built from that type, so `BoxHolder` makes `Box<double>` part of the API.
-- **`New<Type>()` and `Clone()` are promised only when the model can classify the record.**
-  `Record.IsDefaultConstructible` is true for a non-deleted zero-argument constructor, or no
-  user-declared constructor and every field trivially constructible: a scalar, pointer, enum, a
-  fixed-size array of those, or a record the model classified as trivially copyable and POD or
-  default-constructible. `IsCopyConstructible` is true for a non-deleted copy constructor, or no
-  user-declared copy/move constructor and every field trivially copyable by the same rule. The
-  field record's own layout need not be known: a record the model classified as trivially copyable
-  and POD or default-constructible qualifies even when `LayoutKnown` is false (a deferred
-  specialisation), and the generated shim's compile is the final check. `Fixed<double,4>` (an array
-  of doubles) qualifies; an array of a non-trivial record does not. When they are false no
-  `New`/`Clone` is generated.
-- **Class → Go struct with methods.** Methods call the thunk that performs real C++ dispatch, so a
-  virtual method on a `*Shape` runs the most-derived override.
-- **Ownership and views.** An owning value carries the destructor of the type it was **constructed
-  as** and a Go-side reference count. `As<Base>()` returns a view of the same object and adds a
-  reference; `Close` drops one, and the destructor runs when the last reference goes. A view is as
-  valid as the value it came from, and destruction is correct even when a base pointer aliases a
-  derived object and even when the destructor is not virtual. A second `Close` on the same Go value
-  returns `cppgo.ErrClosed`; it never decrements twice.
-- **Base classes and `this` adjustment.** For each bound class, methods declared in its public bases
-  are generated on the derived Go type as well. `As<Base>()` returns a `*Base` whose address the
-  thunk adjusted with `static_cast`; `As<Derived>() (*Derived, bool)` performs a `dynamic_cast` and
-  reports failure instead of panicking. Multiple inheritance and virtual bases need no layout
-  arithmetic in Go: the cast is written in C++.
-- **Constructor → `New<Type>(...) (*Type, error)`. Destructor → `Close() error`.**
-- **Free function → package function. Static member → package function prefixed with its type**
-  (`VectorDims`).
-- **Enum → named Go integer type plus typed constants** (`type Color uint8`,
-  `const ColorRed Color = 0`), for scoped and unscoped enums alike.
+  fields are all public, its layout is the natural Go layout, and no field is a bitfield, a reference,
+  a pointer, a union member, or a non-mirrorable type. The generator reads `sizeof`, `alignof` and
+  every offset from libclang and asserts them at compile time in the generated file.
+- **Every other record → opaque value type**: a Go struct with unexported storage, `Close()` from the
+  destructor, `Clone()` from the copy constructor (when one exists), and generated accessors for every
+  public field (`Field()` / `SetField(v)`). Bitfields, packed layouts, private members, non-POD
+  members, and a layout libclang could not complete all take this path; nothing is left unreachable.
+- **Class → Go struct with methods**, `New<Type>(...) (*Type, error)` for a constructor, `Close() error`
+  for the destructor, package functions for free and static functions, named Go integer types for
+  enums.
 - **`cppgo.Handle` appears in no exported signature.**
-- **Zero values are invalid**: a method on a nil pointer or a closed value returns
-  `cppgo.ErrClosed` (or `*T` methods that cannot return an error panic with a message naming the
-  method, which is a programmer error). No finalizer is generated.
+- **Ownership and views.** An owning value carries the destructor of the type it was constructed as and
+  a Go-side reference count. `As<Base>()` returns a view of the same object and adds a reference;
+  `Close` drops one, and the destructor runs at the last one.
+- **Zero values are invalid**: a method on a nil pointer or a closed value returns `cppgo.ErrClosed`.
+  No finalizer is generated.
 
-### Virtual dispatch
+## The per-construct mechanism table
+
+Every row names the mechanism, the evidence, and the limit when there is one. "Direct" means the
+generated trampoline calls the user's symbol; "shim" means the cppgo-built thunk calls it as C++.
+
+| # | construct | mechanism | evidence | limit, if any |
+|---|---|---|---|---|
+| 1 | virtual dispatch | virtual calls go to the shim (`object->method()`), where the vtable is. Direct vtable dispatch from Go also works: the vptr is the object's first word and points at the address point, so slot *k* is `*(vptr + 8k)` with the destructor pair first | `TestVirtualDispatchAndVirtualDestructor`, `TestVirtualDispatchFromTheVTable`, plus a C++ dump of the same vtable | the *slot index* is generation-time knowledge (declaration order); a slot call from Go is never needed when the shim exists, and is kept as the direct path for an exported non-virtual-looking wrapper |
+| 1 | virtual destructor | `delete` through the base pointer in the shim; the derived destructor ran (counter read back) | `TestVirtualDispatchAndVirtualDestructor/virtual_destructor_reaches_the_derived_one` | — |
+| 1 | `this` adjustment, multiple inheritance | the shim's `static_cast`; `Disk`'s `Circle` subobject is at a non-zero offset and both addresses are returned to Go | `TestMultipleInheritanceAdjustment` | virtual bases: the offset is a vtable lookup, done in C++ by the same cast; it is not computed in Go |
+| 2 | inline / header-only | shim includes the header; the body is compiled into the shim | `TestInlineHeaderOnlyIsReachableOnlyThroughTheShim` (the user's library exports no symbol, the shim does) | a declaration whose definition is not visible to the shim cannot be bound: the user must include the header that defines it, or provide an out-of-line definition |
+| 3 | `std::string` | copied in and out through a buffer; the `std::string` lives and dies inside the shim | `TestStdStringAndVector` | the shim and the library must use the same standard library and the same `_GLIBCXX_USE_CXX11_ABI` |
+| 3 | `std::vector<T>` | copied in and out through the caller's slice | `TestStdStringAndVector/std::vector_in_and_out` | same as `std::string` |
+| 3 | `std::string_view`, `std::span` | borrowed: `(pointer, length)`, no copy, valid for the call | **designed, not measured** (v3 oracle at `5b4fef7`; the shim receives the raw pair and constructs the view) | the callee must not retain the view |
+| 3 | `std::array<T,N>` | by value through the shim | **designed, not measured** | same ABI rule as any by-value aggregate |
+| 3 | `std::optional<T>` | as a parameter `*T` (nil is `nullopt`); as a return `(T, bool)`, or `(T, error)` with `absent:`; the shim constructs and reads it | **designed, not measured** | the two axes are not the same type, and the return axis follows *Errors from C++ to Go* |
+| 3 | `std::unique_ptr<T>` | a parameter consumes the Go value, a result is owning (`Close` destroys it) | **designed, not measured** | the deleter must be the default one |
+| 3 | `std::shared_ptr<T>` | a parameter shares (the reference count is copied), a result is owning | **designed, not measured** | a `shared_ptr` the *Go side* must construct out of nothing needs a control block only C++ can allocate: that is a shim entry point, not a layout trick |
+| 4 | POD above 16 bytes / MEMORY class by value | copied through the shim; an sret result goes into Go storage | **designed, not measured** | — |
+| 4 | more than 6 INTEGER or 8 SSE arguments | the shim takes an argument block and unpacks it | **designed, not measured** | a direct binding does not exist for this shape |
+| 4 | non-POD by value | constructed and copied inside the shim; a by-value result is constructed into Go storage through the sret pointer | `TestNonPODByValue` (the copy constructor's +1000 is observable) | the type's copy constructor and destructor must be visible to the shim, which they are when the header declares them |
+| 5 | exceptions | `try`/`catch` in the shim; the message travels in a thread-local string and arrives as a Go `error` | `TestExceptionsBecomeErrors` | **no direct binding may call a function that can throw**: measured, a throw with no C++ frame terminates the process (`TestExceptionFromCIsFatal`, `TestExceptionAfterACallbackIsFatal`, `TestExceptionThroughTheGoCallbackIsFatal`). A library that reports failures as `noexcept` + status needs no shim |
+| 6 | templates | the shim instantiates the specialisation the Go side asked for and calls it | `TestTemplateInstantiation`, `TestTwoPhaseGenerics` | the instantiation must be named: the Go generic API's instantiations are collected and the shim is emitted from that list; a Go instantiation with no C++ counterpart fails at load with the exact `template ...;` line to add |
+| 7 | inheritance / `As<Base>` | the shim's cast; `As<Derived>` is a `dynamic_cast` and reports `(*Derived, bool)` | `TestMultipleInheritanceAdjustment` | a `dynamic_cast` requires RTTI; a library built with `-fno-rtti` reaches the shim only through `static_cast` |
+
+## Callbacks
+
+A Go function handed to C++ — as a function pointer or wrapped into a `std::function` by the shim — is
+a **slot in a table of five-byte `CALL` instructions** (`internal/callback`). The instruction a C
+caller lands on names the slot; the trampoline saves the fourteen argument registers and calls
+`runtime.cgocallback` through a copy of the runtime's host-ABI entry; the runtime runs the Go function
+on the goroutine that made the call, locked to its M, with the C frames left where they are.
+
+The ABI, exactly:
+
+- arguments in `RDI, RSI, RDX, RCX, R8, R9` and `XMM0..XMM7`, the register file only. A callback that
+  takes a stack-passed argument is a generation error naming the sixth argument and the fix (take a
+  pointer to a struct);
+- the result is `RAX` or `XMM0`, one register: `Args.Ret` and `Args.RetF`;
+- the Go side marshals the frame itself: `func(*callback.Args)` reads `I` and `F`, writes `Ret` or
+  `RetF`. There is no reflection on the callback path.
+
+Lifetime rules:
+
+- **Registration** returns an address in a 64-slot process-wide table. Registering a function twice
+  gives two independent slots, because C++ may release one while the other is still held;
+- **Release** waits for the calls already inside the Go function to return, so a caller that is done
+  with a callback can release it and then free what it captured. It cannot wait for C++: a C++ object
+  that still holds the address and calls it after `Release` reaches the dispatcher's released-slot
+  path, which reports through `TakePanic` and returns a zero result — a programmer error on the C++
+  side, never a use-after-free;
+- the callback's Go frame is as valid as the foreign call: it may allocate, grow its stack and take a
+  traceback (measured: the goroutine id and thread id are the caller's, and `runtime.Stack` works
+  inside it).
+
+**Panic.** A panic inside a callback never unwinds into C++: the dispatcher recovers it, zeroes the
+result, records a `*callback.Panic` (value plus stack), and the binding that passed the callback
+checks `callback.TakePanic()` when the foreign call returns and re-panics there. Measured by
+`TestCallbackPanicIsCaptured` and `TestCallbackPanicReachesTheCaller`.
+
+**Reentrancy.** Go → C++ → Go → C++ nests: the runtime counts foreign calls per M, and a callback may
+make another reentrant call. `TestCallbackReentrancy` measures two levels.
+
+**Exceptions.** A C++ exception thrown *by* a callback is not a thing the ABI can express; a callback
+that wants to report a failure writes a status into `Args.Ret` and the C++ side checks it. An
+exception raised across a Go callback frame terminates the process (measured); the rule is the same as
+everywhere else: the C++ side catches, the Go side reads a status.
+
+## The `std::` ABI
+
+`std::` types cross at the shim, and the shim is C++ compiled by cppgo. The dependency is therefore
+explicit and checkable rather than a layout trick:
+
+- the shim is compiled with the flags the generator discovered for the header, and with the same
+  compiler family the library was built with. The generator records the compiler it used and the
+  `_GLIBCXX_USE_CXX11_ABI` value it was given, and rejects a shim whose standard library does not
+  match the one the library links (`libstdc++` vs `libc++`, detected from the compiler and its
+  default standard library);
+- `std::string`'s layout never appears in Go. It appears in the shim, which is where a
+  `std::string` can legally be constructed;
+- a `std::` type outside the table still crosses as an opaque value, constructed and destroyed by the
+  shim;
+- one case is worth naming because it is the only place a layout *is* used: a `std::function` the Go
+  side must build without a C++ factory. It is 32 bytes on libstdc++ (`_Any_data` 16, `_M_manager` 8,
+  `_M_invoke` 8), and the two code pointers can only come from instantiations the library or the shim
+  exports. v4 does not need it — the shim constructs the `std::function` from a function pointer, as
+  `TestCallbackThroughTheShim` measures — and it stays recorded in `internal/callback`'s
+  `TestStdFunctionFromGo` as the fallback for a library that already exports those instantiations.
+
+## Errors from C++ to Go
+
+A C++ library reports failure in at least eight ways, and a Go caller should not be able to tell which
+one it used: **every fallible call returns `(T, error)` — the value first, the error last — and every
+infallible call returns no error at all.** The mechanism lives in the shim (which is C++ and can
+therefore catch, read `std::error_code` and construct a `std::expected`), the projection lives in the
+generated Go package, and `internal/errormap` is the part of it that is shared and measured.
+
+### The mapping
+
+| C++ convention | how it is recognised | shim does | Go signature and error |
+|---|---|---|---|
+| **exceptions**: `std::exception`, a user subclass, `std::system_error` | the declaration is not `noexcept` | `try`/`catch` around the call, and around the marshalling; writes the message, and for `std::system_error` its code and category | `(T, error)`; `*cppgo.CallError` wrapping `*errormap.Message` (text only) or `*errormap.ErrorCode` (code, category, message) |
+| **`std::error_code`** | the return type is `std::error_code` | calls, tests the code, writes code + category + message | `(T, error)`; `*errormap.ErrorCode`; `errors.Is` compares code **and** category |
+| **`std::expected<T,E>`**, `tl::expected<T,E>` | the return type has `has_value()`/`value()`/`error()`, or its spelling is `std::expected` | tests `has_value()`, copies the value out, projects `E` | `(T, error)`; `E = std::error_code` → `*errormap.ErrorCode`; `E = std::string` → `*errormap.Message`; a custom `E` → the type the config names |
+| **`std::optional<T>`** — **designed, not measured** | the return type is `std::optional<T>` | copies the value, or writes "empty" | **not an error by default**: `(T, bool)` — `optional` means "absent", and a value that is absent is not a failure. A package that wants it as an error writes `kind: optional` with `absent: "<message>"`, and then it is `(T, error)` |
+| **status int** — **designed, not measured** | a plain integer return, only with a config entry | returns the int, the projection maps it | `(T, error)`; `*errormap.ErrorCode` with the category the config names (default `"status"`) |
+| **`errno`** — **designed, not measured** | a config entry (`kind: errno`) | reads `errno` after the call | `(T, error)`; `*errormap.ErrorCode` with category `"errno"` |
+| **`bool` + out parameters** (`bool parse(const char*, Result*, Error*)`) | **never inferred** — a `bool` says nothing | the config names the value channel and the error channel; the shim writes both | `(T, error)`; the `bool` does not appear in the Go signature |
+| **a custom result type** (`outcome<T>`, `absl::StatusOr<T>`, a project `Result<T>`) | the shape: `has_value()`, `value()`, `error()` | tests the shape and projects the error member | `(T, error)`; the error member is projected as above, or by the type the config names |
+| **`std::variant<T,E>`** with a known error alternative — **designed, not measured** | **never guessed**: a config entry names it with `alternative: <index>` | tests `index()`, copies the matching alternative | `(T, error)`; the config names which alternative is the error and how to project it |
+
+Two rules hold across the table, and they are what make the generated API predictable:
+
+- **no error is synthesized for a call that cannot fail.** A `noexcept` function returning `int` is
+  `func(...) int32`, not `(int32, error)`; the generated package has no `error` that is always nil.
+  `TestNonFallibleCallHasNoErrorResult` pins it.
+- **no failure is dropped.** A convention that is neither inferred nor configured is a **generation
+  error**: the report names the declaration and the config entry it needs, and nothing is emitted for
+  it. Silence would mean a call whose failure becomes a zero value.
+
+**Exceptions during marshalling use the same path.** Constructing a `std::string`, a `std::vector` or
+any by-value object can throw `std::bad_alloc`; the shim's `try` covers the marshalling as well as the
+call, so a failure before the call is an error like any other.
+
+**There is no exception support without a C++ frame**, and v4 says so plainly: a direct binding is
+`noexcept` by construction, and a throw with no C++ frame above it terminates the process (measured,
+three times, in `internal/callback`'s child-process tests). A library whose API throws and whose
+headers cannot be included by the shim cannot be bound safely; the fix is a `noexcept` entry point in
+the library.
+
+### The generated Go error types
 
 ```go
-// Shape is mathx::Shape. Area is virtual: the thunk calls shape->area() and the
-// vtable picks the override.
-type Shape struct{ obj *cppgo.Object }
+// ErrorCode is a std::error_code, a status int or an errno projected into Go.
+// errors.Is compares Code and Category; the fields are exported, so a caller
+// never has to parse the string.
+type ErrorCode struct {
+	Code     int
+	Category string
+	Message  string
+}
 
-func (s *Shape) Area() (float64, error)
-func (s *Shape) Close() error
-
-type Circle struct{ obj *cppgo.Object }
-
-func NewCircle(r float64) (*Circle, error)
-func (c *Circle) Area() (float64, error)     // the same thunk body, on the derived type
-func (c *Circle) Radius() (float64, error)
-func (c *Circle) Close() error
-
-// AsShape returns the same object seen as its base: the thunk adjusts the
-// pointer for a non-zero base offset, and the view shares ownership so the
-// object stays alive until both values are closed.
-func (c *Circle) AsShape() *Shape
-
-// AsCircle is a dynamic_cast: it reports whether the object really is a Circle.
-func (s *Shape) AsCircle() (*Circle, bool)
+// Message is a failure that carries only text: a thrown std::runtime_error, or
+// a std::expected whose error alternative is a string.
+type Message struct {
+	Text string
+}
 ```
 
-### `std::` types, ownership and lifetimes
+- the binding returns `*cppgo.CallError{Symbol, Err}` with one of these underneath, so `errors.As`
+  finds both the declaration and the projection, and `errors.Is` finds the failure's identity (a
+  `std::error_code`'s code and category are its identity; a message's text is its own);
+- a custom `E` projects to the Go type the config's `type:` names, generated with that C++ type's
+  accessors; the generated doc comment states whether `errors.Is` and `errors.As` are supported for it
+  — a projection with no comparable identity says `errors.Is` does not apply rather than pretending;
+- the per-symbol report names the mechanism and whether it was inferred or configured, which is the
+  line a reader uses to audit a generated package:
 
-```go
-// describe: std::string parameters are copied in; string_view borrows the Go
-// bytes for the call; the result is copied out before the thunk returns.
-func Describe(prefix, suffix string) (string, error)
-
-// doubled: a std::vector input is copied into a C++ vector; the result is
-// copied back into a fresh Go slice, so no C++ object escapes.
-func Doubled(values []float64) ([]float64, error)
-
-// sum: a std::span parameter borrows the Go backing array, no copy.
-func Sum(values []float64) (float64, error)
-
-// dot3: std::array<T, N> becomes [N]T, by value.
-func Dot3(a, b [3]float64) (float64, error)
-
-// maybe_norm: std::optional<T> is *T. nil is nullopt; a non-nil pointer is the
-// value. The pointer points at Go storage the binding allocated.
-func MaybeNorm(v *Vector) (*float64, error)
-
-// make_vector: the unique_ptr is released into a Go-owned handle.
-func MakeVector(x, y float64) (*Vector, error)
-
-// share: the shared_ptr reference is copied into another Go-owned handle.
-func Share(v *Vector) (*Vector, error)
-
-// BoxInt is mathx::Box<int>, instantiated by the manifest. When libclang can
-// complete the instantiation it is this mirrored struct and the field offsets
-// are asserted; when it cannot, the same value is opaque (obj *cppgo.Object)
-// with Value()/SetValue() accessors. The members are generated either way.
-type BoxInt struct {
-	Value int32
-}
-func (b *BoxInt) Get() (int32, error)
-func (b *BoxInt) Int() (int32, error)     // operator int, named after its target
-func (b *BoxInt) ConvertFloat64(input float64) (float64, error)
-                                          // convert<double>, from -instantiate
-func BoxIntShared() (int32, error)        // static data: shared
-func BoxIntSetShared(value int32)         // ...and its setter, shared is not const
-type BoxIntInner struct {                 // nested type; same LayoutKnown rule
-	Inner int32
-}
-func NewBoxInt() (*BoxInt, error)         // when the record is default-constructible
-func (b *BoxInt) Clone() (*BoxInt, error) // when it is copy-constructible
-
-// Flags is mathx::Flags. Bitfields cannot be Go fields, so the record is opaque
-// and every field is an accessor. A default-constructible record gets NewFlags.
-type Flags struct{ obj *cppgo.Object }
-func NewFlags() (*Flags, error)
-func (f *Flags) Close() error
-func (f *Flags) Low() uint32
-func (f *Flags) SetLow(value uint32)
-func (f *Flags) High() uint32
-func (f *Flags) SetHigh(value uint32)
-func (f *Flags) Ordinary() int32
-func (f *Flags) SetOrdinary(value int32)
+```
+ns::open_file      error_code  inferred     value=return error=return
+ns::parse_int      expected    inferred     value=return error=return
+ns::parse_point    out_param   configured   value=1 error=2
+ns::divide         exception   inferred     value=return error=return
+ns::twice          no error channel         inferred
 ```
 
-The complete rules:
+### The configuration
 
-| C++ | Go | copy / borrow / lifetime |
+For the conventions a signature cannot state, a package writes `cppgo.yaml` beside its generation
+command (or a header annotation, for the same data):
+
+```yaml
+errors:
+  "ns::parse":
+    kind: out_param      # exception | error_code | expected | optional | status | errno |
+                         # out_param | custom | variant
+    value: return        # where the result is: "return", a parameter index, or a parameter name
+    error: 1             # where the failure is: "return", a parameter index, or a parameter name
+    type: ns::ParseError # optional projection: the C++ type of the error
+
+  "ns::find":
+    kind: optional
+    absent: "not found"  # an empty optional becomes this error; omit it and the call is (T, bool)
+
+  "ns::resolve":
+    kind: variant
+    alternative: 1       # which std::variant alternative carries the error; never guessed
+```
+
+Every key above exists in `errormap.Entry`, and **the loader rejects an unknown key** rather than
+ignoring it: `valuee:` or `err:` is a parse error naming the field, because a mistyped channel would
+otherwise leave an entry that names nothing.
+
+Rules, each of which is a test in `internal/errormap` (`TestConfigValidation`):
+
+- **validated against the declaration at generation time**: a channel that names no parameter, a
+  parameter that cannot carry a channel (a value parameter is not a pointer or a reference), an entry
+  for a symbol the package does not bind, a kind that returns its own error being given channels, an
+  `out_param` entry without both channels, and `absent` or `alternative` on a kind that does not use
+  them — each is a generation error, and **no output is written**;
+- **no failure is dropped**: a declaration that can fail and whose convention is neither inferred nor
+  configured is an error naming the declaration and the kind to add (`TestFallibleWithoutConventionIsAnError`);
+- **inferred cases need no entry**, and an entry for one may only add a projection;
+- **a config cannot invent a signature**: it names channels within a declaration the header already
+  has, and nothing else;
+- the file is part of the generated package's inputs, so `cppgo check` fails when it changes without a
+  regeneration.
+
+Evidence for the mechanism, end to end, is `internal/errormap`: a user library and the cppgo-built
+shim built as two objects, and six C++ functions covering **five** of the table's rows — a
+`std::error_code` return, a `std::expected<T, std::error_code>` (C++23), a `std::runtime_error`, a
+`std::system_error`, a `bool` + out-parameter function driven by `testdata/cppgo.yaml`, and a
+`ns::Result<T>` inferred from its shape — each asserted with `errors.As` and `errors.Is` on the Go side
+(`TestErrorCodeReturn`, `TestExpectedReturn`, `TestExceptionReturn`, `TestConfiguredOutParamReturn`,
+`TestInferredCustomResult`), plus every validation error above.
+
+**Four rows of the table above carry `designed, not measured` in their first cell** — `std::optional`
+as an error, a status int, `errno`, and a `std::variant` alternative. Their rules and their validation
+are implemented and tested (`TestOptionalAndVariantRules`), and no binding exercises them end to end
+yet: that is the emitter's work, and the mark is on the row so a reader does not have to hold six
+functions against nine rows.
+
+**Every block a thunk writes into is Go storage pinned for the call.** A stack local's address is a
+`uintptr` the moment it is handed to the C++ side, and a Go frame moves; the message the projection
+reads through that address would be a view of memory the frame no longer owns. The projection also
+copies each string out of the block, so an `error` never keeps a view of storage the next call reuses.
+`internal/errormap`'s bindings do both, and a test caught the omission rather than a review.
+
+*The walkthrough — what a user writes, what the generator reports, and how to migrate a library — is
+the tutorial, issue #5; this section is the mechanism the tutorial documents.*
+
+## Templates and the two-phase generics flow
+
+A C++ template only exists where it is instantiated. For a template-heavy library (Eigen above all)
+the Go API is generic and the C++ instantiation is a build step, so the flow has two phases:
+
+1. **the Go program instantiates the generic API** — `Matrix[float64, 4, 4]`,
+   `Vector[float32, 3]`. The user writes only the Go program;
+2. **cppgo collects the instantiations** — by parsing the generated package with `go/packages` and
+   reading the type arguments at the union point, or from an explicit list the package declares (the
+   `-instantiate` manifest entries, for a program that wants to pin the set). The output is a list of
+   C++ specialisations: `Eigen::Matrix<double,4,4>`, `Eigen::Vector3f`;
+3. **cppgo emits the shim from that list** — `template struct Eigen::Matrix<double,4,4>;` plus a thunk
+   per operation the Go type uses — and **compiles it** into the cppgo artefact that links the
+   library;
+4. the generated Go package calls the thunks. The failure mode when a Go instantiation has no C++
+   counterpart is a load-time error naming the exact line to add, measured by
+   `TestTwoPhaseGenerics` (its `int64` subtest).
+
+What each target exercises, and what is out of scope with the reason:
+
+| target | what it exercises | out of scope, and why |
 |---|---|---|
-| `std::string` parameter | `string` | **copied** into a `std::string` for the call |
-| `std::string` result | `string` | **copied** out; the C++ string is freed before the binding returns |
-| `std::string &` (non-const) | input `string`, result `string` | copied in and back out; the Go value is immutable |
-| `std::string_view` parameter | `string` | **borrowed** for the call only; not NUL-terminated, the view carries the length |
-| `std::string_view` result | `string` | **copied immediately**; a view of a dead object is never held |
-| `std::vector<T>` parameter | `[]T` | **copied** into a C++ vector |
-| `std::vector<T>` result | `[]T` | **copied** into a fresh Go slice, then freed |
-| `std::vector<T> &` (non-const) | input `[]T`, extra `[]T` result | copied in and out; the Go slice is not aliased |
-| `std::span<T>` parameter | `[]T` | **borrowed**: points at the Go backing array, valid for the call, the callee must not retain it |
-| `std::span<T>` result | `[]T` | **copied immediately** |
-| `std::array<T,N>` parameter / result | `[N]T` | copied |
-| `std::optional<T>` | `*T` | nil is `nullopt`; the pointer is Go storage |
-| `std::unique_ptr<T>` parameter | `*T` | **consumes** the Go value: passing it transfers ownership, and the Go value is invalid afterwards |
-| `std::unique_ptr<T>` result | `*T` | owning: `Close()` destroys it |
-| `std::shared_ptr<T>` parameter | `*T` | **shares**: the reference count is copied, the Go value stays valid |
-| `std::shared_ptr<T>` result | `*T` | owning: `Close()` drops one reference |
-| `T *`, `T &` parameter | `*T` | **borrowed** for the call; the callee must not retain it; `const` is honoured by the C++ signature |
-| `(T *p, size_t n)` parameter | `[]T` | **borrowed**; the layout of T is checked, so the Go array is the C array; `const` decides whether the callee may write |
+| **Eigen** | the two-phase flow above; a header-only library with no `.so`, so the shim is the whole binary; expression templates, which are compiled in the shim and never appear in a Go signature; POD by value (`Matrix4d` is 128 bytes, MEMORY class, copied by the shim) | Eigen's expression templates across the Go boundary: a Go signature names `Matrix[T,R,C]`, never `CwiseBinaryOp<...>`; the shim materialises the expression with `.eval()` |
+| **OpenCV** | whole-header binding at scale: hundreds of overloads, default arguments, `cv::Mat` as an opaque value with `Close`, `std::string` and `std::vector<T>` everywhere, enums with explicit values | GPU modules that need a CUDA runtime at link time: the shim links what the library links, and a missing device is the library's error, not a binding failure |
+| **ArrayFire** | C++ API over a C API; handles are opaque values; `af::array` by reference; exceptions are `af::exception`, caught by the shim and reported as Go errors | none measured yet; the exception row is the one to verify first, because ArrayFire throws by design |
 
-A non-const `std::vector<T> &` parameter is an in/out slice: the generated function takes `[]T` and
-puts the resulting `[]T` in its result list, because a Go slice is a value and a mutation of a copy
-would otherwise be invisible.
+**Qt is out of scope.** The operator retracted it; no slice, no tag, no CI package.
 
-A `std::` type outside the table is still supported: it crosses as an **opaque value** (by pointer,
-or as an owning value with `Close`), and the generated thunk constructs, copies and destroys it. Its
-own members are not bound, because binding the standard library is a different job; bind a C++
-wrapper when a Go caller has to call one. The single exclusion is a callback: `std::function` and
-function pointers are a C++→Go call direction, a separate feature, not a value that crosses.
+### The target-slice test harness
+
+Each target is delivered as **a generated binding plus a test against the real library** — never a
+fixture, never a mock, and never a hand-written declaration. A slice is accepted when the test compiles
+its generated package against the real headers, loads the real shared object through the cppgo-built
+shim, and asserts on real values.
+
+Layout, one directory per target:
+
+```
+internal/targets/opencv/     generated package (zz_cppgo.gen.go, zz_cppgo_amd64.s) + opencv_test.go
+internal/targets/arrayfire/  the same, against libaf
+internal/targets/eigen/      the same, header-only: the shim is the whole binary
+```
+
+Tags and skipping:
+
+- each test file carries its own build tag — `//go:build cppgo_opencv`, `//go:build cppgo_arrayfire`,
+  `//go:build cppgo_eigen` — so `go test ./...` on a machine without the library neither compiles the
+  test nor fails;
+- inside the tag, the test **skips with the reason** when the library is absent: `pkg-config --exists
+  opencv4` for OpenCV, `pkg-config --exists af` (or `af/version.h`) for ArrayFire, and
+  `<eigen3/Eigen/Dense>` for Eigen. A skip is a skip, not a silent pass: the message names the package
+  to install (`libopencv-dev`, `libarrayfire-dev`, `libeigen3-dev`);
+- **the ArrayFire slice is never deleted**: if it cannot be installed on the CI image, its tag stays
+  and the opt-in host is documented in the test's own comment and in the target's page. The contract
+  forbids removing a slice because its dependency was awkward once.
+
+The CI image (issues #13/#16) installs the three packages, so the default job runs the slices with
+their tags on; a job that cannot install one runs the rest and reports the skip. The harness is the
+only place the tags are turned on, so a developer's `go test ./...` stays fast.
+
+What each slice asserts:
+
+| slice | generated API exercised | assertions |
+|---|---|---|
+| **OpenCV** | `Mat`, `cvtColor`, `imwrite`/`imread` through the whole-header binding | create a `Mat`, fill it, convert to grey and check `Channels()`, `Rows()`, `Cols()`, `Type()`; write it and read it back with the same shape |
+| **ArrayFire** | `af::array`, `sum`, `matmul`, `fft`, `host` | construct an array from a Go slice, `sum` over an axis, `matmul` of two small matrices against a hand-computed product, `fft` of a constant against the known spectrum, and read the values back through `host` |
+| **Eigen** | the generic `Matrix[T,R,C]` and `Vector[T,N]` API, fixed and dynamic | add, multiply, transpose, inverse and norm with numeric assertions the test computes itself, plus element access at both dimensions; a fixed `Matrix[float64,4,4]` and a dynamic `Matrix[float64,Dynamic,Dynamic]` exercise the two-phase instantiation flow |
+
+**Only the generated API.** No `cppgo.Handle` in a test, no hand-written binding, no C++ file written
+by the test author: if a slice needs one of those, the generator is missing a construct and that is the
+finding, not a workaround in the test. The error rows of such a library (OpenCV's `cv::Exception`,
+ArrayFire's `af::exception`) are asserted as Go errors through the mapping above, which is what makes
+the slices the acceptance test for both halves of v4 at once.
+
+The slices are **not implemented in this workstream**: this section is the contract and the test plan
+they are built against.
+
+## Whole-header API at scale
+
+A header is the unit of selection, so the generator has to answer the questions a large header asks:
+
+- **Overloads** take a suffix built from the Go parameter types, in order (`Dot`, `DotFloat64Slice`,
+  `DotVector`); one declaration keeps the bare name. A collision that no suffix separates is a
+  generation error naming both declarations and asking for `-rename`.
+- **Default arguments** produce one Go function per prefix of the parameter list that the defaults
+  allow, generated only for the prefixes actually used (`f(a)`, `f(a,b)`), never a variadic soup; a
+  prefix that would collide is dropped and the report says so.
+- **Namespaces** contribute nothing to the Go name; two declarations from different namespaces that
+  map to one identifier need `-rename`, and without one the error names both.
+- **Enums** become named Go integer types with typed constants, scoped and unscoped alike, with the
+  underlying type from libclang.
+- **Macros** are not parsed — libclang sees a macro's expansion, not its declaration — so a macro that
+  *is* the API (glibc's `__attribute__` wrappers, OpenCV's `CV_EXPORTS_W`) is invisible and the
+  underlying declaration is bound instead. A macro-only API (a function-like macro that expands to a
+  call) is not bindable, and the generator reports it as such with the declaration it could not see;
+  the fix is a function, which every large library provides.
+- **Classes with inline bodies, templates, and `std::` members** need nothing from the user: they are
+  shim work.
+- **What is emitted** is every public declaration in the headers, plus the type closure of every bound
+  signature. `-bind` and `-exclude` narrow it; an unmatched entry is an error, so a typo cannot
+  silently shrink the API.
 
 ## Type map
 
@@ -515,210 +670,83 @@ not 64-bit is a generation error, not a silent reinterpretation.
 | `int`, `unsigned int` | `int32`, `uint32` | |
 | `long`, `long long`, `unsigned long`, `unsigned long long` | `int64`, `uint64` | LP64, validated |
 | `int8_t`…`uint64_t` | the same width | fixed-width aliases resolve by size |
-| `intptr_t`, `ptrdiff_t` | `int64` | validated |
-| `size_t`, `uintptr_t` | `uint64` | the length half of a slice pair is not visible in Go |
+| `size_t`, `uintptr_t`, `intptr_t`, `ptrdiff_t` | `uint64`, `int64` | validated |
 | `float`, `double` | `float32`, `float64` | |
 | `wchar_t`, `char16_t`, `char32_t` | `int32`, `uint16`, `uint32` | validated by size |
 | enum (scoped or unscoped) | named integer type + constants | underlying type from libclang |
 | `T *`, `T &` | `*T` | borrowed; `[]T` for the pair form |
-| `(T *p, size_t n)` | `[]T` | borrowed; `const` in the C++ signature decides whether the callee may write through it |
-| `(char *p, size_t n)` / `(const char *p, size_t n)` | `string` | borrowed for the call; not NUL-terminated |
+| `(T *p, size_t n)` | `[]T` | borrowed; `const` decides whether the callee may write |
+| `(char *p, size_t n)` | `string` | borrowed for the call; not NUL-terminated |
 | mirrorable record, by value | `T` | the Go struct *is* the C layout |
-| non-POD record, by value | `*T` | the thunk copies into the call; `T` owns Go-pinned storage |
-| mirrorable record, `T &` | `*T` | writes are visible in the Go value |
-| `T[N]` (record field) | `[N]T` | fixed-size array; a dependent bound is resolved from the template argument |
-| `std::` types | as in the table above | always through a thunk |
+| non-POD record, by value | `*T` | the shim copies into the call; `T` owns Go-pinned storage |
+| `T[N]` (record field) | `[N]T` | fixed-size array |
+| `std::string` | `string` | copied in and out |
+| `std::string_view` | `string` | borrowed for the call; **designed, not measured** |
+| `std::vector<T>` | `[]T` | copied in and out (measured) |
+| `std::span<T>` | `[]T` | borrowed; **designed, not measured** |
+| `std::array<T,N>` | `[N]T` | by value; **designed, not measured** |
+| `std::optional<T>` as a **parameter** | `*T` | nil is `nullopt`, a non-nil pointer is the value; **designed, not measured** |
+| `std::optional<T>` as a **return** | `(T, bool)` | absence is not a failure; a config entry with `absent:` makes it `(T, error)`; **designed, not measured** |
+| `std::unique_ptr<T>` | `*T` | a parameter consumes, a result owns; **designed, not measured** |
+| `std::shared_ptr<T>` | `*T` | a parameter shares, a result owns; **designed, not measured, not supported yet** |
+| function pointer | `func(...)` | the callback table's address (measured) |
+| `std::function<R(Args...)>` | `func(...)` | the shim constructs the object (measured) |
 
-A C array parameter decays to a pointer at the C++ boundary and maps by the pointer rule; only
-record fields are arrays. A field of array type in a mirrored record is `[N]T`; in an opaque record
-the accessor returns `[N]T` and the setter takes one, copied element by element. A dependent `T[N]`
-in a specialisation is resolved when the arguments are substituted, so `Fixed<double,4>::values` is
-a `[4]float64` field (or its accessor).
+`long double` and `__int128` have no Go value type; a signature that uses one is a generation error
+naming the parameter and the fix (widen/narrow at the C++ boundary to `double`/`int64`, or wrap it).
 
-A pointer parameter followed by a length parameter of integer type becomes a slice: the pointer is
-the data, the length is `len(slice)`, and the slice is borrowed for the call. **One length may serve
-several pointers**: in `saxpy(double, const double *, double *, size_t)` both pointers become `[]T`
-and share the one `n`, which is the BLAS shape. The generated binding checks before the call that
-every slice sharing a length has the same length, and returns an error when they do not; the C++
-side still receives exactly one length. A length parameter that precedes no pointer is an ordinary
-`uint64` parameter.
-
-`long double` and `__int128` have no Go value type; they are the one family of scalar the type map
-cannot carry. A signature that uses one is a generation error with the fix "widen/narrow it at the
-C++ boundary to `double`/`int64` or wrap it in a supported type". This is an unrepresentable *input
-type*, not a refusal of a callable construct: any C++ function that takes or returns one can be
-reached through a one-line C++ wrapper with a representable signature.
+A pointer parameter followed by a length parameter of integer type becomes a slice: the pointer is the
+data, the length is `len(slice)`, and the slice is borrowed for the call. One length may serve several
+pointers; the generated binding checks before the call that every slice sharing a length has the same
+length.
 
 ## Naming and overloads
 
-- A name is CamelCase, split on `_`, leading and trailing underscores stripped: `count_above` →
-  `CountAbove`, `x_` → `X`, `saxpy` → `Saxpy`.
-- A class or struct is its own name; a namespace contributes nothing. Two declarations from different
-  namespaces that map to one Go identifier are resolved with `-rename` (below); without one it is a
-  generation error naming both.
-- `New<Type>` for a constructor, `Close` for the destructor, `<Type><Name>` for a static member:
-  `mathx::Vector::dims` → `VectorDims`.
-- **Constructor overloads** follow the same suffix rule as functions, applied to `New<Type>`:
-  a class with one constructor gets `NewVector`; a class with several gives each of them the
-  parameter-type suffix, with the zero-parameter constructor keeping the bare name —
-  `Vector()` → `NewVector`, `Vector(double)` → `NewVectorFloat64`,
-  `Vector(double, double)` → `NewVectorFloat64Float64`. A copy constructor is `Clone()`, not a
-  factory, and a move constructor is not exposed separately (Go has no rvalue overload). Two
-  constructors whose Go parameter types are equal need `-rename '<qualified ctor
-  signature>=<GoName>'`.
-- A name with **one** declaration keeps its bare CamelCase form. A name with **several** overloads
-  takes a suffix built from its Go parameter types, in order: `dot()` → `Dot`,
-  `dot(const double *, size_t)` → `DotFloat64Slice`, `dot(Vector const &)` → `DotVector`. The
-  zero-parameter overload keeps the bare name.
-- A **class template specialisation** is `<TemplateName><Arguments>`: `mathx::Box<int>` → `BoxInt`,
-  `mathx::Box<mathx::Vector>` → `BoxVector`, `mathx::Pair<int, double>` → `PairIntFloat64`. A
-  **function template** binding is named the same way from its specialization.
-- `Open` is reserved as the package-level entry point, and `Close` as the destructor method of every
-  class. A non-destructor C++ member that maps to `Close` collides with the destructor and needs
-  `-rename`; a free function mapping to `Open` collides with the package entry point and needs one
-  too. A destructor is never a collision: it *is* `Close`.
-- A **nested type** is the outer Go name followed by its own: `mathx::Operators::Entry` →
-  `OperatorsEntry`, `mathx::Box<int>::Inner` → `BoxIntInner`; deeper nesting concatenates in order.
-  A nested **enum** is a type too: `mathx::Box<int>::Kind` → `BoxIntKind`, with constants
-  `<EnumName><Enumerator>` (`BoxIntKindA`, `BoxIntKindB`). Its underlying type and initializers come
-  from the body that defines the instantiation: a full explicit specialisation's own enumerators, a
-  matched partial's, or the primary's. When an initializer is neither a literal nor a template
-  parameter the model reports `Enum.ConstantsKnown == false` and the generated enum carries no
-  constants; a constant is never taken from a body the instantiation does not use. A collision needs
-  `-rename`.
-- A **conversion operator** is named after its target Go type: `operator int` → `Int()`,
-  `operator double` → `Float64()`, `operator std::string` → `String()`, `operator bool` → `Bool()`;
-  a record or pointer target is `As<RecordName>` (`operator mathx::Vector` → `AsVector`). A collision
-  with another member needs `-rename`.
-- **Operators take a fixed name.** The table below is the whole rule; anything not in it, or a
-  collision, is a generation error asking for `-rename '<qualified signature>=<GoName>'`:
+- A name is CamelCase, split on `_`, leading and trailing underscores stripped.
+- `New<Type>` for a constructor, `Close` for the destructor, `<Type><Name>` for a static member.
+- Constructor overloads follow the same suffix rule as functions, applied to `New<Type>`; a copy
+  constructor is `Clone()`, and a move constructor is not exposed separately.
+- A **class template specialisation** is `<TemplateName><Arguments>`: `Box<int>` → `BoxInt`,
+  `Matrix<double,4,4>` → `MatrixFloat64FourFour` in the concrete API and `Matrix[float64,4,4]` in the
+  generic one.
+- A **conversion operator** is named after its target Go type (`Int()`, `Float64()`, `String()`,
+  `Bool()`, `AsVector`).
+- **Operators take a fixed name** (`Add`, `Equal`, `At`, `WriteTo`, …); anything not in the table, or a
+  collision, is a generation error asking for `-rename '<qualified signature>=<GoName>'`. `operator
+  new`/`operator delete` are deliberately absent: the Go side allocates.
+- A **static data member** is a package function `<Type><Field>()`, plus `<Type>Set<Field>(v)` when it
+  is not `const`.
+- `Open` is reserved as the package entry point; a `-rename` that matches nothing is an error.
 
-  | C++ | Go | C++ | Go |
-  |---|---|---|---|
-  | `operator+` | `Add` | `operator==` | `Equal` |
-  | `operator-` (binary) | `Sub` | `operator!=` | `NotEqual` |
-  | `operator-` (unary) | `Neg` | `operator<` | `Less` |
-  | `operator*` | `Mul` | `operator<=` | `LessOrEqual` |
-  | `operator/` | `Div` | `operator>` | `Greater` |
-  | `operator%` | `Mod` | `operator>=` | `GreaterOrEqual` |
-  | `operator[]` | `At` | `operator=` (copy assignment) | `Assign` |
-  | `operator()` | `Call` | `operator++` / `operator--` | `Inc` / `Dec` |
-  | `operator&` / `|` / `^` / `~` | `BitAnd` / `BitOr` / `BitXor` / `BitNot` | `operator&&` / `||` / `!` | `And` / `Or` / `Not` |
-  | `operator+=`, `-=`, `*=`, … | `AddAssign`, `SubAssign`, `MulAssign`, … | `operator<<` / `>>` on a stream | `WriteTo` / `ReadFrom` |
-
-  A **stream type** is `std::ostream`, `std::istream`, `std::wostream`, `std::wistream`, or a
-  `std::basic_ostream<C,T>` / `std::basic_istream<C,T>` specialisation, recognised by its **declaration
-  spelling** (libclang's canonical form of the `ostream` alias can resolve to `int`, so the spelling
-  is the reliable half; the model exposes `Param.IsStream()`). When either operand is a stream,
-  `operator<<`/`>>` are `WriteTo`/`ReadFrom`; otherwise `ShiftLeft`/`ShiftRight`.
-  `operator new`/`operator delete` are absent from the table on purpose — the Go side allocates — so
-  they follow the same single rule as any unlisted operator: a generation error unless `-rename`
-  names the binding.
-- A **static data member** is a package function `<Type><Field>()` returning the value (the getter
-  copies for `std::string`/containers, per the type map; a non-mirrorable record is copied into a new
-  owning Go value, and a `static T *` is borrowed by the pointer rule), and `<Type>Set<Field>(v)` only
-  when it is not `const`. `mathx::Operators::counter` → `OperatorsCounter()` / `OperatorsSetCounter(v)`;
-  `limit` (const) has only the getter. A static data member of a specialisation takes the
-  specialisation's Go name: `BoxIntShared()`.
-- A **member function template** is bound for each instantiation the manifest names
-  (`-instantiate 'mathx::Box<int>::convert<double>'`) or that a bound signature reaches; the Go name
-  follows the function rule on the instantiated signature (`convert<double>` → `ConvertFloat64`).
-  The instantiation carries its substituted signature. libclang exposes no cursor — and so no
-  mangled name — for an explicit member instantiation, so the binding is a thunk that calls the
-  instantiated member directly; the Go API is the same as for any other member. Selecting the
-  pattern without an instantiation is an error naming the instantiation to add.
-- When the derived name collides with another binding, the manifest supplies the name:
-  `-rename 'mathx::Vector::dot(const double *)'=DotSlice`. A `-rename` that matches nothing is an
-  error, so a typo cannot silently do nothing.
-
-The **binding manifest** is the command line that names the roots and the specialisations:
-
-```
-cppgo gen -header <path> -package <name> -library <name-or-path> -out <dir>
-          [-bind <qualified>]... [-exclude <qualified>]... [-status <qualified>]...
-          [-instantiate '<template specialization>']... [-rename '<signature>=<GoName>']...
-          [-compile-commands <path>]
-cppgo check ...        # the same run, writes nothing, exits 1 when a file is stale
-```
-
-## `this` adjustment, multiple inheritance and virtual bases
-
-A generated thunk takes the pointer the Go side holds at its **exact static type**. Every conversion
-between types is written in C++ and compiled where the layout is known:
-
-- upcast: `static_cast<Base *>(derived)` — a constant offset for a non-virtual base, a vtable lookup
-  for a virtual base;
-- downcast: `dynamic_cast<Derived *>(base)` — `nil` when the object is not a `Derived`; the Go
-  helper returns `(*Derived, bool)`;
-- method calls: `object->method()` with `object` at the declared type, so the compiler emits the
-  correct `this` adjustment and, for a virtual method, the correct dispatch.
-
-The model exposes what the generator needs to choose these conversions: every record's base list
-with access, virtual-base flag and offset (`-1` when the offset is only known at run time), and each
-method's declaring class. Go never adds an offset by hand.
-
-## Errors and exceptions
-
-**Every call that can throw returns an `error` as its last result.** The rule is exact:
-
-- a **direct** binding is `noexcept` by construction (a non-`noexcept` function goes through a thunk)
-  and performs no marshalling, so its Go signature has no error. Constructors and `Close` keep theirs
-  for allocation and lifetime failures;
-- a **thunk** binding returns an error when the C++ call is not `noexcept`, **or** when the thunk
-  itself can throw while marshalling (constructing a `std::string`, `vector`, `array`, optional or
-  smart pointer, copying a non-POD, or allocating a result buffer can always raise `bad_alloc`). A
-  thunk over a `noexcept` function whose arguments are scalars, pointers or PODs cannot throw, and
-  its Go signature has no error:
-  `func Translate(p Point, dx, dy float64) Point`;
-- a **destructor** is `noexcept` unless declared otherwise; `Close() error` always exists and reports
-  `cppgo.ErrClosed` for a dead receiver and any exception a `noexcept(false)` destructor raises.
-
-How a failure arrives:
-
-- the thunk wraps the call in `try { … } catch (const std::exception &e) { … } catch (...) { … }`;
-- the message is stored in a generated thread-local string and exported as
-  `extern "C" const char *cppgo_last_error()` in `zz_cppgo_shim.h`;
-- a thunk that can fail returns a non-zero `int32_t` status, and the value, if any, is written
-  through an out-pointer; a thunk that cannot throw returns its value directly;
-- the generated Go wrapper reads the message, wraps it in `*cppgo.CallError{Symbol, Err}`, and
-  returns it. The error formats as `cppgo: mathx::describe: <message>`.
-
-The direct ABI has no handler, which is why only `noexcept` functions may use it: an exception
-escaping a NOSPLIT trampoline would unwind into a Go frame that has no handler.
-
-The **`-status` convention** remains available for C++ APIs that report failures as a 32-bit return
-code: `0` means success, non-zero means the library stored a message in `cppgo_last_error()`. The Go
-binding returns `error` instead of the integer and wraps the message in `*cppgo.CallError`. It is
-independent of, and can be combined with, exceptions.
+## Errors
 
 Typed errors: `*OpenError`, `*SymbolError`, `*NativeError` (the message itself), `*CallError` (which
-wraps the native error), and the sentinel `ErrClosed`.
+wraps the native error), `*callback.Panic`, and the sentinel `ErrClosed`. The `-status` convention
+remains available for C++ APIs that report failures as a 32-bit return code: the Go binding returns
+`error` instead of the integer and wraps the message in `*CallError`.
 
 ## The ABI the direct path calls
 
-Itanium C++ ABI on SysV AMD64, which is what the generator validates against and the trampoline
-implements:
+Itanium C++ ABI on SysV AMD64, which the generator validates against and the trampolines implement:
 
-- Integer and pointer arguments: `RDI, RSI, RDX, RCX, R8, R9` in order.
-- Float arguments: `XMM0…XMM7` in order; the two files are independent.
-- A hidden sret pointer, when there is one, takes the first INTEGER slot; `this` takes the next;
-  the explicit arguments follow.
-- Result: `RAX` for integer and pointer, `XMM0` for float, up to two registers for a 16-byte POD.
-- `this` is the object's address. `const` members are ordinary calls; the `K` in the mangling is
-  reported, never assembled by hand.
-- Argument registers are not spilled to the stack by the generated trampoline: more than 6 INTEGER
-  or 8 SSE slots, or a by-value aggregate outside the 16-byte register class, routes the binding to
-  a thunk, which takes a pointer to an argument block or to the value instead. This is a carrier
-  decision, not a rejection. **Results** are different: an sret result is written through the hidden
-  pointer into Go storage.
-- A slice or string parameter is `(pointer, length)`, pointer first, adjacent in the integer file.
-- The callee may not retain a pointer into Go memory after the call returns, and the caller keeps
-  the memory alive with `cppgo.KeepAlive`.
+- INTEGER and pointer arguments: `RDI, RSI, RDX, RCX, R8, R9`; SSE: `XMM0…XMM7`, independent banks;
+- a hidden sret pointer takes the first INTEGER slot; `this` takes the next; the rest follow;
+- results: `RAX` for integer and pointer, `XMM0` for float, up to two registers for a 16-byte POD;
+- a slice or string parameter is `(pointer, length)`, pointer first, adjacent in the integer file;
+- argument registers are not spilled: more than 6 INTEGER or 8 SSE slots, or a by-value aggregate
+  outside the register class, is a shim binding. **Results** are different: an sret result is written
+  through the hidden pointer into Go storage.
+
+The reentrant carrier has one extra rule, measured the hard way: `runtime.cgocall` reaches the
+register-loading wrapper by a tail jump, so the stack is 16-aligned at its entry (not 8 mod 16 as
+after an ordinary `CALL`), and the target must be called without an extra adjustment. A callee
+compiled with aligned SSE spills faults immediately if this is wrong;
+`TestCallReentrantGivesTheCalleeAnAlignedStack` is the regression test.
 
 ## The trampoline
 
 Measured 2026-11-03, Go 1.27, an 8-core x86-64 CPU pinned to 964 MHz with boost disabled — the
-absolute nanoseconds are inflated by roughly 4.5×, so **cycles and ratios are the honest numbers**:
+absolute nanoseconds are inflated by roughly 4.5×, so cycles and ratios are the honest numbers:
 
 | path | ns/op | ~cycles |
 |---|---|---|
@@ -727,9 +755,10 @@ absolute nanoseconds are inflated by roughly 4.5×, so **cycles and ratios are t
 | **cppgo trampoline, direct** | **13.9** | **13** |
 | cppgo trampoline, stack switch | 14.9 | 14 |
 
-The direct path is ~7.5× cheaper than cgo and within ~2× of a plain Go call. A thunk adds one C++
-call frame inside the library; the Go-side cost is the same trampoline. `make bench` reproduces the
-numbers; the README and the site quote them with the clock caveat.
+Measured again 2026-11-08 on the same machine with the carriers side by side
+(`go test -bench . -benchtime 200000x`): direct 15.9 ns/op, reentrant 151 ns/op (one 16-byte
+allocation per call), callback round trip 481 ns/op. A shim thunk adds one C++ call frame inside the
+library; the Go-side cost is the same trampoline.
 
 One signature, as generated:
 
@@ -747,132 +776,134 @@ TEXT ·callNorm(SB), NOSPLIT, $0-24
 
 Rules that are not negotiable:
 
-- Arguments are read **before** SP is switched and the result is stored **after** it is restored;
-  `FP` is relative to SP.
-- `NOSPLIT`, zero frame, no allocation, no Go memory touched, no callback into Go.
-- `ProbeStack()` runs before the trampoline, from the same goroutine and at or above the foreign
-  call. Raising the stack pointer's distance from `stack.lo` is done by entering an assembly
-  function with a 32 KiB frame, not a Go frame with a 32 KiB local array (the compiler zeroes it,
-  ~1.2 µs measured).
+- arguments are read **before** SP is switched and results are stored **after** it is restored;
+- `NOSPLIT`, zero frame, no allocation from the trampoline itself, no Go memory touched;
+- `ProbeStack()` runs before the trampoline, **from the same goroutine and before any pointer into the
+  caller's frame is taken**: the probe grows the stack, which moves that frame. This is measured, not
+  theoretical — it is what broke `internal/shim`'s first draft, where the probe ran after the out
+  pointers were formed, and it is why a `t.Run` subtest (a new goroutine) probes again;
+- correctness evidence, required on every run: a NOSPLIT asm function is never asynchronously
+  preempted, GC torture with `GOGC=1` under 32 goroutines, SIGPROF/SIGURG torture, `-race`, and
+  `GOMAXPROCS=1`.
 
-Correctness evidence, all still required on every run: a NOSPLIT asm function is never
-asynchronously preempted (`runtime.isAsyncSafePoint` is false for any asm frame and for any
-`sp < gp.stack.lo`), GC torture with `GOGC=1` and `runtime.GC()` under 32 goroutines, SIGPROF/SIGURG
-torture, `-race`, and `GOMAXPROCS=1`. `//go:linkname runtime.asmcgocall` is rejected by the linker;
-do not try it. The documented trade-off stands: a foreign call in flight delays a GC cycle by up to
-its duration (2.0 ms call ⇒ 1.1 ms worst cycle), because the P is not released.
+## Loading
 
-## Loading: purego stays
+`github.com/ebitengine/purego` is the only third-party runtime dependency, and this is deliberate: it
+solves `dlopen`/`dlsym` without cgo by importing `internal/fakecgo`, which is larger and less
+forgiving than any loader we would write.
 
-`github.com/ebitengine/purego` is the only third-party runtime dependency, and this is deliberate.
-Do not replace it.
-
-Reimplementing `dlopen`/`dlsym` without cgo means `//go:cgo_import_dynamic` directives, per-platform
-assembly stubs, and a dynamic loader that breaks quietly when a libc changes symbol versioning. The
-decisive reason is not familiarity: a dynamically linked Go binary does not have a libc thread
-control block, so any libc code reading thread-local storage — `errno`, `dlerror`,
-`pthread_getspecific` — runs against a TCB glibc never initialised. purego solves that in
-`internal/fakecgo`, which its non-cgo path imports on purpose. Writing our own loader would mean
-owning fakecgo too, which is larger and less forgiving than the loader.
-
-We use only `purego.Dlopen`/`Dlsym` — never purego's call path. The long tail is the generated
-shim, not somebody else's calling convention: everything the trampoline cannot call becomes C++ in
-`zz_cppgo_shim.cpp`, so there is exactly one convention to reason about. Our differentiator is not
-the loader: it is knowing at generation time what every binding compiles to at all.
+We use only `purego.Dlopen`/`Dlsym`, never purego's call path — with one dependency to state plainly:
+the reentrant carrier calls `runtime.cgocall` by linkname, and that function throws
+`cgocall unavailable` unless the cgo runtime has been initialised. `runtime/cgo` does it under
+`CGO_ENABLED=1`, and purego's fakecgo does it under `CGO_ENABLED=0`; a program that uses a
+callback-capable binding without either would fault at the first call. Importing the cppgo runtime
+package pulls purego in, so every generated package satisfies this by construction, and the
+runtime's own test asserts it.
 
 ## Generation: input, selection, evidence, output
 
-- **`-header`** is the C++ header to bind; it may be repeated. **`-package`** is the Go package name.
-  **`-library`** is the shared object: the name `Open("")` loads, and, when it is a readable file,
-  the ELF symbol table every **direct** binding is checked against.
-- **Selection.** With no `-bind`, every public declaration in the headers is a root. Every type that
-  appears in a bound signature is generated too (the type closure), even when it is not a root.
-  `-bind` adds a root (a namespace, a class or struct, a member, or a function); `-exclude` removes
-  one. They name declarations; they never describe a signature. An unmatched `-bind` or `-exclude`
-  is an error, so a typo cannot silently shrink the API.
+- **Input.** `-header` (repeatable), `-package`, `-library`, `-compile-commands`, `-bind`,
+  `-exclude`, `-instantiate`, `-rename`, `-status`, and — **planned, not accepted by today's
+  `cppgo gen`** — `-errors cppgo.yaml`, the package's error configuration. When the emitter debt
+  above is paid it becomes a generation input like the headers, so `cppgo check` fails when it changes
+  without a regeneration; until then the only code that reads it is `internal/errormap`'s tests.
 - **Compilation flags** come from `compile_commands.json` and `.clangd`, in clangd's order, never
-  invented: `-compile-commands` explicitly, else the nearest database walking up from the header
-  (honouring `CompileFlags.CompilationDatabase`), else `.clangd`'s `CompileFlags.Add/Remove/Compiler`.
-  The fallback `-std=c++17 -I<header dir>` exists but the report says it was assumed.
+  invented. A database entry's relative paths are rebased against the entry's `directory` — the
+  include search paths (`-I`, `-isystem`, `-iquote`, `-idirafter`) and the included files
+  (`-include`, `-imacros`), in both the joined and the separated spelling. clangd does this; libclang
+  resolves a relative path against cppgo's working directory instead, which is a different tree and
+  fails silently: the parse cannot see the header's declarations, and a declaration that resolves
+  some other way is what gets bound. That is v3's phantom binding — on the `dyn` fixture, a relative
+  `-Iinclude` produced `dyn::offset(int&, double, double)` while the real `dyn::offset(Point&, …)` was
+  never seen — and v4
+  rebases the paths in `rebaseArgs`, measured by `TestRebaseArgs`,
+  `TestDiscoverRebasesDatabaseIncludePaths` and
+  `TestProjectSeesTheDeclarationThroughARebasedIncludePath` (the last one fails without the rebase).
 - **Evidence.** libclang answers types, sizes, offsets, visibility, inline-vs-out-of-line, virtual,
-  exception specification, defaulted/deleted special members, template arguments and base lists.
-  The ELF tier is a **cross-check** for direct bindings: `internal/cxx.DefinedDynamicSymbols` reads
-  the `.dynsym` of `-library` and the generator fails when a direct binding's mangled name is not
-  exported. Thunk symbols exist only after the user compiles the generated shim; the shim itself is
-  parsed by libclang before it is written, and `Open` resolves every thunk at load time.
-- **Output.** `zz_cppgo.gen.go` (the API), `zz_cppgo_amd64.s` (the trampolines), `zz_cppgo_shim.h`
-  and `zz_cppgo_shim.cpp` (the thunks). The shim is compiled by the user's normal C++ build. The
-  generated Go file carries the exact invocation that produced it, so the regeneration command lives
-  in the repository.
-- **Determinism.** The same inputs produce byte-identical output regardless of file-system order or
-  of how many headers were parsed; bindings are sorted by qualified name and thunk names come from a
-  stable hash of the qualified signature. `cppgo check` is the CI gate, and the golden files under
-  `internal/gen/testdata` are its unit-level equivalent.
-- **Comments.** The C++ doc comment, when there is one, becomes the Go doc comment. Every binding
-  then carries exactly one evidence line —
-  `// C++: mathx::Vector::norm() const, _ZNK5mathx6Vector4normEv` — and, when the ELF cross-check
-  ran, it ends `, verified against libmathx.so`. Nothing else is generated into a comment: the ABI
-  register layout belongs in this file, not repeated on every wrapper.
+  exception specification, defaulted/deleted special members, template arguments and base lists. The
+  ELF tier is a cross-check for direct bindings against the library's `.dynsym`.
+- **Output.** `zz_cppgo.gen.go` (the API), `zz_cppgo_amd64.s` (the trampolines), `zz_cppgo_shim.cpp`
+  (the thunks), and the compiled shim object. The generated Go file carries the exact invocation that
+  produced it.
+- **Shim build step.** cppgo compiles the shim itself: the same compiler family as the library, the
+  discovered flags, `-shared` (or an object for a static link), linked against the library. The
+  compiler, its version, its standard library and `_GLIBCXX_USE_CXX11_ABI` are recorded in the
+  generated file. A compile error is a generation error with the compiler's message, never a symbol
+  that fails at the first call.
+- **Determinism.** The same inputs produce byte-identical Go and C++; bindings are sorted by qualified
+  name and thunk names come from a stable hash of the qualified signature. `cppgo check` is the CI
+  gate, and the golden files under `internal/gen/testdata` are its unit-level equivalent.
+- **Comments.** The C++ doc comment becomes the Go doc comment, and every binding carries exactly one
+  evidence line — `// C++: user::Circle::area() const, _ZNK4user6Circle4areaEv` — and, when the ELF
+  cross-check ran, it ends `, verified against libuser.so`.
 
-**Validation is coverage, not permission.** For every binding the generator proves that a carrier
-exists and that the code generated for it compiles: a direct symbol is cross-checked against the
-library's dynamic symbols, a thunk is parsed through libclang with the same flags. Nothing is judged
-acceptable or unacceptable; the only errors left are the inputs below, which name no Go construct and
-come with what the user supplies.
+## Hard limits, measured
+
+These are the places where the contract says "no", with the measurement behind it:
+
+1. **An exception with no C++ frame terminates the process.** Three child-process tests in
+   `internal/callback` measure it: from a direct call, after a callback returned, and through a Go
+   callback frame. The only support is the shim's `try`/`catch`.
+2. **A callback requires the reentrant carrier.** A callback reached through the direct trampoline
+   dies with `fatal error: morestack on g0` (`TestCallbackOnTheDirectTrampolineIsFatal`).
+3. **A callback carries at most six INTEGER and eight SSE arguments and one register result.** The
+   trampoline reads the register file only.
+4. **`runtime.cgocall` needs the cgo runtime initialised** (runtime/cgo or purego's fakecgo), stated
+   above.
+5. **A `std::` layout is only ever in C++.** The one layout the Go side can be forced to use — a
+   `std::function` built without a C++ factory — needs the library to export two template
+   instantiations; v4 avoids it by having the shim construct the object.
+6. **A macro that is the API is not bindable**, because libclang sees expansions.
+7. **A template instantiation that no one asked for does not exist.** The two-phase flow makes the
+   failure a load-time error naming the line to add.
+8. **`long double` and `__int128` have no Go value type.**
+9. **The shim and the library must share a C++ ABI and a standard library.** Mixing libstdc++ and
+   libc++ is a generation error, not a runtime surprise.
 
 ## What remains a generation error
 
-Only **input that names no Go construct**, each with the thing the user supplies to make it
-representable. None of these is "this construct cannot be bound":
+Only input that names no Go construct, each with the thing the user supplies to make it
+representable:
 
 | input | the error names | what the user supplies |
 |---|---|---|
-| a template selected as a root (or reached) with no concrete instantiation | the template and the parameter that is unknown | `-instantiate 'mathx::Box<int>'` |
-| a member function template selected (or reached) with no instantiation | the member template and its parameters | `-instantiate 'mathx::Box<int>::convert<double>'` |
+| a template selected as a root with no concrete instantiation | the template and the parameter that is unknown | `-instantiate 'Box<int>'` |
 | two bindings that map to one Go name and no suffix separates them | both declarations | `-rename '<qualified signature>=<GoName>'` |
-| `long double` / `__int128` in a signature | the parameter or result | a C++ wrapper with a representable type |
+| `long double` / `__int128` in a signature | the parameter or result | a wrapper with a representable type |
 | an incomplete type used where a value is needed | the type and the use | include the definition |
-
-There is no flag that emits an unvalidated binding. Every binding has a carrier, every thunk is
-parsed before it is written, and every symbol is resolved at `Open`.
+| a callback taking more than six INTEGER or eight SSE arguments | the sixth argument | take a pointer to a struct |
+| a function-like macro that is the whole API | the macro | a function |
+| a shim that does not compile | the compiler's diagnostic, mapped to the binding | fix the header or the flags |
 
 ## Not part of this design
 
-- the Go directive DSL (`//cppgo:library`, `//cppgo:header`, `//cppgo:class`, `//cppgo:ctor`,
-  `//cppgo:dtor`, `//cppgo:method`, `//cppgo:function`, `//cppgo:external`, `//cppgo:abi`) and the
-  stub file it was rewritten into; the repo's bindings come from C++ only;
-- a **hand-written** `extern "C"` shim layer. The shim is now generated infrastructure and is
-  mandatory wherever the direct ABI does not reach; there is no user-authored shim mode;
-- the hand-written ABI annotation tier and any flag that emits a binding libclang did not
-  understand;
+- the **user's build compiling generated code**. v3 did this and ADR-0002 reverses it;
+- the Go directive DSL as a *primary* mode: `//cppgo:library`, `//cppgo:header`, `//cppgo:class`,
+  `//cppgo:method` and friends survive only as the fallback declaration file's syntax;
+- a hand-written `extern "C"` shim layer. The shim is generated infrastructure, compiled by cppgo;
 - `cppgo.Handle` in a generated API.
 
-Non-goals: callbacks from C++ into Go (a reverse-direction feature, not a type mapping, and outside
-the construct list this contract covers); arm64 and Windows code generation (the Go package still
-builds; the generator does not emit trampolines for an unsupported target and the error names it).
+Non-goals: arm64 and Windows code generation (the Go package still builds; the generator does not emit
+trampolines for an unsupported target and the error names it).
 
 ## Tests and coverage
 
-- `make test` runs two passes, both required:
-  `CGO_ENABLED=0 go test -count=1 ./...` (the no-cgo contract) and
-  `CGO_ENABLED=1 go test -race -count=1 ./...` (the race detector; the toolchain rejects `-race`
-  with cgo off). Coverage is collected on the cgo-enabled pass with `-covermode=atomic`.
+- `make test` runs two passes, both required: `CGO_ENABLED=0 go test -count=1 ./...` (the no-cgo
+  contract) and `CGO_ENABLED=1 go test -race -count=1 ./...` (the race detector; the toolchain rejects
+  `-race` with cgo off). Coverage is collected on the cgo-enabled pass with `-covermode=atomic`.
 - Table-driven tests with `t.Run` per case, `testify` `require`/`assert`, `t.Parallel()` where cases
-  are independent. Concurrency tests run under `-race` and `GOMAXPROCS=1` with at least 32
-  goroutines.
+  are independent. Concurrency tests run under `-race` and `GOMAXPROCS=1` with at least 32 goroutines.
 - Coverage gate: **≥ 99%** on `./...`, measured by `./scripts/coverage-gate.sh`. The gate's
-  exclusions are exactly the three it prints, each with its reason:
-  `zz_cppgo*.go` (generator output), `internal/gen/testdata/` (fixtures the generator writes and
-  diffs), and `internal/testlib/` (test scaffolding: it compiles the C++ fixture library other tests
-  load and has no tests of its own). **No hand-written production package is excluded**, and `cmd/`
-  is measured like everything else — which is why `run(args, stdout, stderr) int` carries all the
-  CLI logic and `main` is one statement. The contract and the script must name the same list; a
-  fourth exclusion is a contract change, not a local edit.
-- **Carrier coverage is a test**: every binding in the fixture set is asserted to have a carrier,
-  and the golden output is compiled and run for both carriers.
-- **The generated shim is compiled by the test suite** (`g++`/`clang++` with the fixture's flags),
-  so "generation-time validation" is measured against a real compiler, not against a model.
-- Every error path has a test: missing library, missing thunk, missing symbol, empty string, closed
-  library, an exception translated into a message, a status function whose message is empty.
+  exclusions are the three it prints, each with its reason: `zz_cppgo*.go` (generator output),
+  `internal/gen/testdata/` (generated fixtures), and `internal/testlib/` (test scaffolding). No
+  hand-written production package is excluded, and `cmd/` is measured like everything else.
+- **Carrier coverage is a test**: every binding in the fixture set is asserted to have a carrier, and
+  the golden output is compiled and run for both carriers.
+- **The shim is compiled by the test suite**, which is how "cppgo compiles the shim" is measured
+  against a real compiler rather than against a model: `internal/shim` builds the user's library and
+  the shim as two objects and asserts the artifact model (no cppgo symbol in the user's library, the
+  thunks in the shim).
+- **The callback mechanism is measured in both CGO modes**, including the child-process tests whose
+  expected outcome is a fatal error.
 - The runtime has a test that fails if `internal/cxx` appears in the root package's dependency graph,
   so the two layers cannot quietly merge.
