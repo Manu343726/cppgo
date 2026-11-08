@@ -5,7 +5,7 @@ name: CI
 # Why an image at all: CI used to inherit its toolchain from `ubuntu-latest`, and when that
 # image stopped shipping libclang, internal/cxx silently skipped itself, its coverage vanished
 # and the 99% gate failed for a reason that had nothing to do with the code. The Dockerfile
-# pins Go, g++ 14, clang/libclang 19, golangci-lint, hugo, binutils and make instead, so the
+# pins Go, g++ 14, clang/libclang 22, golangci-lint, hugo, binutils and make instead, so the
 # environment is a reviewed artefact.
 #
 # ---------------------------------------------------------------------------
@@ -26,11 +26,16 @@ name: CI
 #    changed recipe gets a new tag (the new commit's sha), built, run, and only then used here.
 #    `latest` exists beside it for humans reading the registry; no workflow may run in it.
 #
-#    The image is published by hand today (issue #13: the exact image GHCR already carried was
-#    transferred and pushed, digest `sha256:fcfece09e8ab…`). Publishing it on a `Dockerfile`
-#    change is not automated yet — when it is, it lands in `.forgejo/workflows/image.yml` and
-#    this block gains one link to it. Until then, a recipe change means: build, push under the
-#    new recipe tag, run this workflow in it, and only then point the line below at it.
+#    The image is published by hand today, and the tag below names the last build that was
+#    pushed: it was built from this repository's `Dockerfile` when the recipe moved to clang 22
+#    (trixie's archive stops at 19, and the tree binds `clang_getOffsetOfBase`, which 19 does
+#    not export — the reason is in the `Dockerfile`'s base note, which owns it). Its index
+#    digest is `sha256:99ed52b665833c45236cfeb18f7aea1783b8ce8f546fb518596bf9b54d9fc7d4`.
+#
+#    Publishing on a `Dockerfile` change is not automated yet: a change lands in
+#    `.forgejo/workflows/image.yml` on the day it does, and this block gains one link to it.
+#    Until then, a recipe change means: build, push under the new recipe tag, run this workflow
+#    in it, and only then point the line below at it.
 #
 # 2. THE RUNNER LABEL.
 #
@@ -93,6 +98,12 @@ name: CI
 # `make fmt-check`, the two test passes (`CGO_ENABLED=0`, then `-race` with atomic coverage), the
 # coverage gate at 99.0% and the examples build. Nothing here weakens a Makefile target or the
 # threshold, and the suite is the same one `.github/workflows/ci.yml` runs.
+#
+# The order of the steps is a reporting decision and not a gate decision. The two test passes
+# and the coverage gate run **before** `golangci-lint`, because lint is red on `main` today
+# (issue #18: 27 `misspell` and 1 `unused` under the config the repository ships) and a style
+# finding in the fourth step otherwise hides whether the suite and the number are green. Every
+# gate keeps its own failure: the job still fails at the first step that fails, whichever it is.
 # ---------------------------------------------------------------------------
 
 on:
@@ -117,7 +128,7 @@ env:
   # coverage profile and the gate then fails with a number nobody can explain. Require libclang
   # instead of skipping.
   CPPGO_REQUIRE_LIBCLANG: '1'
-  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:1914e8c
+  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:7b27511
 
 jobs:
   test:
@@ -131,7 +142,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:1914e8c
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:7b27511
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}
@@ -174,9 +185,6 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: golangci-lint
-        run: golangci-lint run --timeout=8m
-
       - name: gofmt (make fmt-check)
         run: make fmt-check
 
@@ -195,6 +203,12 @@ jobs:
 
       - name: Build the examples
         run: ./scripts/build-examples.sh
+
+      - name: golangci-lint
+        # Last on purpose: the suite and the coverage number are the report a reader needs, and
+        # a style finding must not be able to hide them. It is still a gate — the job fails here
+        # like anywhere else.
+        run: golangci-lint run --timeout=8m
 
       - name: The run's report
         # Forgejo 17 persists `$GITHUB_STEP_SUMMARY` and renders it above the job's log, so this is
@@ -233,7 +247,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:1914e8c
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:7b27511
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}

@@ -6,7 +6,7 @@ name: CI
 # Why: the runner used to supply the toolchain, and when its image stopped
 # shipping libclang, internal/cxx silently skipped itself and the 99% coverage
 # gate failed for a reason that had nothing to do with the code. The image pins
-# Go, g++ 14, clang/libclang 19, golangci-lint and hugo (see Dockerfile), so the
+# Go, g++ 14, clang/libclang 22, golangci-lint and hugo (see Dockerfile), so the
 # environment is a reviewed artefact rather than whatever the runner has today.
 #
 # A single Go version is tested on purpose: bumping Go is a Dockerfile ARG
