@@ -319,7 +319,7 @@ func (tu *TU) extractRecords() {
 
 // visit is the clang_visitChildren callback for records and enums.
 func (e *recordExtractor) visit(cursor, parent CXCursor) int32 {
-	if e.l.f.locationIsInSystemHeader(e.l.f.getCursorLocation(cursor)) != 0 {
+	if !e.tu.selectable(cursor) {
 		return visitContinue
 	}
 	switch kind := e.l.f.getCursorKind(cursor); kind {

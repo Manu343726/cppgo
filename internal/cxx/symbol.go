@@ -1,6 +1,7 @@
 package cxx
 
 import (
+	"path/filepath"
 	"strings"
 )
 
@@ -428,7 +429,7 @@ func (e *extractor) visit(cursor, parent CXCursor) int32 {
 // collect turns one function cursor into a Symbol.
 func (e *extractor) collect(cursor, parent CXCursor) {
 	loc := e.l.f.getCursorLocation(cursor)
-	if e.l.f.locationIsInSystemHeader(loc) != 0 {
+	if !e.tu.selectable(cursor) {
 		// std:: and friends: not ours to bind, and they would bury the
 		// interesting symbols in noise.
 		return
@@ -979,4 +980,35 @@ func (l *Libclang) locationValues(loc CXSourceLocation) (string, int) {
 	// clang_getFileName(NULL) is documented to return an empty string, so no
 	// null check is needed here.
 	return l.str(l.f.getFileName(file)), int(line)
+}
+
+// selectable reports whether a declaration belongs to the API this unit binds:
+// everything outside a system header, plus the system headers under the unit's
+// roots. See ParseTranslationUnitIn for why the roots exist.
+func (tu *TU) selectable(cursor CXCursor) bool {
+	loc := tu.l.f.getCursorLocation(cursor)
+	if tu.l.f.locationIsInSystemHeader(loc) == 0 {
+		return true
+	}
+	file, _ := tu.l.locationValues(loc)
+	if file == "" {
+		return false
+	}
+	if abs, err := filepath.Abs(file); err == nil {
+		file = abs
+	}
+	file = filepath.Clean(file)
+	for _, root := range tu.Roots {
+		if root == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		root = filepath.Clean(root)
+		if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
