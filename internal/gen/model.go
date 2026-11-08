@@ -254,6 +254,11 @@ type builder struct {
 	instantiateMatched []bool
 	verified           string
 	warnings           []string
+	// exported is the library's dynamic symbol table, read once, or nil when
+	// -library names no readable file. It is the evidence the carrier decision
+	// needs: a declaration with no visible definition is out of line only when
+	// the library exports its mangled name.
+	exported map[string]bool
 	// flags are the compilation flags the headers were parsed with. The shim
 	// self-check parses the generated translation unit with the same ones.
 	flags    []string
@@ -275,6 +280,13 @@ func build(cfg Config) (*packageModel, error) {
 	}
 	b := &builder{cfg: cfg, records: map[string]*recordModel{}, instantiateMatched: make([]bool, len(cfg.Instantiate))}
 	if err := b.load(); err != nil {
+		return nil, err
+	}
+	// The library's dynamic symbol table is read before anything is classified:
+	// whether a declaration has an out-of-line body is what decides between the
+	// two carriers, and a header that only declares a function does not prove
+	// one.
+	if err := b.loadExporteds(); err != nil {
 		return nil, err
 	}
 	if err := b.rejectUnimplemented(); err != nil {
@@ -1058,7 +1070,7 @@ func (b *builder) chooseCarrier(binding *binding) {
 	case !sym.IsNoExcept:
 		binding.Carrier = thunk
 		binding.Reason = "not noexcept: an exception would unwind into Go"
-	case !sym.HasOutOfLineBody:
+	case !b.outOfLine(sym):
 		binding.Carrier = thunk
 		binding.Reason = "inline body: the library exports no symbol"
 	case sym.HasSret:
@@ -1067,6 +1079,11 @@ func (b *builder) chooseCarrier(binding *binding) {
 	default:
 		binding.Carrier = direct
 		binding.Reason = "noexcept, out of line, not virtual, register class"
+		if !sym.HasOutOfLineBody {
+			// The header only declared it; the library's dynamic symbol table
+			// proved the definition and the external linkage.
+			binding.Reason = "noexcept, not virtual, register class; the library exports the symbol"
+		}
 	}
 	if binding.Carrier == thunk {
 		// A standard-library argument is marshalled inside the thunk, and that
@@ -1165,10 +1182,13 @@ func (m *packageModel) report() []string {
 	return lines
 }
 
-// crossCheck verifies every direct binding against the library's dynamic symbol
-// table when -library names a readable file. Thunk symbols exist only after the
-// user compiles the generated shim, so they are not checked here.
-func (b *builder) crossCheck() error {
+// loadExporteds reads the dynamic symbol table of -library once. It is the
+// evidence the carrier decision needs: a header that only declares a function
+// does not prove an out-of-line body, and the library does. A -library that is
+// not a readable file (a bare loader name, or a header-only library with no
+// object at all) contributes nothing, and the declarations are then routed by
+// what the header itself shows.
+func (b *builder) loadExporteds() error {
 	info, err := os.Stat(b.cfg.Library)
 	if err != nil || info.IsDir() {
 		return nil
@@ -1177,15 +1197,34 @@ func (b *builder) crossCheck() error {
 	if err != nil {
 		return fmt.Errorf("cppgo: %s: %w", b.cfg.Library, err)
 	}
-	exported := make(map[string]bool, len(names))
+	b.exported = make(map[string]bool, len(names))
 	for _, name := range names {
-		exported[name] = true
+		b.exported[name] = true
+	}
+	return nil
+}
+
+// outOfLine reports whether a dynamic symbol exists for the declaration: the
+// header saw a definition, or the library exports the mangled name. Both halves
+// matter and both are kept: a header-only declaration whose symbol happens to
+// be exported is direct, and a declaration whose definition the shim has but the
+// library does not is not.
+func (b *builder) outOfLine(sym cxx.Symbol) bool {
+	return sym.HasOutOfLineBody || (sym.Mangled != "" && b.exported[sym.Mangled])
+}
+
+// crossCheck verifies every direct binding against the library's dynamic symbol
+// table when -library names a readable file. A thunk is cppgo's own symbol,
+// emitted into the shim the generator compiles, so it is not checked here.
+func (b *builder) crossCheck() error {
+	if b.exported == nil {
+		return nil
 	}
 	for _, binding := range b.bindings {
 		if binding.Carrier != direct {
 			continue
 		}
-		if !exported[binding.Symbol] {
+		if !b.exported[binding.Symbol] {
 			return fmt.Errorf("cppgo: %s: the direct binding's symbol %s is not exported by %s", displaySignature(binding.sym), binding.Symbol, b.cfg.Library)
 		}
 	}
