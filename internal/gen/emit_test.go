@@ -176,7 +176,17 @@ func TestEveryBindingHasACarrier(t *testing.T) {
 	for name, cfg := range goldenFixtures() {
 		model, err := build(cfg)
 		require.NoError(t, err, name)
-		require.NotEmpty(t, model.bindings, name)
+		if len(model.bindings) == 0 {
+			// A pure two-phase fixture has no concrete binding: its bindings
+			// are the generic models, which the shim instantiates later.
+			require.NotEmpty(t, model.templates, name)
+			bindings := 0
+			for _, tmpl := range model.templates {
+				bindings += len(tmpl.bindings())
+			}
+			require.NotEmpty(t, bindings, name)
+			continue
+		}
 		for _, binding := range model.bindings {
 			assert.NotEmpty(t, binding.Reason, "%s: %s", name, binding.sym.QualifiedName)
 			assert.NotEmpty(t, binding.Symbol, "%s: %s", name, binding.sym.QualifiedName)

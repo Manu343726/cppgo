@@ -13,6 +13,7 @@ import (
 func goldenFixtures() map[string]Config {
 	return map[string]Config{
 		"mathx":     mathxConfig(),
+		"box":       fixtureConfig("box", "box.hpp"),
 		"types":     fixtureConfig("types", "types.hpp"),
 		"overloads": fixtureConfig("overloads", "overloads.hpp"),
 		"std":       fixtureConfig("std", "std.hpp"),

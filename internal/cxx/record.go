@@ -138,6 +138,10 @@ type Record struct {
 	TemplateName string
 	// TemplateArguments are the concrete arguments of a specialization.
 	TemplateArguments []TemplateArgument
+	// TemplateParameters are the parameters of a template pattern, in
+	// declaration order. They are empty for a non-template record and for a
+	// specialization, whose arguments are in TemplateArguments instead.
+	TemplateParameters []TemplateParameter
 	// SizeBytes is sizeof, or -1 when the layout is not known (a template, an
 	// incomplete type, or a record with a member whose layout libclang could
 	// not complete).
@@ -379,7 +383,16 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 	if isTemplate {
 		// The pattern's layout and field types depend on the parameter: there
 		// is nothing to read out of it, and pretending otherwise would put a
-		// T-sized field in a Go struct.
+		// T-sized field in a Go struct. The parameter list and the fields are
+		// still read, because the generic API has to reject a public field it
+		// cannot expose and name the type parameters a specialization replaces.
+		rec.TemplateParameters = e.l.templateParameters(cursor)
+		_ = e.l.visit(cursor, func(child, parent CXCursor) int32 {
+			if e.l.f.getCursorKind(child) == cursorFieldDecl {
+				rec.Fields = append(rec.Fields, e.collectField(child))
+			}
+			return visitContinue
+		})
 		return rec
 	}
 
@@ -1458,5 +1471,8 @@ func mergeRecord(into *Record, from Record) {
 	}
 	if len(into.TemplateArguments) == 0 {
 		into.TemplateArguments = from.TemplateArguments
+	}
+	if len(into.TemplateParameters) == 0 {
+		into.TemplateParameters = from.TemplateParameters
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"testing"
 
@@ -351,4 +352,111 @@ func TestGenUncompilableShimFails(t *testing.T) {
 	assert.Contains(t, stderr, "bad::Bad<int>::get")
 	_, err := os.Stat(out)
 	assert.True(t, os.IsNotExist(err), "a failed generation must not create the output directory")
+}
+
+// buildHeader is the two-phase fixture header, absolute so the scan's module
+// directory can be anywhere.
+func buildHeader(t *testing.T) string {
+	t.Helper()
+	path, err := filepath.Abs(filepath.Join("..", "..", "internal", "gen", "testdata", "box", "box.hpp"))
+	require.NoError(t, err)
+	return path
+}
+
+// writeScanModule writes a throwaway module with a program that instantiates
+// the box fixture's generic API.
+func writeScanModule(t *testing.T, repo string) string {
+	t.Helper()
+	dir := t.TempDir()
+	gomod := "module cppgo-e2e\n\ngo 1.27.0\n\nrequire github.com/Manu343726/cppgo v0.0.0\n\nreplace github.com/Manu343726/cppgo => " + repo + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644))
+	sum, err := os.ReadFile(filepath.Join(repo, "go.sum"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.sum"), sum, 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "app"), 0o755))
+	program := `package app
+
+import "cppgo-e2e/box"
+
+func Run() error {
+	b, err := box.NewBox[int32](7)
+	if err != nil {
+		return err
+	}
+	return b.Close()
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "app", "app.go"), []byte(program), 0o644))
+	return dir
+}
+
+// TestBuildHelp covers the third command's own help.
+func TestBuildHelp(t *testing.T) {
+	for _, args := range [][]string{{"build", "-h"}, {"help", "build"}} {
+		code, stdout, stderr := exec(args...)
+		assert.Equal(t, exitOK, code)
+		assert.Contains(t, stdout, "usage: cppgo build")
+		assert.Contains(t, stdout, "two-phase")
+		assert.Empty(t, stderr)
+	}
+	code, stdout, _ := exec("help")
+	assert.Equal(t, exitOK, code)
+	assert.Contains(t, stdout, "cppgo build")
+}
+
+// TestBuildCollectsInstantiations runs the CLI's second phase against a real
+// module: gen writes the generic package, build scans the program and emits the
+// explicit instantiation.
+func TestBuildCollectsInstantiations(t *testing.T) {
+	if _, err := osexec.LookPath("go"); err != nil {
+		t.Skip("go is not in PATH")
+	}
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	moduleDir := writeScanModule(t, repo)
+	headerPath := buildHeader(t)
+	out := filepath.Join(moduleDir, "box")
+
+	mustExec(t, "gen", "-header", headerPath, "-package", "box", "-out", out)
+	stdout, _ := mustExec(t, "build", "-header", headerPath, "-package", "box", "-out", out,
+		"-scan", "./app", "-scan-dir", moduleDir)
+	assert.Contains(t, stdout, "template class ::box::Box<std::int32_t>;")
+	assert.Contains(t, stdout, "generic API")
+	assert.FileExists(t, filepath.Join(out, "libcppgo_box.so"))
+
+	// A check with the same scan compares the shim built for the same
+	// instantiations: the program is an input to the shim's source.
+	checked, _ := mustExec(t, "check", "-header", headerPath, "-package", "box", "-out", out,
+		"-scan", "./app", "-scan-dir", moduleDir)
+	assert.Contains(t, checked, "generated files are up to date")
+
+	code, _, stderr := exec("check", "-header", headerPath, "-package", "box", "-out", out,
+		"-scan", "./app", "-scan-dir", moduleDir, "-instantiate", "tmpl::Cell<int>")
+	assert.Equal(t, exitError, code)
+	assert.Contains(t, stderr, "names no instantiation")
+}
+
+// TestBuildScanErrors covers the second phase's failure through the CLI.
+func TestBuildScanErrors(t *testing.T) {
+	if _, err := osexec.LookPath("go"); err != nil {
+		t.Skip("go is not in PATH")
+	}
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	moduleDir := writeScanModule(t, repo)
+	headerPath := buildHeader(t)
+	out := filepath.Join(moduleDir, "box")
+	mustExec(t, "gen", "-header", headerPath, "-package", "box", "-out", out)
+
+	code, _, stderr := exec("build", "-header", headerPath, "-package", "box", "-out", out,
+		"-scan", "./absent", "-scan-dir", moduleDir)
+	assert.Equal(t, exitError, code)
+	assert.Contains(t, stderr, "scanning")
+}
+
+// TestBuildMissingHeader still reports manifest errors before the scan runs.
+func TestBuildMissingHeader(t *testing.T) {
+	code, _, stderr := exec("build")
+	assert.Equal(t, exitUsage, code)
+	assert.Contains(t, stderr, "-header is required")
 }

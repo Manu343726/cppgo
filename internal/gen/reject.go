@@ -73,11 +73,9 @@ func (b *builder) rejectUnimplemented() error {
 	for _, rec := range b.rawRecords {
 		switch {
 		case rec.IsTemplate:
-			if !b.instantiationRequested(rec.QualifiedName) {
-				return recordError(rec, pending(
-					"a class template is not a type until it is instantiated",
-					fmt.Sprintf("name a concrete instantiation with -instantiate '%s<...>'", rec.QualifiedName)))
-			}
+			// A class template is the generic API's input, not a record: the
+			// two-phase model in template.go decides what it can emit, and it
+			// names the construct it cannot.
 		case nested[rec.QualifiedName]:
 			return recordError(rec, pending(
 				"a type nested inside a record is not emitted by this build yet",
@@ -100,15 +98,11 @@ func (b *builder) rejectUnimplemented() error {
 	for _, sym := range b.symbols {
 		switch {
 		case sym.IsTemplate:
-			if sym.Kind != cxx.FreeFunc {
-				// A member of a class template pattern is read from the
-				// instantiation's body, and a member function template of a
-				// concrete record is named by Record.MemberTemplates above.
-				continue
-			}
-			return symbolError(sym, pending(
-				"a function template has no symbol until it is instantiated",
-				"expose a concrete instantiation as a non-template function"))
+			// A template is the generic API's input. A member of a class
+			// template pattern is read from the pattern's own symbols, and a
+			// member function template of a concrete record is named by
+			// Record.MemberTemplates above.
+			continue
 		case sym.IsOperator || sym.IsConversion:
 			return symbolError(sym, pending(
 				"operators and conversion operators are not emitted by this build yet",
@@ -127,17 +121,6 @@ func recordEnumError(enum cxx.Enum) error {
 	return declError(enum.DeclFile, enum.DeclLine, enum.QualifiedName, pending(
 		"enums are not emitted by this build yet",
 		"pass the value as its underlying integer at the C++ boundary"))
-}
-
-// instantiationRequested reports whether any -instantiate entry names an
-// instantiation of the template pattern called name.
-func (b *builder) instantiationRequested(name string) bool {
-	for _, entry := range b.cfg.Instantiate {
-		if strings.HasPrefix(entry, name+"<") {
-			return true
-		}
-	}
-	return false
 }
 
 // instantiationNamed reports whether an -instantiate entry names exactly this

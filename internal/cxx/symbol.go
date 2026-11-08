@@ -225,6 +225,10 @@ type Symbol struct {
 	Operator string
 	// IsConversion is true for a conversion operator (operator T).
 	IsConversion bool
+	// TemplateParameters are the parameters a free function template declares,
+	// in declaration order. They are empty for every other declaration; a
+	// member of a class template takes its owner's parameters instead.
+	TemplateParameters []TemplateParameter
 	// IsTemplate is true when the declaration is a template. It has no
 	// mangled name and no layout until it is instantiated.
 	IsTemplate bool
@@ -467,6 +471,11 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 		// written outside a class: only an instantiation does. Saying it has an
 		// exported body would send the generator looking for a dlsym target.
 		sym.HasOutOfLineBody = false
+		if e.l.f.getCursorKind(cursor) == cursorFunctionTemplate {
+			// A member of a class template takes its owner's parameters; a
+			// free function template declares its own.
+			sym.TemplateParameters = e.l.templateParameters(cursor)
+		}
 	}
 
 	funcType := e.l.f.getCursorType(cursor)
@@ -523,6 +532,9 @@ func mergeInto(into *Symbol, from Symbol) {
 	}
 	if len(into.Params) == 0 && len(from.Params) > 0 {
 		into.Params = from.Params
+	}
+	if len(into.TemplateParameters) == 0 {
+		into.TemplateParameters = from.TemplateParameters
 	}
 	if into.Result.Kind == "" {
 		into.Result = from.Result
