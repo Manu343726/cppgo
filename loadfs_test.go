@@ -718,6 +718,20 @@ func TestOpenFSCacheFailure(t *testing.T) {
 		assert.Contains(t, err.Error(), entry)
 	})
 
+	t.Run("uncreatable cache is not an insecure path", func(t *testing.T) {
+		// The other side of the sentinel's line: a cache root whose parent is
+		// a file is a creation failure, not a path OpenFS refuses to use.
+		base := filepath.Join(t.TempDir(), "cache-is-a-file")
+		require.NoError(t, os.WriteFile(base, []byte("not a directory"), 0o600))
+		t.Setenv("XDG_CACHE_HOME", base)
+		t.Setenv(cppgo.LibraryPathEnv, "")
+
+		_, err := cppgo.OpenFS(objects, embeddedMainName)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, cppgo.ErrInsecureCache)
+		assert.Contains(t, err.Error(), "create the cache directory")
+	})
+
 	t.Run("rename fails over a directory", func(t *testing.T) {
 		isolateCache(t)
 		loaded := openEmbedded(t, objects)
