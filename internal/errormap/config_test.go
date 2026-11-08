@@ -50,10 +50,10 @@ func infer(sig errormap.Signature) errormap.Inference {
 	case "ns::divide", "ns::connect":
 		return errormap.Inference{Kind: errormap.KindException, Fallible: true}
 	case "ns::load":
-		// ns::Result<int> has has_value/value/error, which Infer recognises.
+		// ns::Result<int> has has_value/value/error, which Infer recognizes.
 		kind, ok := errormap.Infer(errormap.Shape{HasValue: true, Value: true, Error: true})
 		if !ok {
-			panic("ns::Result<int> must be recognised")
+			panic("ns::Result<int> must be recognized")
 		}
 		return errormap.Inference{Kind: kind, Fallible: true}
 	default:

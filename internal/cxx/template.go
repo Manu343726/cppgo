@@ -126,7 +126,7 @@ func (k TemplateArgumentKind) String() string {
 	}
 }
 
-// specializationName is the identity of a specialisation: the template's
+// specializationName is the identity of a specialization: the template's
 // qualified name followed by its arguments. libclang spells both a pattern and
 // its instantiation "Box", so the arguments are what tells them apart, and
 // "mathx::Box<int>" is the name the generator keys on.
@@ -138,7 +138,7 @@ func specializationName(templateName string, args []TemplateArgument) string {
 	return templateName + "<" + strings.Join(parts, ",") + ">"
 }
 
-// TemplateArgument is one concrete argument of a template specialisation. The
+// TemplateArgument is one concrete argument of a template specialization. The
 // generator names the Go type from these: `Box<int>` is `BoxInt`, and an
 // argument it cannot name is reported with the manifest entry that resolves it.
 type TemplateArgument struct {

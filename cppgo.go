@@ -31,7 +31,7 @@ const lastErrorSymbol = "cppgo_last_error"
 // through.
 //
 // A Library is safe for concurrent use: symbols can be resolved from many
-// goroutines at once, and Close is serialised against them. What Close cannot
+// goroutines at once, and Close is serialized against them. What Close cannot
 // do is wait for calls that are already running inside the library: a program
 // that closes a library while another goroutine is in a function it resolved
 // from it is asking for a use-after-free, so a Library is normally closed once,

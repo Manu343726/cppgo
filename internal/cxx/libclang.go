@@ -133,7 +133,7 @@ const (
 	cursorClassTemplatePartialSpecialization int32 = 32
 
 	// Template parameters, in declaration order. They are what the model
-	// substitutes when it reads a specialisation through its pattern.
+	// substitutes when it reads a specialization through its pattern.
 	cursorTemplateTypeParameter     int32 = 27
 	cursorNonTypeTemplateParameter  int32 = 28
 	cursorTemplateTemplateParameter int32 = 29

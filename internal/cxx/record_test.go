@@ -349,11 +349,11 @@ func TestUnnamedTypesAreDropped(t *testing.T) {
 
 	for _, record := range tu.Records() {
 		assert.NotEmpty(t, record.QualifiedName, "an unnamed record has no name to bind under and must not be invented")
-		assert.NotContains(t, record.QualifiedName, "(unnamed", "a synthesised name embeds a source path")
+		assert.NotContains(t, record.QualifiedName, "(unnamed", "a synthesized name embeds a source path")
 	}
 	for _, enum := range tu.Enums() {
 		assert.NotEmpty(t, enum.QualifiedName, "an unnamed enum is dropped for the same reason")
-		assert.NotContains(t, enum.QualifiedName, "(unnamed", "a synthesised name embeds a source path")
+		assert.NotContains(t, enum.QualifiedName, "(unnamed", "a synthesized name embeds a source path")
 	}
 	assert.GreaterOrEqual(t, len(tu.Enums()), 2, "the named enums, including nested ones, are in the model")
 

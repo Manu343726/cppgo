@@ -129,9 +129,9 @@ type Record struct {
 	// Box<int>. It has a layout and a name built from its arguments.
 	IsTemplateSpecialization bool
 	// Synthesized is true when the record was built from a pattern (or a
-	// partial specialisation) because libclang has no definition cursor for
-	// the instantiation. A full explicit specialisation has its own definition
-	// and is not synthesised; it wins over a synthesised sighting.
+	// partial specialization) because libclang has no definition cursor for
+	// the instantiation. A full explicit specialization has its own definition
+	// and is not synthesized; it wins over a synthesized sighting.
 	Synthesized bool
 	// TemplateName is the qualified name of the template a specialization
 	// instantiates.
@@ -175,12 +175,12 @@ type Record struct {
 	Bases []Base
 	// StaticFields are the static data members, in declaration order.
 	StaticFields []StaticField
-	// MemberTemplates are the member function templates of a specialisation,
+	// MemberTemplates are the member function templates of a specialization,
 	// as patterns. A concrete instantiation is obtained with
 	// TU.InstantiateMember; the pattern alone is not bindable.
 	MemberTemplates []Symbol
 	// Members are the constructors, destructor and methods of a template
-	// specialisation, synthesised from its pattern. libclang does not expose
+	// specialization, synthesized from its pattern. libclang does not expose
 	// the instantiated definition's cursor children, so the pattern is the only
 	// place its members can be read from. For a non-template record the members
 	// are in the project's symbol list instead, and this stays empty.
@@ -220,7 +220,7 @@ type StaticField struct {
 
 // memberTemplate is a member function template kept for on-demand
 // instantiation: the pattern cursor plus the class-level substitution that
-// turns its owner's parameters into the specialisation's arguments.
+// turns its owner's parameters into the specialization's arguments.
 type memberTemplate struct {
 	cursor CXCursor
 	class  substitution
@@ -255,7 +255,7 @@ type Enum struct {
 	Constants []Enumerator
 	// ConstantsKnown reports whether the enumerator values are the
 	// instantiation's. libclang does not evaluate an initializer in a template
-	// pattern, so a specialisation's nested enum is re-evaluated from its
+	// pattern, so a specialization's nested enum is re-evaluated from its
 	// source tokens; an initializer the model cannot read makes this false and
 	// the generator exposes the enum type without constants.
 	ConstantsKnown bool
@@ -278,14 +278,14 @@ type recordExtractor struct {
 	// sources caches the files whose text is read to evaluate enum
 	// initializers, so one parse reads each file once.
 	sources map[string][]byte
-	// partials are the partial specialisations by primary template name, in
+	// partials are the partial specializations by primary template name, in
 	// declaration order.
 	partials map[string][]partialSpecialization
 }
 
 // partialSpecialization is one `template <typename T> struct Q<T *>` pattern.
 // It has its own cursor and children; an instantiation that matches it is
-// synthesised from this cursor, not from the primary.
+// synthesized from this cursor, not from the primary.
 type partialSpecialization struct {
 	cursor CXCursor
 	args   []TemplateArgument
@@ -400,7 +400,7 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 	facts := ctorFacts{}
 	switch {
 	case isSpecialization && e.isFullExplicitSpecialization(cursor):
-		// A full explicit specialisation has its own body: read it, not the
+		// A full explicit specialization has its own body: read it, not the
 		// pattern. Its members and nested types are its own.
 		e.collectChildren(&rec, decl, typ, &facts)
 		if rec.TemplateName != "" && len(rec.TemplateArguments) > 0 {
@@ -408,7 +408,7 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 		}
 	case isSpecialization:
 		// An implicit or explicit instantiation with no definition cursor:
-		// select a partial specialisation if one matches, else the primary.
+		// select a partial specialization if one matches, else the primary.
 		rec.Synthesized = true
 		patternCursor, sub := e.selectPattern(rec.TemplateName, rec.TemplateArguments, pattern)
 		e.synthesizeSpecialization(&rec, patternCursor, typ, &facts, sub)
@@ -421,7 +421,7 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 }
 
 // finishRecord applies the rules that are the same whether a record came from
-// its own definition cursor or was synthesised from a pattern.
+// its own definition cursor or was synthesized from a pattern.
 func (e *recordExtractor) finishRecord(rec *Record, facts ctorFacts) {
 	for _, base := range rec.Bases {
 		if base.IsVirtual {
@@ -444,7 +444,7 @@ func (e *recordExtractor) finishRecord(rec *Record, facts ctorFacts) {
 	}
 }
 
-// addTypeSpecialization records a specialisation that is reachable through a
+// addTypeSpecialization records a specialization that is reachable through a
 // field type, even when libclang emits no cursor for the instantiation itself
 // (it does not for a template with a non-type or template-template parameter).
 func (e *recordExtractor) addTypeSpecialization(field CXCursor) {
@@ -508,7 +508,7 @@ func (e *recordExtractor) cursorDeclaresMembers(cursor CXCursor) bool {
 	return found
 }
 
-// collectPartial keeps a partial specialisation for matching. It is a pattern,
+// collectPartial keeps a partial specialization for matching. It is a pattern,
 // not a record a Go type is generated from: only an instantiation is.
 func (e *recordExtractor) collectPartial(cursor CXCursor) {
 	primary := e.l.f.getSpecializedCursorTemplate(cursor)
@@ -527,8 +527,8 @@ func (e *recordExtractor) collectPartial(cursor CXCursor) {
 }
 
 // selectPattern chooses where an instantiation's body comes from: the best
-// matching partial specialisation when there is one, else the primary pattern.
-// A full explicit specialisation is not selected here: it is a real record with
+// matching partial specialization when there is one, else the primary pattern.
+// A full explicit specialization is not selected here: it is a real record with
 // its own definition and wins through addRecord's precedence.
 func (e *recordExtractor) selectPattern(primary string, args []TemplateArgument, pattern CXCursor) (CXCursor, substitution) {
 	if cursor, sub, ok := e.matchPartial(primary, args); ok {
@@ -537,7 +537,7 @@ func (e *recordExtractor) selectPattern(primary string, args []TemplateArgument,
 	return pattern, e.l.substitution(pattern, args)
 }
 
-// matchPartial finds the most specific partial specialisation that accepts an
+// matchPartial finds the most specific partial specialization that accepts an
 // instantiation. The rule is deterministic: the argument counts must match, a
 // component that is not a bare parameter counts one point, and the highest
 // score wins; ties go to the first declared.
@@ -601,7 +601,7 @@ func isBareParameter(p Param) bool {
 	return name != "" && !strings.ContainsAny(name, " *&<>[],")
 }
 
-// recordFromSpecialization builds the record for a specialisation declaration
+// recordFromSpecialization builds the record for a specialization declaration
 // reached through a type.
 func (e *recordExtractor) recordFromSpecialization(decl, pattern CXCursor) (Record, bool) {
 	templateName, ok := e.l.qualifiedName(pattern)
@@ -668,10 +668,10 @@ func (e *recordExtractor) collectChildren(rec *Record, decl CXCursor, typ CXType
 	})
 }
 
-// synthesizeSpecialization reads a specialisation through its pattern, because
+// synthesizeSpecialization reads a specialization through its pattern, because
 // libclang does not expose the instantiated definition's children. The pattern's
 // fields and members are copied with the template arguments substituted, and the
-// specialisation type is asked for whatever layout it can provide.
+// specialization type is asked for whatever layout it can provide.
 func (e *recordExtractor) synthesizeSpecialization(rec *Record, pattern CXCursor, specType CXType, facts *ctorFacts, sub substitution) {
 	_ = e.l.visit(pattern, func(child, parent CXCursor) int32 {
 		switch e.l.f.getCursorKind(child) {
@@ -718,7 +718,7 @@ func (e *recordExtractor) synthesizeSpecialization(rec *Record, pattern CXCursor
 	})
 }
 
-// specializedBaseName names a base of a specialisation. The pattern's base is
+// specializedBaseName names a base of a specialization. The pattern's base is
 // spelled "Box<T>" relative to its namespace; qualifying it after substitution
 // is what gives the generator the concrete base type.
 func (e *recordExtractor) specializedBaseName(qualified string, base CXCursor, sub substitution) string {
@@ -733,7 +733,7 @@ func (e *recordExtractor) specializedBaseName(qualified string, base CXCursor, s
 	return name
 }
 
-// synthesizeMember turns a pattern's member into the specialisation's member:
+// synthesizeMember turns a pattern's member into the specialization's member:
 // the same shape, with the template arguments substituted and no mangled name
 // (a template instantiation is carried by a thunk, never by a direct symbol).
 func (e *recordExtractor) synthesizeMember(cursor CXCursor, rec *Record, sub substitution) Symbol {
@@ -741,7 +741,7 @@ func (e *recordExtractor) synthesizeMember(cursor CXCursor, rec *Record, sub sub
 	name := e.l.str(e.l.f.getCursorSpelling(cursor))
 	if (kind == Constructor || kind == Destructor) && rec.TemplateName != "" {
 		// The pattern's spelling carries the parameters ("Pair2<T>"); the
-		// specialisation's constructor is named after the template itself.
+		// specialization's constructor is named after the template itself.
 		simple := rec.TemplateName
 		if i := strings.LastIndex(simple, "::"); i >= 0 {
 			simple = simple[i+2:]
@@ -824,7 +824,7 @@ func (e *recordExtractor) registerMemberTemplate(record string, cursor CXCursor,
 }
 
 // synthesizeNestedRecord builds the record for a nested type of a template
-// specialisation, with the outer class arguments substituted.
+// specialization, with the outer class arguments substituted.
 func (e *recordExtractor) synthesizeNestedRecord(outer *Record, cursor CXCursor, sub substitution) {
 	if e.l.f.isCursorDefinition(cursor) == 0 {
 		return
@@ -854,7 +854,7 @@ func (e *recordExtractor) synthesizeNestedRecord(outer *Record, cursor CXCursor,
 }
 
 // synthesizeNestedEnum turns a nested enum of a pattern into the
-// specialisation's enum: same enumerators, name and underlying type taken from
+// specialization's enum: same enumerators, name and underlying type taken from
 // the instantiation.
 func (e *recordExtractor) synthesizeNestedEnum(outer *Record, cursor CXCursor, sub substitution) {
 	if e.l.f.isCursorDefinition(cursor) == 0 {
@@ -1023,7 +1023,7 @@ func countTemplateParameters(l *Libclang, cursor CXCursor) int {
 }
 
 // typeFieldOffset asks a record type for one field's byte offset. It is the
-// only way to an offset when the specialisation's definition cursor is not
+// only way to an offset when the specialization's definition cursor is not
 // reachable, and it answers -1 when libclang has not completed the type.
 func (l *Libclang) typeFieldOffset(typ CXType, name string) int64 {
 	if name == "" {
@@ -1132,7 +1132,7 @@ func (e *recordExtractor) trivialType(p Param, depth int) bool {
 }
 
 // substitution maps template parameter names to the concrete arguments of a
-// specialisation, so a pattern's member can be read as the instantiation's.
+// specialization, so a pattern's member can be read as the instantiation's.
 type substitution struct {
 	names map[string]TemplateArgument
 	// indexed is the class arguments in declaration order. libclang spells a
@@ -1142,7 +1142,7 @@ type substitution struct {
 }
 
 // substitution builds the map from the pattern's template parameters, in
-// declaration order, to the specialisation's arguments.
+// declaration order, to the specialization's arguments.
 func (l *Libclang) substitution(pattern CXCursor, args []TemplateArgument) substitution {
 	sub := substitution{names: make(map[string]TemplateArgument, len(args)), indexed: make([]TemplateArgument, 0, len(args))}
 	index := 0
@@ -1357,7 +1357,7 @@ func (e *recordExtractor) collectBase(parent, cursor CXCursor) Base {
 		base.QualifiedName = name
 	} else if spelling := e.l.str(e.l.f.getTypeSpelling(e.l.f.getCursorType(cursor))); !strings.HasPrefix(spelling, "(") {
 		// A base named through a typedef, or one from an anonymous namespace,
-		// still has a deterministic spelling. A synthesised "(unnamed at …)"
+		// still has a deterministic spelling. A synthesized "(unnamed at …)"
 		// does not, and is left empty.
 		base.QualifiedName = spelling
 	}
@@ -1403,8 +1403,8 @@ func (e *recordExtractor) addRecord(rec Record) {
 	if i, ok := e.byName[rec.QualifiedName]; ok {
 		existing := e.records[i]
 		if existing.Synthesized && !rec.Synthesized {
-			// A full explicit specialisation's own body replaces a record that
-			// was synthesised before its definition cursor was reached.
+			// A full explicit specialization's own body replaces a record that
+			// was synthesized before its definition cursor was reached.
 			e.records[i] = rec
 			return
 		}

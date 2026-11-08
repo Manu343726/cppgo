@@ -285,7 +285,7 @@ func TestConfiguredOutParamReturn(t *testing.T) {
 }
 
 // TestInferredCustomResult is the other direction of the same rule: no config
-// entry, because ns::Result<int> has the shape the generator recognises.
+// entry, because ns::Result<int> has the shape the generator recognizes.
 func TestInferredCustomResult(t *testing.T) {
 	build(t)
 	asm.Probe()

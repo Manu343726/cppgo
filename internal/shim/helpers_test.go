@@ -12,7 +12,7 @@ import (
 	"github.com/Manu343726/cppgo/internal/rtl"
 )
 
-// fixture is the pair of artefacts the contract describes: the user's library,
+// fixture is the pair of artifacts the contract describes: the user's library,
 // built by the user's own command, and the shim cppgo builds beside it. The
 // test owns both paths so the artifact-model assertions can inspect them.
 type fixture struct {

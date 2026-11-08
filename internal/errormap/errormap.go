@@ -96,7 +96,7 @@ type Shape struct {
 }
 
 // Infer returns the kind a return type's shape implies, and whether the shape
-// was recognised. The three members together are the shape tl::expected,
+// was recognized. The three members together are the shape tl::expected,
 // std::expected and most project Result<T> types share; anything else is
 // either configured or not an error type at all.
 func Infer(s Shape) (Kind, bool) {

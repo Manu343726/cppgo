@@ -50,7 +50,7 @@ func fixturePath(t *testing.T, parts ...string) string {
 
 // copyFixture copies the mathx fixture into a fresh directory, so a test can
 // add its own compile_commands.json or .clangd without disturbing its
-// neighbours.
+// neighbors.
 func copyFixture(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

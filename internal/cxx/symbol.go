@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// Kind is the C++ flavour of a declaration, which is what decides the ABI
+// Kind is the C++ flavor of a declaration, which is what decides the ABI
 // shape of the call: constructors and methods carry an implicit `this`,
 // static methods and free functions do not.
 type Kind uint8
@@ -132,7 +132,7 @@ func (p Param) IsStream() bool {
 // stream checks the declaration spelling and the canonical record name. The
 // spelling is the reliable half: libclang's canonical form of a reference to
 // the std::ostream alias can be wrong (it resolves to int), so an alias is
-// recognised by how it is written.
+// recognized by how it is written.
 func (p Param) stream() bool {
 	if strings.HasPrefix(p.RecordName, "std::basic_ostream<") ||
 		strings.HasPrefix(p.RecordName, "std::basic_istream<") {
@@ -173,7 +173,7 @@ type Symbol struct {
 	// Mangled is the Itanium C++ ABI mangled name, taken from libclang and
 	// never assembled by hand: "_ZNK5mathx6Vector4normEv".
 	Mangled string
-	// Kind is the declaration flavour.
+	// Kind is the declaration flavor.
 	Kind Kind
 	// IsConst is true for a const member function: the mangling carries K.
 	IsConst bool
@@ -409,7 +409,7 @@ func (e *extractor) visit(cursor, parent CXCursor) int32 {
 		// instantiated. Its members are collected and marked.
 		return visitRecurse
 	case cursorClassTemplatePartialSpecialization:
-		// A partial specialisation is a pattern, not a type: its members are
+		// A partial specialization is a pattern, not a type: its members are
 		// read from its cursor when an instantiation matches it.
 		return visitContinue
 	case cursorNamespace, cursorClassDecl, cursorStructDecl, cursorUnionDecl,
@@ -693,8 +693,8 @@ func (l *Libclang) qualifiedName(cursor CXCursor) (string, bool) {
 		cursor = l.f.getSemanticParent(cursor)
 		kind := l.f.getCursorKind(cursor)
 		spelling := l.str(l.f.getCursorSpelling(cursor))
-		// A member of a full or partial specialisation is named after the
-		// specialisation, not after the pattern: Q<int>::Kind, not Q::Kind.
+		// A member of a full or partial specialization is named after the
+		// specialization, not after the pattern: Q<int>::Kind, not Q::Kind.
 		// libclang spells the parent "Q" for all three, so the arguments are
 		// what tell them apart.
 		if isSpecializationRecordKind(kind) {
@@ -710,7 +710,7 @@ func (l *Libclang) qualifiedName(cursor CXCursor) (string, bool) {
 	return qualify(spelling, parents)
 }
 
-// isSpecializationRecordKind reports the cursor kinds a specialisation can be
+// isSpecializationRecordKind reports the cursor kinds a specialization can be
 // declared with. The primary pattern is a ClassTemplate and is not one.
 func isSpecializationRecordKind(kind int32) bool {
 	switch kind {
@@ -733,7 +733,7 @@ type parentName struct {
 // linkage), and a chain that never reaches the translation unit.
 func qualify(spelling string, parents []parentName) (string, bool) {
 	if spelling == "" || strings.HasPrefix(spelling, "(") {
-		// An unnamed entity. libclang synthesises a spelling for these —
+		// An unnamed entity. libclang synthesizes a spelling for these —
 		// "(unnamed enum at /tmp/…/mathx.hpp:183:1)" — and a source path is
 		// not a name: it differs between machines and would make generated
 		// output non-deterministic. There is nothing to bind under it either.
@@ -803,7 +803,7 @@ func (l *Libclang) param(t CXType) Param {
 	}
 	if p.Ptr {
 		// The pointee is read from the surface type: libclang's canonical form
-		// of a reference to a typedef of a class template specialisation can
+		// of a reference to a typedef of a class template specialization can
 		// be wrong (std::ostream & canonically becomes int &).
 		p.Pointee = l.pointee(t)
 	}
