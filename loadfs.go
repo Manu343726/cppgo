@@ -121,7 +121,10 @@ func CleanCache() error {
 // The cache is CacheDir()/<sha256>/<name>, where the digest covers the whole
 // embedded set — every name, size and content — so a change to any of them
 // lands in a new directory and an old directory is never combined with new
-// contents. The directory is created 0700 and every file 0600; a file is
+// contents. The directory is created 0700 and every file 0600, and a mode that
+// was loosened is tightened; a path in the cache's place that is not a private
+// directory — a symbolic link, a regular file, or a directory that cannot be
+// made private — fails with ErrInsecureCache instead of being used. A file is
 // written to a temporary file in that directory and renamed into place, so a
 // reader never sees a partial object and concurrent goroutines or processes
 // cannot corrupt an entry. An existing file is reused only when its size and
@@ -277,8 +280,20 @@ func extract(fsys fs.FS, objects []object) (string, error) {
 // privateDir creates dir when it is absent and makes sure it is a directory
 // this user owns exclusively, repairing a mode that time or another tool
 // loosened.
+//
+// A path that exists and is not a directory — a regular file, or a symbolic
+// link, which MkdirAll follows and Lstat does not — and a directory whose mode
+// cannot be tightened both fail with ErrInsecureCache, so a caller can tell a
+// cache it refuses to use from a cache it could not create.
 func privateDir(dir string) error {
 	if err := os.MkdirAll(dir, cacheDirPerm); err != nil {
+		// MkdirAll only fails on an existing path when the path is not a
+		// directory (otherwise it succeeds), so the file that is in the way
+		// is the insecure shape, and its error stays in the chain.
+		if info, statErr := os.Lstat(dir); statErr == nil && !info.IsDir() {
+			return fmt.Errorf("%w: %q: %w", ErrInsecureCache, dir, err)
+		}
+
 		return fmt.Errorf("cppgo: create the cache directory %q: %w", dir, err)
 	}
 
@@ -290,7 +305,7 @@ func privateDir(dir string) error {
 	}
 	if info.Mode().Perm() != cacheDirPerm {
 		if err := os.Chmod(dir, cacheDirPerm); err != nil {
-			return fmt.Errorf("cppgo: make the cache directory %q private: %w", dir, err)
+			return fmt.Errorf("%w: make %q private: %w", ErrInsecureCache, dir, err)
 		}
 	}
 
@@ -357,8 +372,10 @@ func materialise(fsys fs.FS, dir string, o object) error {
 // mode that is not private.
 //
 // Anything that is not a regular file of the right size is not reused: a
-// symbolic link, a directory or a truncated copy is replaced by the atomic
-// rename rather than followed or trusted.
+// symbolic link is never followed and is replaced by the rename that follows,
+// a truncated or corrupted copy is replaced the same way, and a directory at
+// the target path cannot be replaced at all — the rename fails and the error
+// names the object.
 func reusable(target string, o object) (bool, error) {
 	info, err := os.Lstat(target)
 	if errors.Is(err, fs.ErrNotExist) {

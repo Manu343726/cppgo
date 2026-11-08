@@ -693,8 +693,29 @@ func TestOpenFSCacheFailure(t *testing.T) {
 		lib, err := cppgo.OpenFS(objects, embeddedMainName)
 		require.Error(t, err)
 		assert.Nil(t, lib)
-		assert.Contains(t, err.Error(), "create the cache directory")
+
+		// A file where a private directory belongs is the sentinel's shape,
+		// not a generic creation failure: the caller can tell "refused" from
+		// "could not create" with errors.Is.
+		assert.ErrorIs(t, err, cppgo.ErrInsecureCache)
 		assert.Contains(t, err.Error(), cacheRoot(base))
+		// The underlying file-system error stays in the chain.
+		assert.Contains(t, err.Error(), "not a directory")
+	})
+
+	t.Run("cache entry is a regular file", func(t *testing.T) {
+		isolateCache(t)
+		loaded := openEmbedded(t, objects)
+		entry := filepath.Dir(loaded.Path())
+		require.NoError(t, loaded.Close())
+
+		require.NoError(t, os.RemoveAll(entry))
+		require.NoError(t, os.WriteFile(entry, []byte("not a directory"), 0o600))
+
+		_, err := cppgo.OpenFS(objects, embeddedMainName)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, cppgo.ErrInsecureCache)
+		assert.Contains(t, err.Error(), entry)
 	})
 
 	t.Run("rename fails over a directory", func(t *testing.T) {
@@ -703,9 +724,9 @@ func TestOpenFSCacheFailure(t *testing.T) {
 		path := loaded.Path()
 		require.NoError(t, loaded.Close())
 
-		// Something that is not a file holds the target name: the atomic
-		// rename cannot replace it, and the failure names the object rather
-		// than leaving a temporary file behind.
+		// A directory cannot be replaced by the rename, so the object is
+		// refused with an error naming it rather than silently served from
+		// the wrong shape.
 		require.NoError(t, os.Remove(path))
 		require.NoError(t, os.Mkdir(path, 0o700))
 
