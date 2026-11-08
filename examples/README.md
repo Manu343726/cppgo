@@ -49,22 +49,6 @@ command in the file's banner reproduces them, and a reader can see what the
 generator wrote without running it. The compiled shim (`libcppgo_<name>.so`) and
 `build/` are ignored.
 
-## Current state of `make check`
-
-At the commit that carries this documentation, `make check` **fails** for both
-examples: the committed generated shim sources predate an `#include <cstdint>`
-that the current emitter writes.
-
-```console
-$ make -C examples/mathx check
-build/cppgo check -header include/mathx/vector.hpp -package mathx -library build/libmathx.so -out .
-cppgo check: . is out of date (run "cppgo gen"): zz_cppgo_shim.cpp
-```
-
-Measured 2026-11-08. Running `make gen` and committing the one-line change to
-`cppgo_shim/zz_cppgo_shim.cpp` clears it. Nothing else in either example is
-stale.
-
 ## Documentation
 
 - [Bind your first C++ class](https://manu343726.github.io/cppgo/tutorials/first-binding/) — the tutorial that uses `mathx`.
