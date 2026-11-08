@@ -18,6 +18,7 @@ func goldenFixtures() map[string]Config {
 		"overloads": fixtureConfig("overloads", "overloads.hpp"),
 		"std":       fixtureConfig("std", "std.hpp"),
 		"docs":      fixtureConfig("docs", "docs.hpp"),
+		"enums":     fixtureConfig("enums", "enums.hpp"),
 	}
 }
 

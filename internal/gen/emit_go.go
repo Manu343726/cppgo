@@ -47,6 +47,9 @@ func cppgoBool(v bool) int64 {
 	for _, record := range m.records {
 		m.emitRecord(&b, record)
 	}
+	for _, enum := range m.enums {
+		m.emitEnum(&b, enum)
+	}
 	m.emitTemplates(&b)
 	m.emitPackageFunctions(&b)
 	m.emitTrampolineDeclarations(&b)
@@ -916,6 +919,8 @@ func zeroValue(t *goType) string {
 		return "nil"
 	case goArray, goRecord:
 		return t.Go + "{}"
+	case goEnum:
+		return "0"
 	default:
 		return "0"
 	}
@@ -955,7 +960,7 @@ func convertResult(binding *binding, local string) string {
 		return local + "&0xff != 0"
 	case goPointer:
 		return "(*" + strings.TrimPrefix(result.Go, "*") + ")(" + local + ")"
-	case goInteger:
+	case goInteger, goEnum:
 		if result.Go == "int64" || result.Go == "uint64" {
 			return local
 		}

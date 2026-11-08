@@ -65,10 +65,6 @@ func nestedRecords(records []cxx.Record) map[string]bool {
 // Adding a construct means implementing it and removing its entry here; a
 // construct must never fall through to a guess.
 func (b *builder) rejectUnimplemented() error {
-	for _, enum := range b.rawEnums {
-		return recordEnumError(enum)
-	}
-
 	nested := nestedRecords(b.rawRecords)
 	for _, rec := range b.rawRecords {
 		switch {
@@ -114,13 +110,6 @@ func (b *builder) rejectUnimplemented() error {
 		}
 	}
 	return nil
-}
-
-// recordEnumError is the refusal for an enum definition.
-func recordEnumError(enum cxx.Enum) error {
-	return declError(enum.DeclFile, enum.DeclLine, enum.QualifiedName, pending(
-		"enums are not emitted by this build yet",
-		"pass the value as its underlying integer at the C++ boundary"))
 }
 
 // instantiationNamed reports whether an -instantiate entry names exactly this

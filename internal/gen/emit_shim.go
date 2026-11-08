@@ -160,7 +160,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		if binding.Result.Kind == goRecord {
 			return fmt.Sprintf("*static_cast<%s *>(cppgo_result) = %s;", binding.Result.Cxx, call)
 		}
-		return fmt.Sprintf("*cppgo_result = %s;", call)
+		return fmt.Sprintf("*cppgo_result = %s;", m.shimResultExpr(binding.Result, call))
 	}
 	var b strings.Builder
 	if !binding.Status {
@@ -171,7 +171,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		case binding.Out != nil:
 			fmt.Fprintf(&b, "\t%s\n", store())
 		case binding.Result != nil:
-			fmt.Fprintf(&b, "\treturn %s;\n", call)
+			fmt.Fprintf(&b, "\treturn %s;\n", m.shimResultExpr(binding.Result, call))
 		default:
 			fmt.Fprintf(&b, "\t%s;\n", call)
 		}
@@ -257,6 +257,11 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 // pointer to a record; the target wants the record type, a pointer, or a
 // reference, and the conversion is written where the layout is known.
 func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
+	if p.Kind == cxx.TypeEnum {
+		// The wire word is the enum's underlying integer; the callee takes the
+		// enum type, and a scoped enum has no implicit conversion.
+		return "static_cast<::" + p.RecordName + ">(" + name + ")", nil
+	}
 	if p.Kind == cxx.TypeRecord {
 		// A record passed by value: the Go side handed over the address of the
 		// value it holds, and the copy into the call is C++'s.
@@ -289,6 +294,16 @@ func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
 		return "*" + name, nil
 	}
 	return name, nil
+}
+
+// shimResultExpr renders a call's value as the thunk's C result type. An enum
+// is cast to its underlying integer: a scoped enum has no implicit conversion,
+// and the Go side reads the width, not the C++ name.
+func (m *packageModel) shimResultExpr(result *goType, expr string) string {
+	if result != nil && result.Kind == goEnum {
+		return "static_cast<" + result.C + ">(" + expr + ")"
+	}
+	return expr
 }
 
 // stdLocals renders the C++ values the shim builds for a binding's

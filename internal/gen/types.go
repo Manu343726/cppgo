@@ -22,6 +22,9 @@ const (
 	goArray
 	goOptional
 	goFunc
+	// goEnum is a C++ enum: a Go named integer type with the underlying
+	// integer width on the wire.
+	goEnum
 	// goTypeParam is a class or function template's type parameter used as a
 	// value, e.g. T in `T get() const`. The generic API's declaration spells
 	// it; every concrete instantiation substitutes one scalar for it.
@@ -62,6 +65,8 @@ type goType struct {
 	Elem *goType
 	// Record is the record model a record or record pointer refers to.
 	Record *recordModel
+	// Enum is the enum model an enum value refers to.
+	Enum *enumModel
 	// Std is the standard-library shape, stdNone for an ordinary type.
 	Std stdKind
 	// ArrayLen is std::array's element count.
@@ -106,6 +111,10 @@ type callbackType struct {
 // mirrorable aggregate from an opaque value.
 type mapper struct {
 	records map[string]*recordModel
+	// enums is the package's enum model, by qualified C++ name: an enum is a
+	// Go named integer type, so a signature that names one crosses as that
+	// type over its underlying integer width.
+	enums map[string]*enumModel
 	// usesSpan is true when std::span is part of the API, whose header needs
 	// C++20.
 	usesSpan bool
@@ -146,7 +155,7 @@ func (m *mapper) mapType(p cxx.Param) (*goType, error) {
 	case cxx.TypeRecord:
 		return m.mapRecord(p)
 	case cxx.TypeEnum:
-		return nil, pending(fmt.Sprintf("%q is an enum", p.Spelling), "pass the value as its underlying integer at the C++ boundary")
+		return m.mapEnum(p)
 	case cxx.TypeArray:
 		return nil, pending(fmt.Sprintf("%q is a C array", p.Spelling), "decay it to a pointer and a length at the C++ boundary")
 	default:
@@ -410,6 +419,26 @@ trimmed:
 		return "", false
 	}
 	return s, true
+}
+
+// mapEnum maps an enum to its named Go integer type. The wire width and the
+// shim's C type are the underlying integer type, which is what the enum is at
+// the ABI level, and the C++ side casts back to the enum where its name exists.
+func (m *mapper) mapEnum(p cxx.Param) (*goType, error) {
+	enum, ok := m.enums[p.RecordName]
+	if !ok {
+		return nil, pending(fmt.Sprintf("%q is an enum the generated API does not hold", p.Spelling),
+			"include the enum's definition in the header")
+	}
+	return &goType{
+		Kind:  goEnum,
+		Go:    enum.GoName,
+		C:     enum.C,
+		Cxx:   "::" + enum.CxxName,
+		Enum:  enum,
+		Param: p,
+		Const: p.IsConst,
+	}, nil
 }
 
 // mapInteger maps every integer width the type map covers, and checks the LP64

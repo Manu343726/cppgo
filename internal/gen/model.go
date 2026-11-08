@@ -263,6 +263,7 @@ type packageModel struct {
 	libraryName string
 	headers     []string
 	records     []*recordModel
+	enums       []*enumModel
 	bindings    []*binding
 	// templates are the class and function templates the package exposes
 	// generically, and instantiations are the concrete specializations the
@@ -292,6 +293,15 @@ type builder struct {
 	symbols    []cxx.Symbol
 	rawRecords []cxx.Record
 	rawEnums   []cxx.Enum
+	// enums are the enum models by qualified name, and enumOrder their
+	// insertion order for deterministic output.
+	enums     map[string]*enumModel
+	enumOrder []string
+	// recordGoNames and enumGoNames are the Go type name of every record and
+	// enum, computed before any model exists because a nested type's name is
+	// its parent's.
+	recordGoNames map[string]string
+	enumGoNames   map[string]string
 	// order records the insertion order of records, for deterministic output.
 	order    []string
 	bindings []*binding
@@ -338,6 +348,7 @@ func build(cfg Config) (*packageModel, error) {
 	b := &builder{
 		cfg:                cfg,
 		records:            map[string]*recordModel{},
+		enums:              map[string]*enumModel{},
 		instantiateMatched: make([]bool, len(cfg.Instantiate)),
 		statusMatched:      make([]bool, len(cfg.Status)),
 	}
@@ -354,7 +365,13 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.rejectUnimplemented(); err != nil {
 		return nil, err
 	}
-	b.mapper = &mapper{records: b.records}
+	// Type names come first: an enum nested in a record is named after it, and
+	// a field's Go type needs the enum model the name produces.
+	b.assignTypeNames()
+	if err := b.buildEnums(); err != nil {
+		return nil, err
+	}
+	b.mapper = &mapper{records: b.records, enums: b.enums}
 	if err := b.buildRecords(); err != nil {
 		return nil, err
 	}
@@ -451,7 +468,7 @@ func (b *builder) buildRecords() error {
 			b.synthMembers = append(b.synthMembers, rec.Members...)
 		}
 		model := &recordModel{
-			GoName:               goRecordName(rec.QualifiedName),
+			GoName:               b.recordGoNames[rec.QualifiedName],
 			CxxName:              rec.QualifiedName,
 			Size:                 rec.SizeBytes,
 			Align:                rec.AlignBytes,
@@ -475,7 +492,7 @@ func (b *builder) buildRecords() error {
 			}
 			model.Fields = append(model.Fields, &fieldModel{
 				GoName:  exportName(field.Name),
-				Type:    mirrorFieldType(field.Type),
+				Type:    b.mirrorFieldType(field.Type),
 				Offset:  field.OffsetBytes,
 				Comment: field.Comment,
 			})
@@ -512,7 +529,7 @@ func (b *builder) mirrorable(rec cxx.Record) bool {
 			return false
 		}
 		switch field.Type.Kind {
-		case cxx.TypeInteger, cxx.TypeFloat:
+		case cxx.TypeInteger, cxx.TypeFloat, cxx.TypeEnum:
 		default:
 			return false
 		}
@@ -551,11 +568,18 @@ func scalarWidth(p cxx.Param) (size, align int64) {
 }
 
 // mirrorFieldType maps a field the mirror predicate already accepted: a bool,
-// an integer of a width the type map covers, or a float. It has no failure path
-// because mirrorable checked the kind and the width.
-func mirrorFieldType(p cxx.Param) *goType {
+// an integer of a width the type map covers, a float, or an enum. It has no
+// failure path because mirrorable checked the kind and the width.
+func (b *builder) mirrorFieldType(p cxx.Param) *goType {
 	if p.Kind == cxx.TypeInteger && p.ClangKind == "Bool" {
 		return &goType{Kind: goBool, Go: "bool", C: "bool", Cxx: "bool", Param: p}
+	}
+	if p.Kind == cxx.TypeEnum {
+		// An enum's Go type is its named integer type, which has the same
+		// width as the underlying C++ integer, so the layout still holds.
+		if enum, ok := b.enums[p.RecordName]; ok {
+			return &goType{Kind: goEnum, Go: enum.GoName, C: enum.C, Cxx: "::" + enum.CxxName, Enum: enum, Param: p}
+		}
 	}
 	if p.Kind == cxx.TypeFloat {
 		if p.SizeBytes == 4 {
@@ -1163,6 +1187,17 @@ func (b *builder) paramWire(name string, mapped *goType, param cxx.Param) *wireA
 		arg.class = classInt
 		arg.size = 8
 		arg.expr = arg.slotType + "(" + name + ")"
+	case goEnum:
+		// An enum crosses as its underlying integer: the C++ side casts back
+		// to the enum type where its name exists, and the direct ABI passes
+		// exactly the bits the callee reads.
+		arg.slotType = "int64"
+		if mapped.Enum.Unsigned {
+			arg.slotType = "uint64"
+		}
+		arg.class = classInt
+		arg.size = 8
+		arg.expr = arg.slotType + "(" + name + ")"
 	case goBool:
 		arg.slotType = "int64"
 		arg.class = classInt
@@ -1205,7 +1240,7 @@ func (b *builder) sliceElement(p cxx.Param) (*goType, bool) {
 		return nil, false
 	}
 	switch elem.Kind {
-	case goInteger, goFloat, goBool:
+	case goInteger, goFloat, goBool, goEnum:
 		return elem, true
 	case goRecord:
 		if elem.Record != nil && elem.Record.Mirrored {
@@ -1394,6 +1429,7 @@ func (b *builder) model() *packageModel {
 		libraryName:    b.linkedName,
 		headers:        b.cfg.Headers,
 		records:        records,
+		enums:          b.selectedEnums(),
 		bindings:       b.bindings,
 		templates:      b.templates,
 		instantiations: b.instantiations,
@@ -1583,7 +1619,7 @@ func resultSlot(result *goType) *slot {
 		slot.goType = "int64"
 	default:
 		slot.goType = "int64"
-		if result.Param.Unsigned {
+		if result.Param.Unsigned || (result.Enum != nil && result.Enum.Unsigned) {
 			slot.goType = "uint64"
 		}
 	}

@@ -93,6 +93,7 @@ func (b *builder) applySelection() error {
 	}
 	b.bindings = kept
 	b.reattach()
+	b.selectEnums(bindMatched)
 	return nil
 }
 
@@ -316,6 +317,26 @@ func (b *builder) checkCollisions() error {
 			return fmt.Errorf("cppgo: two records map to Go type %s; rename one with -rename '<signature>=<GoName>'", record.GoName)
 		}
 		recordNames[record.GoName] = true
+		if previous, ok := seen["\x00"+record.GoName]; ok {
+			return fmt.Errorf("cppgo: the record %s and %s both map to Go name %s; rename one with -rename '<signature>=<GoName>'",
+				record.CxxName, displaySignature(previous.sym), record.GoName)
+		}
+	}
+	for _, enum := range b.enums {
+		if !enum.selected {
+			continue
+		}
+		if recordNames[enum.GoName] {
+			return fmt.Errorf("cppgo: two types map to Go type %s; rename one with -rename '<signature>=<GoName>'", enum.GoName)
+		}
+		recordNames[enum.GoName] = true
+		for _, constant := range enum.Constants {
+			if recordNames[constant.GoName] {
+				return fmt.Errorf("cppgo: the enumerator %s maps to Go name %s, which another type or enumerator already uses; rename one with -rename '<signature>=<GoName>'",
+					constant.CxxName, constant.GoName)
+			}
+			recordNames[constant.GoName] = true
+		}
 	}
 	return nil
 }

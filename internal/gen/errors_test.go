@@ -75,19 +75,6 @@ func TestGenerationErrors(t *testing.T) {
 	}
 }
 
-// TestEnumDiagnostic covers the enum root, which the model reports before any
-// binding is built.
-func TestEnumDiagnostic(t *testing.T) {
-	cfg := Config{
-		Headers: []string{"testdata/errors/enum.hpp"},
-		Package: "err",
-		Library: "liberr",
-	}
-	_, err := Render(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "err::Color: enums are not emitted")
-}
-
 // TestUnimplementedErrorShape checks the contract's exact one-line shape:
 // cppgo: <file>:<line>: <symbol>: <what is wrong>; <fix>.
 func TestUnimplementedErrorShape(t *testing.T) {
