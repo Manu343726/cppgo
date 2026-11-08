@@ -241,7 +241,7 @@ func NewThingInt32(value int32) (*Thing, error) {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: over::Thing::Thing(const over::Thing &), synthesised (thunk cppgo_thunk_3209d1d49d03, no mangled symbol)
+// C++: over::Thing::Thing(const over::Thing &), synthesized (thunk cppgo_thunk_3209d1d49d03, no mangled symbol)
 func (t *Thing) Clone() (*Thing, error) {
 	if t == nil || t.obj == nil {
 		return nil, cppgo.ErrClosed

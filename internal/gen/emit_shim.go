@@ -148,17 +148,13 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 	}
 	// store is the whole statement that delivers the value: a record is
 	// constructed into the caller's storage through the out-pointer, which is
-	// where C++'s own sret form is materialised.
-	store := func() (string, error) {
-		switch {
-		case binding.Out != nil && binding.Result.Kind == goRecord:
-			return fmt.Sprintf("*static_cast<%s *>(cppgo_result) = %s;", binding.Result.Cxx, call), nil
-		case binding.Out != nil:
-			return fmt.Sprintf("*cppgo_result = %s;", call), nil
-		default:
-			return "", pending("a thunk with no out-pointer has nothing to store",
-				"return the value through a register or add the out parameter")
+	// where C++'s own sret form is materialized. It is only reached when the
+	// binding has an out-pointer, which newBinding only adds with one.
+	store := func() string {
+		if binding.Result.Kind == goRecord {
+			return fmt.Sprintf("*static_cast<%s *>(cppgo_result) = %s;", binding.Result.Cxx, call)
 		}
+		return fmt.Sprintf("*cppgo_result = %s;", call)
 	}
 	var b strings.Builder
 	if !binding.Status {
@@ -167,11 +163,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		// there is nothing to catch.
 		switch {
 		case binding.Out != nil:
-			statement, err := store()
-			if err != nil {
-				return "", err
-			}
-			fmt.Fprintf(&b, "\t%s\n", statement)
+			fmt.Fprintf(&b, "\t%s\n", store())
 		case binding.Result != nil:
 			fmt.Fprintf(&b, "\treturn %s;\n", call)
 		default:
@@ -189,11 +181,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		}
 		b.WriteString(result)
 	} else if binding.Out != nil {
-		statement, err := store()
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(&b, "\t\t%s\n", statement)
+		fmt.Fprintf(&b, "\t\t%s\n", store())
 	} else {
 		fmt.Fprintf(&b, "\t\t%s;\n", call)
 	}
@@ -222,11 +210,7 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 			continue
 		}
 		if arg.stdRole == stdRolePrimary {
-			if arg.stdMove {
-				args = append(args, "std::move("+arg.stdLocal+")")
-			} else {
-				args = append(args, arg.stdLocal)
-			}
+			args = append(args, arg.stdLocal)
 			continue
 		}
 		expr, err := m.shimArg(arg.param, arg.cName)

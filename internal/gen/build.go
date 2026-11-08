@@ -118,7 +118,7 @@ func (m *packageModel) compileFlags(dir string) []string {
 	return out
 }
 
-// hasOptimisation reports whether the project already chose an optimisation
+// hasOptimisation reports whether the project already chose an optimization
 // level, so the shim is built the way the library is.
 func hasOptimisation(args []string) bool {
 	for _, arg := range args {

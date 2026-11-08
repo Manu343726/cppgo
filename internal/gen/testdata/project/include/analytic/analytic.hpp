@@ -51,6 +51,11 @@ public:
     // (pointer, length), which the Go side sees as a slice.
     double dot(const double *values, std::size_t n) const;
 
+    // A method that takes a callback: the reentrant carrier with an implicit
+    // this as the first INTEGER argument.
+    std::int32_t apply(const std::function<std::int32_t(std::int32_t)> &fn,
+                       std::int32_t value) const;
+
     static std::int32_t version();
 
 private:
@@ -82,5 +87,29 @@ std::int32_t fold(const std::function<std::int32_t(std::int32_t, std::int32_t)> 
 
 // A plain function pointer: the shim casts the callback address to it.
 double integrate(double (*fn)(double), double from, double to);
+
+// A noexcept callback: the reentrant carrier with its result in a register and
+// no error channel at all.
+double eval(double (*fn)(double), double x) noexcept;
+
+// The same, with a bool result: the value comes back in AL.
+bool positive(double (*fn)(double), double x) noexcept;
+
+// And with an unsigned result, which travels back as the full register.
+std::uint32_t tally(std::uint32_t (*fn)(std::uint32_t), std::uint32_t n) noexcept;
+
+// A callback with no result: the Go function is called for its effect.
+void visit(void (*fn)(double), std::size_t n);
+
+// Two callbacks in one signature: two registrations, two releases, and the
+// second address in the second INTEGER slot.
+double pair(double (*fn)(double), double (*first)(double), double x);
+
+// A bool argument and a bool result: the value occupies one byte of a register.
+bool truthy(bool (*fn)(bool), bool value) noexcept;
+
+// A noexcept callback whose own result is a record: no error channel, and the
+// Sample is written through the storage the caller owns.
+Sample cb_blend(double (*fn)(double), double t) noexcept;
 
 } // namespace analytic

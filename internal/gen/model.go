@@ -148,14 +148,13 @@ type wireArg struct {
 	param cxx.Param
 	// stdRole is set for a standard-library parameter's words.
 	stdRole stdRole
-	// stdKind, stdLocal, stdArgs, stdElem and stdMove describe the C++ value
+	// stdKind, stdLocal, stdArgs, stdElem and stdType describe the C++ value
 	// the shim builds from the primary word.
 	stdKind  stdKind
 	stdLocal string
 	stdArgs  []string
 	stdElem  *goType
 	stdType  *goType
-	stdMove  bool
 	// isOut marks a standard-library result's out-parameter.
 	isOut bool
 	// callable is set for a function-pointer or std::function parameter: the
@@ -278,7 +277,7 @@ type builder struct {
 	// order records the insertion order of records, for deterministic output.
 	order    []string
 	bindings []*binding
-	// synthMembers are the members of included template specialisations. The
+	// synthMembers are the members of included template specializations. The
 	// model reads them from the pattern, because libclang exposes no cursor for
 	// the instantiated definition, so they are not in the project's symbol list.
 	synthMembers []cxx.Symbol
@@ -291,12 +290,10 @@ type builder struct {
 	// needs: a declaration with no visible definition is out of line only when
 	// the library exports its mangled name.
 	exported map[string]bool
-	// flags are the compilation flags the headers were parsed with. The shim
-	// self-check parses the generated translation unit with the same ones.
+	// flags are the compilation flags the headers were parsed with. The shim is
+	// compiled with the same ones.
 	flags    []string
 	usesFree bool
-	// usesSpan is true when the generated shim needs <span> (C++20).
-	usesSpan bool
 }
 
 // build loads the headers and turns the model into a package model.
@@ -399,7 +396,7 @@ func (b *builder) buildRecords() error {
 			continue
 		}
 		if rec.IsTemplateSpecialization {
-			// A specialisation is part of the API only when the manifest names
+			// A specialization is part of the API only when the manifest names
 			// it: the user chooses which concrete types to emit.
 			if !b.instantiationNamed(rec.QualifiedName) {
 				continue
@@ -1204,8 +1201,8 @@ func (b *builder) chooseCarrier(binding *binding) {
 		}
 	}
 	if binding.Carrier.shimCarried() {
-		// A standard-library argument is marshalled inside the thunk, and that
-		// marshalling allocates, so such a call can fail even when the C++
+		// A standard-library argument is marshaled inside the thunk, and that
+		// marshaling allocates, so such a call can fail even when the C++
 		// declaration is noexcept.
 		binding.Status = !sym.IsNoExcept || binding.hasStd
 	}

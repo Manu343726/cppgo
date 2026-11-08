@@ -485,23 +485,17 @@ func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx c
 		fmt.Fprintf(b, "\tcppgoResult := new(%s)\n", binding.OutLocal)
 	}
 	b.WriteString("\tvar cppgoFrame cppgo.Args\n")
-	cloneSource := binding.IsClone
+	// The frame is filled from the same expressions the NOSPLIT trampoline
+	// would load, in wire order, into the two register banks.
+	exprs := m.wireExprs(binding, ctx)
 	ints, floats := 0, 0
-	for _, arg := range binding.Wire {
-		expr := arg.expr
-		switch {
-		case arg.label == "this":
-			expr = ctx.thisExpr
-		case cloneSource:
-			expr = ctx.recvExpr
-			cloneSource = false
-		}
+	for i, arg := range binding.Wire {
 		if arg.class == classFloat {
-			fmt.Fprintf(b, "\tcppgoFrame.F[%d] = float64(%s)\n", floats, expr)
+			fmt.Fprintf(b, "\tcppgoFrame.F[%d] = float64(%s)\n", floats, exprs[i])
 			floats++
 			continue
 		}
-		fmt.Fprintf(b, "\tcppgoFrame.I[%d] = uintptr(%s)\n", ints, expr)
+		fmt.Fprintf(b, "\tcppgoFrame.I[%d] = uintptr(%s)\n", ints, exprs[i])
 		ints++
 	}
 	fmt.Fprintf(b, "\tcppgo.CallReentrant(%s, &cppgoFrame)\n", binding.SymbolVar)
@@ -518,14 +512,13 @@ func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx c
 	}
 	b.WriteString("\tif cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {\n")
 	fmt.Fprintf(b, "\t\treturn %scppgoCallError(%q)\n\t}\n", errorZeroPrefix(binding), binding.sym.QualifiedName)
-	switch {
-	case binding.Out != nil:
+	// A status thunk with a value always carries it through the out-pointer the
+	// caller owns, so what is left is that pointer or no result at all.
+	if binding.Out != nil {
 		fmt.Fprintf(b, "\treturn %s, nil\n", convertResult(binding, "*cppgoResult"))
-	case binding.Result != nil:
-		fmt.Fprintf(b, "\treturn %s, nil\n", reentrantResult(binding))
-	default:
-		b.WriteString("\treturn nil\n")
+		return
 	}
+	b.WriteString("\treturn nil\n")
 }
 
 // emitCallbackRegistration writes one Go function into the callback table. The
@@ -568,7 +561,7 @@ func (m *packageModel) emitCallbackRegistration(b *strings.Builder, binding *bin
 		fmt.Fprintf(b, "\t\tif %s {\n\t\t\tcppgoFrame.Ret = 1\n\t\t}\n", invoke)
 	case callable.Result.Kind == goFloat:
 		fmt.Fprintf(b, "\t\tcppgoFrame.RetF = %s\n", invoke)
-	case callable.Result.Param.Unsigned:
+	case unsignedType(callable.Result):
 		fmt.Fprintf(b, "\t\tcppgoFrame.Ret = uintptr(%s)\n", invoke)
 	default:
 		fmt.Fprintf(b, "\t\tcppgoFrame.Ret = uintptr(int64(%s))\n", invoke)
@@ -581,6 +574,11 @@ func (m *packageModel) emitCallbackRegistration(b *strings.Builder, binding *bin
 	}
 	fmt.Fprintf(b, "\tdefer cppgo.ReleaseCallback(cppgoCallback%d)\n", index)
 }
+
+// unsignedType reports whether a mapped integer has no sign bit to extend. The
+// Go name is the evidence: a template argument's element type carries no
+// libclang parameter, so its width and signedness are the mapped spelling.
+func unsignedType(t *goType) bool { return strings.HasPrefix(t.Go, "uint") }
 
 // reentrantResult reads a value result out of the argument frame: the INTEGER
 // result from RAX and the floating one from XMM0.
@@ -691,7 +689,7 @@ func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, desc
 	fmt.Fprintf(b, "\n// %s\n", description)
 	mangled := binding.sym.Mangled
 	if mangled == "" {
-		mangled = "synthesised"
+		mangled = "synthesized"
 	}
 	evidence := "//\n// C++: " + displaySignature(binding.sym) + ", " + mangled
 	evidence += " (" + binding.Carrier.String()

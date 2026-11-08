@@ -141,7 +141,7 @@ func (b *builder) instantiationRequested(name string) bool {
 }
 
 // instantiationNamed reports whether an -instantiate entry names exactly this
-// specialisation. It marks the entry as matched when it does.
+// specialization. It marks the entry as matched when it does.
 func (b *builder) instantiationNamed(name string) bool {
 	for i, entry := range b.cfg.Instantiate {
 		if entry == name {

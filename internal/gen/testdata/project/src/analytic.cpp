@@ -18,6 +18,11 @@ double Signal::energy() const { return gain_ * static_cast<double>(taps_); }
 
 double Signal::scaled(double k) const noexcept { return gain_ * k; }
 
+std::int32_t Signal::apply(const std::function<std::int32_t(std::int32_t)> &fn,
+                           std::int32_t value) const {
+    return fn(value) + static_cast<std::int32_t>(gain_);
+}
+
 double Signal::dot(const double *values, std::size_t n) const {
     double sum = 0.0;
     for (std::size_t i = 0; i < n && i < taps_; ++i) {
@@ -68,6 +73,35 @@ double integrate(double (*fn)(double), double from, double to) {
     const double half = (to - from) / 2.0;
     const double offset = half / std::sqrt(3.0);
     return half * (fn(middle - offset) + fn(middle + offset));
+}
+
+double eval(double (*fn)(double), double x) noexcept { return fn(x); }
+
+bool positive(double (*fn)(double), double x) noexcept { return fn(x) > 0; }
+
+std::uint32_t tally(std::uint32_t (*fn)(std::uint32_t), std::uint32_t n) noexcept {
+    std::uint32_t sum = 0;
+    for (std::uint32_t i = 1; i <= n; ++i) {
+        sum += fn(i);
+    }
+    return sum;
+}
+
+void visit(void (*fn)(double), std::size_t n) {
+    for (std::size_t i = 0; i < n; ++i) {
+        fn(static_cast<double>(i));
+    }
+}
+
+double pair(double (*fn)(double), double (*first)(double), double x) {
+    return fn(first(x));
+}
+
+bool truthy(bool (*fn)(bool), bool value) noexcept { return fn(value); }
+
+Sample cb_blend(double (*fn)(double), double t) noexcept {
+    const double value = fn(t);
+    return Sample{value, value * 2, value * 3};
 }
 
 } // namespace analytic

@@ -106,7 +106,7 @@ type mapper struct {
 
 // mapType maps one C++ type, rejecting only what this build cannot emit yet.
 //
-// A standard-library type is recognised by its declaration spelling, before the
+// A standard-library type is recognized by its declaration spelling, before the
 // canonical kind is consulted: libclang's canonical form of a reference to a
 // class template alias can be wrong (std::string & resolves to int & on some
 // versions), so the spelling is the reliable half exactly as it is for streams.
@@ -221,7 +221,7 @@ func templateArguments(name, prefix string) ([]string, error) {
 	}
 	args := splitTemplateArgs(name[len(prefix)+1 : len(name)-1])
 	if len(args) == 0 {
-		return nil, pending(fmt.Sprintf("%q has no template arguments", name), "write a concrete specialisation at the C++ boundary")
+		return nil, pending(fmt.Sprintf("%q has no template arguments", name), "write a concrete specialization at the C++ boundary")
 	}
 	return args, nil
 }
@@ -233,7 +233,7 @@ func (m *mapper) mapTemplateElement(name, prefix string) (*goType, error) {
 		return nil, err
 	}
 	if len(args) != 1 {
-		return nil, pending(fmt.Sprintf("%q has %d template arguments", name, len(args)), "write a one-argument specialisation at the C++ boundary")
+		return nil, pending(fmt.Sprintf("%q has %d template arguments", name, len(args)), "write a one-argument specialization at the C++ boundary")
 	}
 	return m.mapElement(args[0])
 }
@@ -247,7 +247,7 @@ func (m *mapper) mapSmartPointer(name, prefix string) (*goType, error) {
 		return nil, err
 	}
 	if len(args) != 1 {
-		return nil, pending(fmt.Sprintf("%q has %d template arguments", name, len(args)), "write a one-argument specialisation at the C++ boundary")
+		return nil, pending(fmt.Sprintf("%q has %d template arguments", name, len(args)), "write a one-argument specialization at the C++ boundary")
 	}
 	record, ok := m.lookupRecord(strings.TrimSpace(args[0]))
 	if !ok {
@@ -356,7 +356,7 @@ func arrayCount(spelling string) (int64, error) {
 	return count, nil
 }
 
-// stdTypeName recognises a standard-library type by its declaration spelling
+// stdTypeName recognizes a standard-library type by its declaration spelling
 // and returns the normalised name.
 //
 // The canonical type cannot decide this: libclang's canonical form of a
@@ -527,7 +527,7 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 // A mirrored record in Go *is* its C layout, so the Go value is the record
 // itself and the shim receives a pointer to it: the thunk copies it into the
 // call, which is where the C++ copy constructor lives and where a value above
-// 16 bytes is materialised without any Go-side stack knowledge.
+// 16 bytes is materialized without any Go-side stack knowledge.
 func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
 	record, ok := m.records[p.RecordName]
 	if !ok {
@@ -547,7 +547,7 @@ func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
 }
 
 // missingRecord is the error for a record the generated API does not hold. A
-// template specialisation is the common cause: it exists as a type but the
+// template specialization is the common cause: it exists as a type but the
 // manifest has not named it.
 func missingRecord(p cxx.Param) error {
 	fix := "include its complete definition in the header"
@@ -593,7 +593,7 @@ func splitSignature(text string) (signature, error) {
 	return signature{result: result, params: params}, nil
 }
 
-// functionPointer recognises a pointer to a function and returns its signature
+// functionPointer recognizes a pointer to a function and returns its signature
 // from the declaration spelling: libclang reports the pointee as a function
 // prototype with no argument list of its own in the model.
 func functionPointer(p cxx.Param) (signature, bool) {

@@ -461,7 +461,7 @@ func NewCopyNoDtor(value int32) (*CopyNoDtor, error) {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: types::CopyNoDtor::CopyNoDtor(const types::CopyNoDtor &), synthesised (thunk cppgo_thunk_5854863ace38, no mangled symbol)
+// C++: types::CopyNoDtor::CopyNoDtor(const types::CopyNoDtor &), synthesized (thunk cppgo_thunk_5854863ace38, no mangled symbol)
 func (c *CopyNoDtor) Clone() (*CopyNoDtor, error) {
 	if c == nil || c.obj == nil {
 		return nil, cppgo.ErrClosed
@@ -529,7 +529,7 @@ func (d *DeletedCtor) cppgoAddr() uintptr {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: types::DeletedCtor::DeletedCtor(const types::DeletedCtor &), synthesised (thunk cppgo_thunk_04d8127bf59e, no mangled symbol)
+// C++: types::DeletedCtor::DeletedCtor(const types::DeletedCtor &), synthesized (thunk cppgo_thunk_04d8127bf59e, no mangled symbol)
 func (d *DeletedCtor) Clone() (*DeletedCtor, error) {
 	if d == nil || d.obj == nil {
 		return nil, cppgo.ErrClosed
@@ -603,7 +603,7 @@ func NewDeletedDtor(value int32) (*DeletedDtor, error) {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: types::DeletedDtor::DeletedDtor(const types::DeletedDtor &), synthesised (thunk cppgo_thunk_29071307072d, no mangled symbol)
+// C++: types::DeletedDtor::DeletedDtor(const types::DeletedDtor &), synthesized (thunk cppgo_thunk_29071307072d, no mangled symbol)
 func (d *DeletedDtor) Clone() (*DeletedDtor, error) {
 	if d == nil || d.obj == nil {
 		return nil, cppgo.ErrClosed
@@ -651,7 +651,7 @@ func (e *Empty) cppgoAddr() uintptr {
 
 // NewEmpty constructs a types::Empty.
 //
-// C++: types::Empty::Empty(), synthesised (thunk cppgo_thunk_657a700f2da3, no mangled symbol)
+// C++: types::Empty::Empty(), synthesized (thunk cppgo_thunk_657a700f2da3, no mangled symbol)
 func NewEmpty() (*Empty, error) {
 	if err := cppgoOpen(""); err != nil {
 		return nil, err
@@ -665,7 +665,7 @@ func NewEmpty() (*Empty, error) {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: types::Empty::Empty(const types::Empty &), synthesised (thunk cppgo_thunk_e44d3b0e54c0, no mangled symbol)
+// C++: types::Empty::Empty(const types::Empty &), synthesized (thunk cppgo_thunk_e44d3b0e54c0, no mangled symbol)
 func (e *Empty) Clone() (*Empty, error) {
 	if e == nil || e.obj == nil {
 		return nil, cppgo.ErrClosed
@@ -713,7 +713,7 @@ func (i *Implicit) cppgoAddr() uintptr {
 
 // NewImplicit constructs a types::Implicit.
 //
-// C++: types::Implicit::Implicit(), synthesised (thunk cppgo_thunk_e2e7564576e5, no mangled symbol)
+// C++: types::Implicit::Implicit(), synthesized (thunk cppgo_thunk_e2e7564576e5, no mangled symbol)
 func NewImplicit() (*Implicit, error) {
 	if err := cppgoOpen(""); err != nil {
 		return nil, err
@@ -735,7 +735,7 @@ func NewImplicit() (*Implicit, error) {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: types::Implicit::Implicit(const types::Implicit &), synthesised (thunk cppgo_thunk_3e54d1a60f90, no mangled symbol)
+// C++: types::Implicit::Implicit(const types::Implicit &), synthesized (thunk cppgo_thunk_3e54d1a60f90, no mangled symbol)
 func (i *Implicit) Clone() (*Implicit, error) {
 	if i == nil || i.obj == nil {
 		return nil, cppgo.ErrClosed
@@ -898,7 +898,7 @@ func NewNoDtor(value int32) (*NoDtor, error) {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: types::NoDtor::NoDtor(const types::NoDtor &), synthesised (thunk cppgo_thunk_c750e38edc23, no mangled symbol)
+// C++: types::NoDtor::NoDtor(const types::NoDtor &), synthesized (thunk cppgo_thunk_c750e38edc23, no mangled symbol)
 func (n *NoDtor) Clone() (*NoDtor, error) {
 	if n == nil || n.obj == nil {
 		return nil, cppgo.ErrClosed
@@ -1085,7 +1085,7 @@ func NewOpaque() (*Opaque, error) {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: types::Opaque::Opaque(const types::Opaque &), synthesised (thunk cppgo_thunk_c945736d6c28, no mangled symbol)
+// C++: types::Opaque::Opaque(const types::Opaque &), synthesized (thunk cppgo_thunk_c945736d6c28, no mangled symbol)
 func (o *Opaque) Clone() (*Opaque, error) {
 	if o == nil || o.obj == nil {
 		return nil, cppgo.ErrClosed
@@ -1228,7 +1228,7 @@ func (t *Tiny) cppgoAddr() uintptr {
 
 // NewTiny constructs a types::Tiny.
 //
-// C++: types::Tiny::Tiny(), synthesised (thunk cppgo_thunk_31588c7c9045, no mangled symbol)
+// C++: types::Tiny::Tiny(), synthesized (thunk cppgo_thunk_31588c7c9045, no mangled symbol)
 func NewTiny() (*Tiny, error) {
 	if err := cppgoOpen(""); err != nil {
 		return nil, err
@@ -1250,7 +1250,7 @@ func NewTiny() (*Tiny, error) {
 
 // Clone copies the object through its copy constructor.
 //
-// C++: types::Tiny::Tiny(const types::Tiny &), synthesised (thunk cppgo_thunk_f0cbe8a01b8f, no mangled symbol)
+// C++: types::Tiny::Tiny(const types::Tiny &), synthesized (thunk cppgo_thunk_f0cbe8a01b8f, no mangled symbol)
 func (t *Tiny) Clone() (*Tiny, error) {
 	if t == nil || t.obj == nil {
 		return nil, cppgo.ErrClosed

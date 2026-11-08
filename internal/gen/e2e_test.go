@@ -18,7 +18,7 @@ import (
 // on a project laid out the way a real one is: a header under include/, a
 // source under src/, and a shared object built by the project's own command.
 //
-// The steps are the contract's three artefacts in order. The user's library is
+// The steps are the contract's three artifacts in order. The user's library is
 // built first, by the project's Makefile, and never touched again. `cppgo gen`
 // parses the header, decides the carriers, writes the Go package, the
 // trampolines and the shim, and compiles the shim itself into
@@ -70,7 +70,7 @@ func TestGeneratedPackageBuildsAndRuns(t *testing.T) {
 	require.FileExists(t, shim)
 	assert.Equal(t, before, fileDigest(t, library), "the user's library must not change")
 	assert.Empty(t, symbolsMatching(t, library, "cppgo"))
-	assert.NotEmpty(t, symbolsMatching(t, shim, "cppgo_last_error"), "the shim is the cppgo artefact")
+	assert.NotEmpty(t, symbolsMatching(t, shim, "cppgo_last_error"), "the shim is the cppgo artifact")
 
 	// 4. The generated package builds and runs against the two objects, with
 	// cgo off and with the race detector on.
@@ -267,7 +267,7 @@ func copyTree(src, dst string) error {
 }
 
 // e2eTestSource is the program the generated package runs. Every assertion is a
-// value the C++ produced, and each one is labelled with the construct it
+// value the C++ produced, and each one is labeled with the construct it
 // measures.
 const e2eTestSource = `package analytic
 
@@ -300,6 +300,10 @@ func TestBindings(t *testing.T) {
 	}
 	if d, err := s.Dot([]float64{1, 1, 1, 1, 1}); err != nil || d != 12 {
 		t.Fatalf("Dot = %v, %v", d, err) // a (pointer, length) slice, capped by taps
+	}
+	// A method that takes a callback: this travels in the first INTEGER slot.
+	if got, err := s.Apply(func(v int32) int32 { return v * 2 }, 5); err != nil || got != 13 {
+		t.Fatalf("Apply = %v, %v (5*2 plus the gain of 3)", got, err)
 	}
 	if v, err := SignalVersion(); err != nil || v != 4 {
 		t.Fatalf("SignalVersion = %v, %v", v, err)
@@ -371,6 +375,44 @@ func TestBindings(t *testing.T) {
 	integral, err := Integrate(func(x float64) float64 { return x }, 0, 2)
 	if err != nil || math.Abs(integral-2) > 1e-9 {
 		t.Fatalf("Integrate = %v, %v", integral, err)
+	}
+
+	// A noexcept callback: the reentrant carrier with no error channel, so the
+	// result is the signature's only return.
+	if got := Eval(func(x float64) float64 { return x * 3 }, 2); got != 6 {
+		t.Fatalf("Eval = %v, want 6", got)
+	}
+	if !Positive(func(x float64) float64 { return x }, 1) {
+		t.Fatal("Positive must report the callback's true result")
+	}
+	if Positive(func(x float64) float64 { return -x }, 1) {
+		t.Fatal("Positive must report the callback's false result")
+	}
+	if sum := Tally(func(n uint32) uint32 { return n }, 4); sum != 10 {
+		t.Fatalf("Tally = %d, want 1+2+3+4", sum)
+	}
+	called := 0
+	if err := Visit(func(x float64) { called++ }, 5); err != nil || called != 5 {
+		t.Fatalf("Visit = %v, %d calls", err, called)
+	}
+
+	// Two callbacks in one signature, each with its own registration.
+	if got, err := Pair(func(x float64) float64 { return x + 1 }, func(x float64) float64 { return x * 2 }, 4); err != nil || got != 9 {
+		t.Fatalf("Pair = %v, %v", got, err)
+	}
+
+	// A bool argument and a bool result.
+	if !Truthy(func(v bool) bool { return v }, true) {
+		t.Fatal("Truthy must return the callback's true")
+	}
+	if Truthy(func(v bool) bool { return v }, false) {
+		t.Fatal("Truthy must return the callback's false")
+	}
+
+	// A noexcept callback whose result is a record: no error channel at all.
+	fromCallback := CbBlend(func(t float64) float64 { return t }, 2)
+	if fromCallback != (Sample{A: 2, B: 4, C: 6}) {
+		t.Fatalf("CbBlend = %+v", fromCallback)
 	}
 
 	// A panic inside a callback reaches the caller instead of the process.

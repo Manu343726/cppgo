@@ -73,7 +73,7 @@ type Config struct {
 	Bind []string
 	// Exclude removes a root. An unmatched entry is an error.
 	Exclude []string
-	// Instantiate names the concrete template specialisations the API uses,
+	// Instantiate names the concrete template specializations the API uses,
 	// e.g. "mathx::Box<int>". An instantiation must be visible to libclang as
 	// an explicit instantiation or a reachable type.
 	Instantiate []string
@@ -156,7 +156,7 @@ func renderModel(model *packageModel) (*Result, error) {
 
 // Generate writes the generated files and compiles the shim, or verifies the
 // files in check mode. Check mode writes nothing and builds nothing: the shim
-// is a build artefact, and what a stale check measures is the sources.
+// is a build artifact, and what a stale check measures is the sources.
 func Generate(cfg Config) error {
 	model, err := build(cfg)
 	if err != nil {
@@ -180,7 +180,7 @@ func Generate(cfg Config) error {
 	}
 	// The shim is compiled in a scratch directory first. A generation that
 	// cannot build its own shim writes nothing: the output directory is only
-	// touched once the artefact exists.
+	// touched once the artifact exists.
 	scratch, err := os.MkdirTemp("", "cppgo-shim-")
 	if err != nil {
 		return fmt.Errorf("cppgo: creating the shim build directory: %w", err)
