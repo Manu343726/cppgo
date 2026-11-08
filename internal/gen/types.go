@@ -2,257 +2,224 @@ package gen
 
 import (
 	"fmt"
-	"go/ast"
-	"go/types"
+
+	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
-// kind classifies how a Go type crosses the ABI boundary.
-type kind uint8
+// goKind is how a C++ type crosses into Go.
+type goKind uint8
 
 const (
-	kindInt     kind = iota // signed/unsigned integer of any width
-	kindFloat               // float32/float64
-	kindBool                // bool, passed as int32_t
-	kindString              // const char*, size_t
-	kindSlice               // T*, size_t
-	kindPointer             // *T
-	kindHandle              // cppgo.Handle, i.e. void*
-	kindError               // error, delivered as an int32_t status
-	kindObject              // a C++ class of the bound package, i.e. its this pointer
+	goVoid goKind = iota
+	goInteger
+	goFloat
+	goBool
+	goPointer
+	goSlice
+	goRecord
 )
 
-// supportedTypes is the list quoted back to the user in rejection messages.
-const supportedTypes = "int8/16/32/64, uint8/16/32/64, int, uint, uintptr, " +
-	"float32, float64, bool, string, []T (T numeric), *T, cppgo.Handle, " +
-	"a //cppgo:class type, and error as the last result"
-
-// typeInfo describes one Go type on both sides of the boundary.
-type typeInfo struct {
-	kind kind
-	// goType is the canonical Go spelling of the type, as it appears in the
-	// generated source.
-	goType string
-	// slot is the Go type of the single 8-(or 4-)byte mirror slot the type
-	// occupies on the trampoline's frame. It is empty for types that expand
-	// to more than one slot (string, slices).
-	slot string
-	// size is the width of the mirror slot in bytes: 4 for float32/int32,
-	// 8 for everything else.
-	size int
-	// width is the width of the C type the Go type stands for: 1 for int8, 4
-	// for int32/float32, 8 for int64/float64. It is what the ABI validator
-	// compares against sizeof of the C++ parameter.
-	width int
-	// cType is the C type used in the shim header. For types that expand to
-	// a (pointer, length) pair it is the pointer half only.
-	cType string
-	// elemGo and elemC describe the element of slices and pointers.
-	elemGo string
-	elemC  string
-	// named is the C name of a user-declared pointee type, empty when the
-	// pointee is a builtin.
-	named string
-	// class is the C++ class a kindObject value refers to.
-	class *classInfo
+// goType is one C++ type on both sides of the boundary.
+type goType struct {
+	// Kind is the Go shape of the value.
+	Kind goKind
+	// Go is the Go spelling in the generated API: "float64", "[]float64",
+	// "*Vector", "Point".
+	Go string
+	// C is the parameter type in the generated extern "C" prototype. Records
+	// cross as void pointers, so the shim header stays standalone and the
+	// cast happens in the translation unit where the layout is known.
+	C string
+	// Cxx is the C++ type a thunk casts a pointer back to: "::mathx::Vector",
+	// "double".
+	Cxx string
+	// Elem is the pointee of a pointer or the element of a slice.
+	Elem *goType
+	// Record is the record model a record or record pointer refers to.
+	Record *recordModel
+	// Const is top-level const of the pointee, for the C parameter type.
+	Const bool
+	// Param is the model type this was mapped from.
+	Param cxx.Param
 }
 
-// align is the natural alignment of the mirror slot, which for every
-// supported type equals its size.
-func (t *typeInfo) align() int { return t.size }
-
-// resolver maps Go type expressions to their ABI description. It knows the
-// package's //cppgo:class types, which is the only thing that distinguishes a
-// C++ class handle from an unsupported named type.
-type resolver struct {
-	classes map[string]*classInfo
+// mapper maps C++ types onto Go, using the package's record model to tell a
+// mirrorable aggregate from an opaque value.
+type mapper struct {
+	records map[string]*recordModel
 }
 
-// resolveType maps a Go type expression to its ABI description, without any
-// class in scope.
-func resolveType(expr ast.Expr) (*typeInfo, error) { return resolveIn(nil, expr) }
-
-// resolveIn maps a Go type expression, treating the given class types as C++
-// object handles.
-func resolveIn(classes map[string]*classInfo, expr ast.Expr) (*typeInfo, error) {
-	return (&resolver{classes: classes}).resolve(expr)
-}
-
-// resolve maps a Go type expression to its ABI description.
-func (r *resolver) resolve(expr ast.Expr) (*typeInfo, error) {
-	switch e := expr.(type) {
-	case *ast.ParenExpr:
-		return r.resolve(e.X)
-	case *ast.Ellipsis:
-		return nil, fmt.Errorf("variadic parameters are not supported: pass a slice instead")
-	case *ast.Ident:
-		return r.ident(e.Name, expr)
-	case *ast.SelectorExpr:
-		if x, ok := e.X.(*ast.Ident); ok && x.Name == "cppgo" && e.Sel.Name == "Handle" {
-			return &typeInfo{
-				kind:   kindHandle,
-				goType: "cppgo.Handle",
-				slot:   "unsafe.Pointer",
-				size:   8,
-				width:  8,
-				cType:  "void*",
-			}, nil
-		}
-		return nil, unsupportedType(expr)
-	case *ast.StarExpr:
-		return r.pointer(e, expr)
-	case *ast.ArrayType:
-		if e.Len != nil {
-			return nil, fmt.Errorf("unsupported type %s: only slices ([]T) cross the boundary, arrays must be passed as pointers", types.ExprString(expr))
-		}
-		return r.slice(e.Elt, expr)
-	case *ast.InterfaceType:
-		if e.Methods == nil || len(e.Methods.List) == 0 {
-			return nil, fmt.Errorf("unsupported type %s: use cppgo.Handle to pass an opaque C++ object", types.ExprString(expr))
-		}
-		return nil, unsupportedType(expr)
-	case *ast.FuncType:
-		return nil, fmt.Errorf("unsupported type %s: callbacks from C++ into Go are not supported in v1", types.ExprString(expr))
+// mapType maps one C++ type, rejecting only what this build cannot emit yet.
+func (m *mapper) mapType(p cxx.Param) (*goType, error) {
+	switch p.Kind {
+	case cxx.TypeVoid:
+		return &goType{Kind: goVoid, Go: "", Param: p}, nil
+	case cxx.TypeInteger:
+		return m.mapInteger(p)
+	case cxx.TypeFloat:
+		return m.mapFloat(p)
+	case cxx.TypePointer:
+		return m.mapPointer(p)
+	case cxx.TypeRecord:
+		return m.mapRecord(p)
+	case cxx.TypeEnum:
+		return nil, unsupported(p, "enum values")
+	case cxx.TypeArray:
+		return nil, unsupported(p, "array values")
 	default:
-		return nil, unsupportedType(expr)
+		return nil, unsupported(p, "this type")
 	}
 }
 
-// ident maps a builtin type name, or a class type of the bound package.
-func (r *resolver) ident(name string, expr ast.Expr) (*typeInfo, error) {
-	type scalar struct {
-		kind   kind
-		slot   string
-		size   int
-		width  int
-		cType  string
-		signed bool
+// mapInteger maps every integer width the type map covers, and checks the LP64
+// assumption the contract makes: on a platform where long is not 64-bit the
+// generated code would silently reinterpret a value.
+func (m *mapper) mapInteger(p cxx.Param) (*goType, error) {
+	if p.ClangKind == "Bool" {
+		return &goType{Kind: goBool, Go: "bool", C: "bool", Cxx: "bool", Param: p}, nil
 	}
-	table := map[string]scalar{
-		"int8":    {kindInt, "int64", 8, 1, "int8_t", true},
-		"int16":   {kindInt, "int64", 8, 2, "int16_t", true},
-		"int32":   {kindInt, "int64", 8, 4, "int32_t", true},
-		"rune":    {kindInt, "int64", 8, 4, "int32_t", true},
-		"int64":   {kindInt, "int64", 8, 8, "int64_t", true},
-		"int":     {kindInt, "int64", 8, 8, "int64_t", true},
-		"uint8":   {kindInt, "uint64", 8, 1, "uint8_t", false},
-		"byte":    {kindInt, "uint64", 8, 1, "uint8_t", false},
-		"uint16":  {kindInt, "uint64", 8, 2, "uint16_t", false},
-		"uint32":  {kindInt, "uint64", 8, 4, "uint32_t", false},
-		"uint64":  {kindInt, "uint64", 8, 8, "uint64_t", false},
-		"uint":    {kindInt, "uint64", 8, 8, "uint64_t", false},
-		"uintptr": {kindInt, "uintptr", 8, 8, "uint64_t", false},
-		"float32": {kindFloat, "float32", 4, 4, "float", true},
-		"float64": {kindFloat, "float64", 8, 8, "double", true},
-		"bool":    {kindBool, "int64", 8, 1, "int32_t", false},
+	if (p.ClangKind == "Long" || p.ClangKind == "ULong") && p.SizeBytes != 8 {
+		return nil, fmt.Errorf("cppgo: %s: long is %d bytes on this target, not 8; the type map is LP64 and a silent reinterpretation is not emitted", p.Spelling, p.SizeBytes)
 	}
-	if name == "error" {
-		return &typeInfo{kind: kindError, goType: "error", cType: "int32_t"}, nil
-	}
-	if name == "any" {
-		return nil, fmt.Errorf("unsupported type any: use cppgo.Handle to pass an opaque C++ object")
-	}
-	if name == "string" {
-		return &typeInfo{
-			kind:   kindString,
-			goType: "string",
-			cType:  "const char*",
-			elemGo: "byte",
-			elemC:  "char",
-		}, nil
-	}
-	if s, ok := table[name]; ok {
-		return &typeInfo{
-			kind:   s.kind,
-			goType: name,
-			slot:   s.slot,
-			size:   s.size,
-			width:  s.width,
-			cType:  s.cType,
-		}, nil
-	}
-	if c := r.classes[name]; c != nil {
-		// A class handle is a pointer with no Go-side layout: the value is the
-		// `this` pointer, and it travels in one integer slot.
-		return &typeInfo{
-			kind:   kindObject,
-			goType: name,
-			slot:   "uintptr",
-			size:   8,
-			width:  8,
-			class:  c,
-		}, nil
-	}
-	return nil, unsupportedType(expr)
-}
-
-// pointer maps *T. The pointee crosses as-is, so T must be a type the
-// C++ side can name: a builtin or a type of the bound package, which the shim
-// header forward-declares.
-func (r *resolver) pointer(e *ast.StarExpr, expr ast.Expr) (*typeInfo, error) {
-	var elemGo, elemC, named string
-	switch inner := e.X.(type) {
-	case *ast.ParenExpr:
-		return r.pointer(&ast.StarExpr{X: inner.X}, expr)
-	case *ast.Ident:
-		elemGo = inner.Name
-		if info, err := r.ident(inner.Name, inner); err == nil {
-			switch info.kind {
-			case kindError:
-				return nil, fmt.Errorf("unsupported type %s: a pointer to error has no C representation", types.ExprString(expr))
-			case kindString, kindSlice:
-				return nil, fmt.Errorf("unsupported type %s: a pointer to %s has no C representation", types.ExprString(expr), inner.Name)
-			case kindObject:
-				return nil, fmt.Errorf("unsupported type %s: %s is already the object pointer, pass it by value", types.ExprString(expr), inner.Name)
-			}
-			elemC = info.cType
-		} else {
-			// A type of the bound package: the shim header declares it.
-			elemC = inner.Name
-			named = inner.Name
-		}
-	case *ast.SelectorExpr:
-		if x, ok := inner.X.(*ast.Ident); ok && x.Name == "cppgo" && inner.Sel.Name == "Handle" {
-			return nil, fmt.Errorf("unsupported type %s: pass cppgo.Handle directly, it already is a pointer", types.ExprString(expr))
-		}
-		return nil, fmt.Errorf("unsupported type %s: only pointers to builtin types and to types of the bound package are supported", types.ExprString(expr))
-	default:
-		return nil, fmt.Errorf("unsupported type %s: only pointers to builtin or named types can cross the boundary (pointers to %s are not supported)", types.ExprString(expr), types.ExprString(e.X))
-	}
-	return &typeInfo{
-		kind:   kindPointer,
-		goType: "*" + elemGo,
-		slot:   "unsafe.Pointer",
-		size:   8,
-		width:  8,
-		cType:  elemC + "*",
-		elemGo: elemGo,
-		elemC:  elemC,
-		named:  named,
-	}, nil
-}
-
-// slice maps []T. T must be a numeric builtin.
-func (r *resolver) slice(elt ast.Expr, expr ast.Expr) (*typeInfo, error) {
-	id, ok := elt.(*ast.Ident)
+	goName, cName, ok := integerType(p.SizeBytes, p.Unsigned)
 	if !ok {
-		return nil, fmt.Errorf("unsupported type %s: only slices of numeric builtin types are supported", types.ExprString(expr))
+		return nil, fmt.Errorf("cppgo: %s: a %d-byte integer has no Go value type in the type map", p.Spelling, p.SizeBytes)
 	}
-	info, err := r.ident(id.Name, id)
-	if err != nil {
-		return nil, fmt.Errorf("unsupported type %s: only slices of numeric builtin types are supported", types.ExprString(expr))
+	return &goType{Kind: goInteger, Go: goName, C: cName, Cxx: cName, Param: p}, nil
+}
+
+// integerType names the Go and C types of an integer of the given width.
+func integerType(size int64, unsigned bool) (goName, cName string, ok bool) {
+	switch size {
+	case 1:
+		if unsigned {
+			return "uint8", "uint8_t", true
+		}
+		return "int8", "int8_t", true
+	case 2:
+		if unsigned {
+			return "uint16", "uint16_t", true
+		}
+		return "int16", "int16_t", true
+	case 4:
+		if unsigned {
+			return "uint32", "uint32_t", true
+		}
+		return "int32", "int32_t", true
+	case 8:
+		if unsigned {
+			return "uint64", "uint64_t", true
+		}
+		return "int64", "int64_t", true
+	default:
+		return "", "", false
 	}
-	if info.kind != kindInt && info.kind != kindFloat {
-		return nil, fmt.Errorf("unsupported type %s: only slices of numeric builtin types are supported", types.ExprString(expr))
+}
+
+// mapFloat maps float and double, and refuses long double with the wrapper that
+// makes it representable instead of a silent narrowing.
+func (m *mapper) mapFloat(p cxx.Param) (*goType, error) {
+	if p.ClangKind == "LongDouble" {
+		return nil, fmt.Errorf("cppgo: %s: long double and __int128 have no Go value type; widen or narrow it at the C++ boundary to double or int64, or wrap it in a representable type", p.Spelling)
 	}
-	return &typeInfo{
-		kind:   kindSlice,
-		goType: "[]" + id.Name,
-		cType:  info.cType + "*",
-		elemGo: id.Name,
-		elemC:  info.cType,
+	switch p.SizeBytes {
+	case 4:
+		return &goType{Kind: goFloat, Go: "float32", C: "float", Cxx: "float", Param: p}, nil
+	case 8:
+		return &goType{Kind: goFloat, Go: "float64", C: "double", Cxx: "double", Param: p}, nil
+	default:
+		return nil, fmt.Errorf("cppgo: %s: long double and __int128 have no Go value type; widen or narrow it at the C++ boundary to double or int64, or wrap it in a representable type", p.Spelling)
+	}
+}
+
+// mapPointer maps T* and T&. A pointer to a scalar is *T; a pointer to a
+// record is *Record, where a record value is the address of the Go value or of
+// the object the opaque Go type owns.
+func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
+	if p.Spelling == "std::nullptr_t" || p.ClangKind == "NullPtr" {
+		return nil, unsupported(p, "nullptr_t")
+	}
+	if p.Pointee == nil {
+		return nil, fmt.Errorf("cppgo: %s: a pointer libclang did not describe cannot be mapped", p.Spelling)
+	}
+	var elem *goType
+	if p.Pointee.Kind == cxx.TypeRecord {
+		// A record pointer does not need the record to be mirrorable: the Go
+		// type is *Record either way, and an opaque one crosses as the address
+		// of the object it owns.
+		record, ok := m.records[p.Pointee.RecordName]
+		if !ok {
+			return nil, fmt.Errorf("cppgo: %s: the record is not part of the generated API", p.Spelling)
+		}
+		elem = &goType{Kind: goRecord, Go: record.GoName, Cxx: "::" + record.CxxName, Record: record, Param: *p.Pointee}
+	} else {
+		mapped, err := m.mapType(*p.Pointee)
+		if err != nil {
+			return nil, err
+		}
+		elem = mapped
+	}
+	if elem.Kind == goVoid {
+		return nil, unsupported(p, "void pointers")
+	}
+	if elem.Kind == goRecord {
+		// A record pointer crosses as void *: the shim header stays standalone
+		// and the thunk casts in the translation unit where the layout is
+		// known. An opaque record's Go API is *Vector, and the value that
+		// reaches C++ is the object's address, not the wrapper struct's.
+		qualified := "void"
+		if p.Pointee.IsConst {
+			qualified = "const void"
+		}
+		return &goType{
+			Kind:   goPointer,
+			Go:     "*" + elem.Go,
+			C:      qualified + " *",
+			Cxx:    elem.Cxx,
+			Elem:   elem,
+			Record: elem.Record,
+			Const:  p.Pointee.IsConst,
+			Param:  p,
+		}, nil
+	}
+	cType := elem.C
+	if p.Pointee.IsConst {
+		cType = "const " + cType
+	}
+	return &goType{
+		Kind:  goPointer,
+		Go:    "*" + elem.Go,
+		C:     cType + " *",
+		Cxx:   elem.Cxx,
+		Elem:  elem,
+		Const: p.Pointee.IsConst,
+		Param: p,
 	}, nil
 }
 
-func unsupportedType(expr ast.Expr) error {
-	return fmt.Errorf("unsupported type %s: cppgo supports %s", types.ExprString(expr), supportedTypes)
+// mapRecord maps a record by value. Only a mirrored aggregate can be a Go
+// value; an opaque one has no layout Go may copy, and crosses by pointer.
+func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
+	record, ok := m.records[p.RecordName]
+	if !ok {
+		return nil, fmt.Errorf("cppgo: %s: the record is not part of the generated API", p.Spelling)
+	}
+	if !record.Mirrored {
+		return nil, unsupported(p, "passing an opaque record by value")
+	}
+	return &goType{
+		Kind:   goRecord,
+		Go:     record.GoName,
+		C:      "void *",
+		Cxx:    "::" + record.CxxName,
+		Record: record,
+		Param:  p,
+	}, nil
+}
+
+// unsupported names a construct this build does not emit yet. It is not a
+// refusal of the construct: DESIGN.md's carrier model covers it, and phase 2b
+// of the emitter workstream implements it.
+func unsupported(p cxx.Param, what string) error {
+	return fmt.Errorf("cppgo: %s: emitting %s is not implemented by this build yet", p.Spelling, what)
 }

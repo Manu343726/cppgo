@@ -2,116 +2,217 @@ package gen
 
 import (
 	"fmt"
-	"sort"
 	"strings"
+
+	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
-// emitShim renders cppgo_shim.h: the extern "C" prototypes the C++ side has
-// to implement. Every prototype is named cppgo_<symbol> so the Go side can
-// resolve it with dlsym after dlopen.
-func emitShim(pkg *packageInfo, sigs []*signature) []byte {
-	guard := "CPPGO_" + guardName(pkg.Name) + "_SHIM_H"
-	var b strings.Builder
-	b.WriteString("/*" + GeneratedBanner[2:] + " */\n")
-	fmt.Fprintf(&b, "/* C++ shim for the Go package %s (library %q). */\n\n", pkg.Name, pkg.Library)
-	fmt.Fprintf(&b, "#ifndef %s\n#define %s\n\n", guard, guard)
-	b.WriteString("#include <stddef.h>\n#include <stdint.h>\n\n")
-	b.WriteString("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n")
-	b.WriteString("/* cppgo_last_error returns the message recorded by the last failed cppgo_*\n")
-	b.WriteString(" * call on this thread, or an empty string when there is none. The pointer\n")
-	b.WriteString(" * stays valid until the next cppgo_* call on the same thread. */\n")
-	b.WriteString("const char *cppgo_last_error(void);\n")
-
-	if named := namedPointees(sigs); len(named) > 0 {
-		b.WriteString("\n/* The bound package passes these types by pointer. The go types are\n")
-		b.WriteString(" * forward-declared as opaque structs; include the header that defines\n")
-		b.WriteString(" * them (or replace these lines) if the C++ side needs their layout. */\n")
-		for _, name := range named {
-			fmt.Fprintf(&b, "struct %s;\ntypedef struct %s %s;\n", name, name, name)
-		}
+// emitShim renders zz_cppgo_shim.h and zz_cppgo_shim.cpp: the extern "C"
+// declarations of every thunk, and the C++ that implements them.
+//
+// The header is standalone: it uses only C types, so it can be included by
+// other C++ code. The source includes the bound header and performs the calls
+// as C++, which is what makes virtual dispatch, inline bodies, and this
+// adjustment work at all.
+func (m *packageModel) emitShim() ([]byte, []byte, error) {
+	header, source, err := m.renderShim()
+	if err != nil {
+		return nil, nil, err
 	}
-
-	for _, sig := range sigs {
-		f := sig.fn
-		b.WriteString("\n")
-		fmt.Fprintf(&b, "/* %s implements %s.\n", f.cName(), f.signature())
-		switch sig.ret.kind {
-		case resStatus, resStatusValue:
-			b.WriteString(" * Returns 0 on success. On failure it returns a non-zero status and\n")
-			b.WriteString(" * leaves the message for cppgo_last_error()")
-			if sig.ret.kind == resStatusValue {
-				fmt.Fprintf(&b, "; the value is written through %s", sig.cParams[len(sig.cParams)-1].Name)
-			}
-			b.WriteString(".\n")
-		}
-		b.WriteString(" * The callee must not keep a pointer to Go memory after returning. */\n")
-		fmt.Fprintf(&b, "%s %s(%s);\n", shimReturn(sig), f.cName(), shimParams(sig))
-	}
-
-	fmt.Fprintf(&b, "\n#ifdef __cplusplus\n}\n#endif\n\n#endif /* %s */\n", guard)
-	return []byte(b.String())
+	return header, source, nil
 }
 
-// shimReturn is the C return type of a prototype.
-func shimReturn(sig *signature) string {
-	switch sig.ret.kind {
-	case resNone:
-		return "void"
-	case resValue:
-		return sig.ret.info.cType
+// renderShim renders both shim files.
+func (m *packageModel) renderShim() ([]byte, []byte, error) {
+	guard := "CPPGO_" + guardName(m.name) + "_SHIM_H"
+	var h strings.Builder
+	h.WriteString("/*" + GeneratedBanner[2:] + " */\n")
+	h.WriteString("/* The extern \"C\" declarations zz_cppgo_shim.cpp implements.\n")
+	h.WriteString(" * Compile both files into the library this package loads. */\n\n")
+	fmt.Fprintf(&h, "#ifndef %s\n#define %s\n\n", guard, guard)
+	h.WriteString("#include <stddef.h>\n#include <stdint.h>\n\n")
+	h.WriteString("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n")
+	h.WriteString("/* cppgo_last_error returns the message recorded by the last failed thunk\n")
+	h.WriteString(" * on this thread, or an empty string when there is none. The pointer\n")
+	h.WriteString(" * stays valid until the next thunk call on the same thread. */\n")
+	h.WriteString("const char *cppgo_last_error(void);\n")
+
+	var s strings.Builder
+	s.WriteString(GeneratedBanner + "\n")
+	s.WriteString("//\n")
+	s.WriteString("// The extern \"C\" thunks of one cppgo package. Compile this file into the\n")
+	s.WriteString("// same library the generated Go package loads.\n\n")
+	s.WriteString("#include \"zz_cppgo_shim.h\"\n\n")
+	seen := map[string]bool{}
+	for _, header := range m.headers {
+		if seen[header] {
+			continue
+		}
+		seen[header] = true
+		fmt.Fprintf(&s, "#include %q\n", header)
 	}
-	return "int32_t"
+	s.WriteString("\n#include <exception>\n#include <new>\n#include <string>\n\n")
+	s.WriteString("namespace {\n\n")
+	s.WriteString("// The message the failing thunk on this thread stored. It is cleared at the\n")
+	s.WriteString("// entry of every thunk, so a successful call can never report a stale error.\n")
+	s.WriteString("thread_local std::string cppgo_error_message;\n\n")
+	s.WriteString("} // namespace\n\n")
+	s.WriteString("extern \"C\" const char *cppgo_last_error(void) {\n")
+	s.WriteString("\treturn cppgo_error_message.c_str();\n")
+	s.WriteString("}\n")
+
+	for _, binding := range m.bindings {
+		if binding.Carrier != thunk {
+			continue
+		}
+		h.WriteString("\n")
+		fmt.Fprintf(&h, "/* %s: %s */\n", binding.Thunk, displaySignature(binding.sym))
+		fmt.Fprintf(&h, "%s %s(%s);\n", shimReturnType(binding), binding.Thunk, shimParams(binding))
+		body, err := m.shimBody(binding)
+		if err != nil {
+			return nil, nil, err
+		}
+		s.WriteString("\n")
+		fmt.Fprintf(&s, "extern \"C\" %s %s(%s) {\n", shimReturnType(binding), binding.Thunk, shimParams(binding))
+		s.WriteString(body)
+		s.WriteString("}\n")
+	}
+
+	fmt.Fprintf(&h, "\n#ifdef __cplusplus\n}\n#endif\n\n#endif /* %s */\n", guard)
+	return []byte(h.String()), []byte(s.String()), nil
 }
 
-// shimParams renders the C parameter list.
-func shimParams(sig *signature) string {
-	if len(sig.cParams) == 0 {
-		return "void"
+// shimReturnType is the C return type of a thunk: the status when the call can
+// fail, the value itself when it cannot.
+func shimReturnType(binding *binding) string {
+	if binding.Status {
+		return "int32_t"
 	}
-	parts := make([]string, len(sig.cParams))
-	for i, p := range sig.cParams {
-		parts[i] = p.Type + " " + p.Name
+	if binding.Result != nil {
+		return cTypeOf(binding.Result)
+	}
+	return "void"
+}
+
+// cTypeOf is the C spelling of a result value.
+func cTypeOf(t *goType) string {
+	switch t.Kind {
+	case goBool:
+		return "bool"
+	case goPointer:
+		return t.C
+	default:
+		return t.C
+	}
+}
+
+// shimParams renders the C parameter list of a thunk.
+func shimParams(binding *binding) string {
+	parts := make([]string, 0, len(binding.Wire))
+	for _, arg := range binding.Wire {
+		parts = append(parts, arg.cType+" "+arg.cName)
+	}
+	if len(parts) == 0 {
+		return "void"
 	}
 	return strings.Join(parts, ", ")
 }
 
-// namedPointees lists the sorted, de-duplicated names of the types of the
-// bound package that cross the boundary by pointer.
-func namedPointees(sigs []*signature) []string {
-	seen := map[string]bool{}
-	for _, sig := range sigs {
-		for _, p := range sig.fn.Params {
-			if p.Info.named != "" {
-				seen[p.Info.named] = true
-			}
-		}
-		for _, r := range sig.fn.Results {
-			if r.Info.named != "" {
-				seen[r.Info.named] = true
-			}
-		}
+// shimBody renders the statements inside one thunk.
+func (m *packageModel) shimBody(binding *binding) (string, error) {
+	call, err := m.targetCall(binding)
+	if err != nil {
+		return "", err
 	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
+	var b strings.Builder
+	if !binding.Status {
+		// A noexcept call whose arguments are scalars, pointers or PODs cannot
+		// throw, and its Go signature has no error. Nothing is caught because
+		// there is nothing to catch.
+		if binding.Result != nil {
+			fmt.Fprintf(&b, "\treturn %s;\n", call)
+		} else {
+			fmt.Fprintf(&b, "\t%s;\n", call)
+		}
+		return b.String(), nil
 	}
-	sort.Strings(names)
-	return names
+	b.WriteString("\tcppgo_error_message.clear();\n")
+	b.WriteString("\ttry {\n")
+	if binding.Result != nil {
+		fmt.Fprintf(&b, "\t\t*cppgo_result = %s;\n", call)
+	} else {
+		fmt.Fprintf(&b, "\t\t%s;\n", call)
+	}
+	b.WriteString("\t\treturn 0;\n")
+	b.WriteString("\t} catch (const std::exception &error) {\n")
+	b.WriteString("\t\tcppgo_error_message = error.what();\n")
+	b.WriteString("\t\treturn 1;\n")
+	b.WriteString("\t} catch (...) {\n")
+	b.WriteString("\t\tcppgo_error_message = \"unknown C++ exception\";\n")
+	b.WriteString("\t\treturn 1;\n")
+	b.WriteString("\t}\n")
+	return b.String(), nil
 }
 
-// guardName turns a package name into an include-guard fragment.
-func guardName(pkg string) string {
-	var b strings.Builder
-	for _, r := range strings.ToUpper(pkg) {
-		switch {
-		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
+// targetCall renders the C++ expression that calls the bound declaration.
+func (m *packageModel) targetCall(binding *binding) (string, error) {
+	args := make([]string, 0, len(binding.Wire))
+	for _, arg := range binding.Wire {
+		if arg.label == "this" || arg.label == "out" {
+			continue
 		}
+		expr, err := m.shimArg(arg.param, arg.cName)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, expr)
 	}
-	if b.Len() == 0 || (b.String()[0] >= '0' && b.String()[0] <= '9') {
-		return "PKG_" + b.String()
+	list := strings.Join(args, ", ")
+	owner := ""
+	if binding.Owner != nil {
+		owner = binding.Owner.CxxName
 	}
-	return b.String()
+	switch binding.sym.Kind {
+	case cxx.Constructor:
+		return "new (self) ::" + owner + "(" + list + ")", nil
+	case cxx.Destructor:
+		return "static_cast<::" + owner + " *>(self)->~" + simpleName(owner) + "()", nil
+	case cxx.Method:
+		cast := "static_cast<::" + owner + " *>(self)"
+		if binding.sym.IsConst {
+			cast = "static_cast<const ::" + owner + " *>(self)"
+		}
+		return cast + "->" + simpleName(binding.sym.QualifiedName) + "(" + list + ")", nil
+	default:
+		return "::" + binding.sym.QualifiedName + "(" + list + ")", nil
+	}
+}
+
+// shimArg renders one C++ argument inside a thunk. The thunk's C parameter is a
+// pointer to a record; the target wants the record type, a pointer, or a
+// reference, and the conversion is written where the layout is known.
+func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
+	if !p.Ptr || p.Pointee == nil {
+		return name, nil
+	}
+	reference := strings.HasSuffix(strings.TrimSpace(p.Spelling), "&")
+	if p.Pointee.Kind == cxx.TypeRecord {
+		record := m.mapper.records[p.Pointee.RecordName]
+		if record == nil {
+			return "", fmt.Errorf("cppgo: %s: a record pointer the model does not know", p.Spelling)
+		}
+		cast := "static_cast<::" + record.CxxName + " *>"
+		if p.Pointee.IsConst {
+			cast = "static_cast<const ::" + record.CxxName + " *>"
+		}
+		expr := cast + "(" + name + ")"
+		if reference {
+			expr = "*" + expr
+		}
+		return expr, nil
+	}
+	if reference {
+		return "*" + name, nil
+	}
+	return name, nil
 }

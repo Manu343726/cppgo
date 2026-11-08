@@ -3,109 +3,30 @@ package gen
 import (
 	"fmt"
 	"go/format"
+	"sort"
 	"strings"
 )
 
-// emitGo renders zz_cppgo.gen.go: the idiomatic wrappers, the lazy library
-// binding and the declarations of the assembly trampolines.
-func emitGo(pkg *packageInfo, sigs []*signature) ([]byte, error) {
+// emitGo renders zz_cppgo.gen.go: the type-safe API, the generated Open, and
+// the declarations of the assembly trampolines.
+func (m *packageModel) emitGo() ([]byte, error) {
 	var b strings.Builder
-	b.WriteString(GeneratedBanner + "\n\n")
-	fmt.Fprintf(&b, "package %s\n\n", pkg.Name)
+	b.WriteString(GeneratedBanner + "\n//\n//\t" + m.cfg.invocation() + "\n\n")
+	fmt.Fprintf(&b, "package %s\n\n", m.name)
 
-	usesUnsafe, usesBool := false, false
-	needsAlloc, needsRelease := false, false
-	for _, sig := range sigs {
-		if sig.usesUnsafe() {
-			usesUnsafe = true
-		}
-		for _, p := range sig.fn.Params {
-			if p.Info.kind == kindBool {
-				usesBool = true
-			}
-		}
-		if sig.abi {
-			switch sig.fn.Kind {
-			case bindCtor:
-				needsAlloc = true
-				usesUnsafe = true
-			case bindDtor:
-				needsRelease = true
-			}
-		}
-	}
-
+	usesUnsafe := m.usesUnsafe()
 	b.WriteString("import (\n\t\"fmt\"\n\t\"sync\"\n")
 	if usesUnsafe {
 		b.WriteString("\t\"unsafe\"\n")
 	}
 	fmt.Fprintf(&b, "\n\t%q\n)\n\n", CppgoImportPath)
 
-	b.WriteString(`// CppgoLibraryPath overrides the shared library opened by this package's
-// generated bindings. It is read once, on the first call; leave it empty to
-// use the name given to the //cppgo:library directive.
-var CppgoLibraryPath string
-
-`)
-	fmt.Fprintf(&b, "// cppgoLibraryName is the library named by //cppgo:library.\nconst cppgoLibraryName = %q\n\n", pkg.Library)
-
-	b.WriteString("var (\n\tcppgoOnce sync.Once\n\tcppgoLib  *cppgo.Library\n\tcppgoErr  error\n\n")
-	for _, f := range pkg.Funcs {
-		fmt.Fprintf(&b, "\t// %s is the resolved address of the %q symbol.\n", f.symVar(), f.lookupName())
-		fmt.Fprintf(&b, "\t%s uintptr\n", f.symVar())
-	}
-	b.WriteString(")\n\n")
-
-	b.WriteString(`// cppgoEnsure opens the shared library and resolves every symbol the
-// generated bindings need. It runs at most once; later calls report the
-// result of the first attempt.
-func cppgoEnsure() error {
-	cppgoOnce.Do(func() {
-		path := cppgoLibraryName
-		if CppgoLibraryPath != "" {
-			path = CppgoLibraryPath
-		}
-		lib, err := cppgo.Open(path)
-		if err != nil {
-			cppgoErr = fmt.Errorf("cppgo: opening %s: %w", path, err)
-			return
-		}
-		for _, sym := range []struct {
-			name string
-			addr *uintptr
-		}{
-`)
-	for _, f := range pkg.Funcs {
-		fmt.Fprintf(&b, "\t\t\t{name: %q, addr: &%s},\n", f.lookupName(), f.symVar())
-	}
-	b.WriteString(`		} {
-			addr, err := lib.Symbol(sym.name)
-			if err != nil {
-				_ = lib.Close()
-				cppgoErr = fmt.Errorf("cppgo: %s: %w", path, err)
-				return
-			}
-			*sym.addr = addr
-		}
-		cppgoLib = lib
-	})
-	return cppgoErr
-}
-`)
-
-	if needsAlloc || needsRelease {
-		b.WriteString(abiObjectRegistry)
-	}
-	if needsAlloc {
-		b.WriteString(abiAllocHelper)
-	}
-	if needsRelease {
-		b.WriteString(abiReleaseHelper)
-	}
-	if usesBool {
+	m.emitOpen(&b)
+	if m.usesBool() {
 		b.WriteString(`
-// cppgoBoolInt64 converts a bool to the int32_t the C ABI expects.
-func cppgoBoolInt64(v bool) int64 {
+// cppgoBool converts a Go bool to the int64 the trampoline passes; the C++
+// side reads the low byte.
+func cppgoBool(v bool) int64 {
 	if v {
 		return 1
 	}
@@ -114,454 +35,632 @@ func cppgoBoolInt64(v bool) int64 {
 `)
 	}
 
-	for _, sig := range sigs {
-		if sig.abi {
-			emitABIWrapper(&b, sig, pkg.abi.source)
-			continue
-		}
-		emitWrapper(&b, sig)
+	for _, record := range m.records {
+		m.emitRecord(&b, record)
 	}
-
-	b.WriteString("\n// Assembly trampolines. Each one saves the Go stack pointer, switches to an\n")
-	b.WriteString("// aligned scratch stack for the C call, restores it, and only then stores the\n")
-	b.WriteString("// result (the result slot is addressed relative to SP).\n")
-	for _, sig := range sigs {
-		f := sig.fn
-		b.WriteString("\n")
-		if sig.abi {
-			fmt.Fprintf(&b, "// %s is the NOSPLIT trampoline for the C++ symbol %q.\n", f.trampName(), f.Symbol)
-		} else {
-			fmt.Fprintf(&b, "// %s is the NOSPLIT trampoline for the C function %q.\n", f.trampName(), f.Symbol)
-		}
-		fmt.Fprintf(&b, "// It must not be called directly: use %s.\n", f.Name)
-		b.WriteString("//\n//go:noescape\n")
-		fmt.Fprintf(&b, "func %s(%s)%s\n", f.trampName(), trampolineParams(sig), trampolineResult(sig))
-	}
-
+	m.emitPackageFunctions(&b)
+	m.emitTrampolineDeclarations(&b)
 	return gofmtSource(b.String())
 }
 
-// abiObjectRegistry is the storage table the direct ABI mode needs when a
-// package binds a constructor or a destructor: the handle a constructor returns
-// is the address of Go memory, which the garbage collector cannot see through a
-// cppgo.Handle, so the buffer is held here until the destructor releases it.
-const abiObjectRegistry = `
-// cppgoObjects keeps the storage of every object a bound constructor created
-// reachable for as long as the object exists. A cppgo.Handle is a uintptr, so
-// no finaliser or pointer map can do it: the destructor drops the entry.
-var (
-	cppgoObjectsMu sync.Mutex
-	cppgoObjects   = map[cppgo.Handle][]byte{}
+// usesUnsafe reports whether the generated file mentions unsafe.Pointer or
+// unsafe.Sizeof.
+func (m *packageModel) usesUnsafe() bool {
+	for _, record := range m.records {
+		if record.Mirrored {
+			return true
+		}
+	}
+	for _, binding := range m.bindings {
+		for _, arg := range binding.Wire {
+			if arg.slotType == "unsafe.Pointer" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// usesBool reports whether any parameter or result is a C++ bool.
+func (m *packageModel) usesBool() bool {
+	for _, binding := range m.bindings {
+		if binding.Result != nil && binding.Result.Kind == goBool {
+			return true
+		}
+		for _, param := range binding.Params {
+			if param.Type.Kind == goBool {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// emitOpen writes the generated entry point and the symbol table Open resolves.
+func (m *packageModel) emitOpen(b *strings.Builder) {
+	b.WriteString(`
+// Open loads the shared library and resolves every symbol this package binds.
+// A path of "" uses the -library name the package was generated with. It is
+// safe to call Open more than once; the first successful call wins.
+func Open(path string) error { return cppgoOpen(path) }
+
+// cppgoLibraryName is the library named by -library.
+const cppgoLibraryName = `)
+	fmt.Fprintf(b, "%q\n\n", m.library)
+
+	b.WriteString(`var (
+	cppgoMu      sync.Mutex
+	cppgoLibrary *cppgo.Library
+	cppgoOpenErr error
 )
-`
 
-// abiAllocHelper allocates the storage a constructor writes into.
-const abiAllocHelper = `
-// cppgoAlloc returns the address of a zeroed buffer of size bytes whose start
-// is aligned to align, and records it so the handle stays valid until
-// cppgoRelease drops it.
-func cppgoAlloc(size, align int) cppgo.Handle {
-	buf := make([]byte, size+align)
-	offset := 0
-	if align > 1 {
-		offset = (align - int(uintptr(unsafe.Pointer(&buf[0]))%uintptr(align))) % align
+// Resolved by cppgoOpen before any binding runs.
+var (
+`)
+	for _, binding := range m.bindings {
+		fmt.Fprintf(b, "\t// %s\n\t%s uintptr\n", binding.Symbol, binding.SymbolVar)
 	}
-	handle := cppgo.Handle(uintptr(unsafe.Pointer(&buf[offset])))
-	cppgoObjectsMu.Lock()
-	cppgoObjects[handle] = buf
-	cppgoObjectsMu.Unlock()
-	return handle
-}
-`
+	b.WriteString(")\n\n")
 
-// abiReleaseHelper drops the entry a destructor no longer needs.
-const abiReleaseHelper = `
-// cppgoRelease forgets the storage behind a handle. Calling it for a handle
-// this package did not allocate is harmless: the object lives elsewhere.
-func cppgoRelease(handle cppgo.Handle) {
-	cppgoObjectsMu.Lock()
-	delete(cppgoObjects, handle)
-	cppgoObjectsMu.Unlock()
-}
-`
-
-// lookupName is the dynamic symbol the generated initialisation resolves: the
-// shim entry point in shim mode, the mangled C++ name in abi mode.
-func (f *Func) lookupName() string {
-	if f.abi != nil {
-		return f.Symbol
+	b.WriteString(`// cppgoOpen loads the shared library and resolves every symbol the generated
+// bindings need. A missing thunk means the generated shim was not compiled into
+// the library, which is a build error the message names.
+func cppgoOpen(path string) error {
+	cppgoMu.Lock()
+	defer cppgoMu.Unlock()
+	if cppgoLibrary != nil {
+		return nil
 	}
-	return f.cName()
+	if path == "" && cppgoOpenErr != nil {
+		return cppgoOpenErr
+	}
+	if path == "" {
+		path = cppgoLibraryName
+	}
+	lib, err := cppgo.Open(path)
+	if err != nil {
+		cppgoOpenErr = err
+		return err
+	}
+	for _, symbol := range []struct {
+		name  string
+		addr  *uintptr
+		thunk bool
+	}{
+`)
+	for _, binding := range m.bindings {
+		fmt.Fprintf(b, "\t\t{name: %q, addr: &%s, thunk: %t},\n", binding.Symbol, binding.SymbolVar, binding.Carrier == thunk)
+	}
+	b.WriteString(`	} {
+		addr, err := lib.Symbol(symbol.name)
+		if err != nil {
+			_ = lib.Close()
+			if symbol.thunk {
+				err = fmt.Errorf("cppgo: %w: compile zz_cppgo_shim.cpp into %s", err, path)
+			}
+			cppgoOpenErr = err
+			return err
+		}
+		*symbol.addr = addr
+	}
+	cppgoLibrary = lib
+	cppgoOpenErr = nil
+	return nil
 }
 
-// emitABIWrapper renders the idiomatic Go binding for one direct ABI binding.
-func emitABIWrapper(b *strings.Builder, sig *signature, source string) {
-	f := sig.fn
+// cppgoCallError reads the message a thunk stored and wraps it in the error the
+// binding returns.
+func cppgoCallError(symbol string) error {
+	cppgoMu.Lock()
+	lib := cppgoLibrary
+	cppgoMu.Unlock()
+	err := cppgo.LastError(lib)
+	if err == nil {
+		err = fmt.Errorf("the call failed without a message")
+	}
+	return &cppgo.CallError{Symbol: symbol, Err: err}
+}
+
+// cppgoCloseError is the destructor's error: nil when the destructor stored no
+// message, a CallError when it did.
+func cppgoCloseError(symbol string) error {
+	cppgoMu.Lock()
+	lib := cppgoLibrary
+	cppgoMu.Unlock()
+	if err := cppgo.LastError(lib); err != nil {
+		return &cppgo.CallError{Symbol: symbol, Err: err}
+	}
+	return nil
+}
+`)
+}
+
+// emitRecord writes one record's Go type and its members.
+func (m *packageModel) emitRecord(b *strings.Builder, record *recordModel) {
 	b.WriteString("\n")
-	for _, line := range f.Doc {
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	if len(f.Doc) > 0 {
-		b.WriteString("//\n")
-	}
-	fmt.Fprintf(b, "// %s binds %s.\n", f.wrapperName(), f.signature())
-	fmt.Fprintf(b, "//\n// Direct C++ ABI: %s, mangled %s (abi from %s).\n", f.abi.sym.QualifiedName, f.abi.sym.Mangled, source)
-	for _, note := range f.abi.notes {
-		fmt.Fprintf(b, "//\n// Assumption: %s.\n", note)
-	}
-	for _, forced := range f.abi.forced {
-		fmt.Fprintf(b, "//\n// NOT VALIDATED: -force accepted this binding as written, because %s.\n", forced)
-	}
-	fmt.Fprintf(b, "func %s(%s)%s {\n", f.wrapperName(), abiWrapperParams(f), wrapperResults(f))
-
-	if hasErrorResult(f) {
-		fmt.Fprintf(b, "\tif err := cppgoEnsure(); err != nil {\n\t\treturn %serr\n\t}\n", abiZeroPrefix(f))
+	if record.Mirrored {
+		m.emitMirroredType(b, record)
 	} else {
-		b.WriteString("\tif err := cppgoEnsure(); err != nil {\n\t\tpanic(err)\n\t}\n")
+		m.emitOpaqueType(b, record)
 	}
-	b.WriteString("\tcppgo.ProbeStack()\n")
-
-	allocated := ""
-	if f.Kind == bindCtor {
-		fmt.Fprintf(b, "\tcppgoThis := cppgoAlloc(%d, %d)\n", f.Class.Size, f.Class.Align)
-		allocated = "cppgoThis"
+	for _, ctor := range record.Ctors {
+		m.emitConstructor(b, record, ctor)
 	}
-	call := fmt.Sprintf("%s(%s)", f.trampName(), strings.Join(abiCallArgs(sig, allocated), ", "))
-	switch f.abi.shape {
-	case abiObject:
-		fmt.Fprintf(b, "\t%s\n", call)
-		fmt.Fprintf(b, "\treturn %s(%s)", f.Class.GoName, allocated)
-		if hasErrorResult(f) {
-			b.WriteString(", nil")
-		}
-		b.WriteString("\n")
-	case abiStatus:
-		fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
-		emitKeepAlive(b, sig)
-		b.WriteString("\tif cppgoStatus != 0 {\n")
-		emitStatusErrors(b, sig, "cppgoStatus")
-		b.WriteString("\t}\n\treturn nil\n")
-	case abiVoid, abiErrorOnly:
-		fmt.Fprintf(b, "\t%s\n", call)
-		emitKeepAlive(b, sig)
-		if f.Kind == bindDtor {
-			// The object is destroyed; the storage this package allocated for
-			// it is no longer needed, and dropping the entry is what lets the
-			// collector reclaim it.
-			fmt.Fprintf(b, "\tcppgoRelease(cppgo.Handle(%s))\n", f.Recv.Name)
-		}
-		if f.abi.shape == abiErrorOnly {
-			b.WriteString("\treturn nil\n")
-		}
-	default: // abiValue, abiValueError
-		ret := localName(f, "cppgoRet")
-		fmt.Fprintf(b, "\t%s := %s\n", ret, call)
-		emitKeepAlive(b, sig)
-		value := abiFromMirror(f.Results[0].Info, sig.ret.slot.goType, ret)
-		if f.abi.shape == abiValueError {
-			fmt.Fprintf(b, "\treturn %s, nil\n", value)
-			break
-		}
-		fmt.Fprintf(b, "\treturn %s\n", value)
+	if record.Mirrored {
+		m.emitMirroredConstructors(b, record)
 	}
-	b.WriteString("}\n")
+	if record.Clone != nil {
+		m.emitClone(b, record, record.Clone)
+	}
+	if record.Dtor != nil {
+		m.emitClose(b, record, record.Dtor)
+	} else if !record.Mirrored {
+		m.emitStorageOnlyClose(b, record)
+	}
+	for _, method := range record.Methods {
+		m.emitCall(b, record, method)
+	}
 }
 
-// abiCallArgs renders the arguments of the trampoline call: the symbol first,
-// then the reserved sret pointer (never filled in v1), then `this`, then the
-// explicit arguments converted to their mirror types.
-func abiCallArgs(sig *signature, allocated string) []string {
-	f := sig.fn
-	args := []string{f.symVar()}
-	if sig.sret {
-		// TODO(abi): the destination of a by-value class result. The validator
-		// rejects those bindings, so this is the reserved slot only.
-		args = append(args, "nil")
+// emitMirroredType writes the Go struct whose layout is the C++ layout, and the
+// compile-time assertions that prove it.
+func (m *packageModel) emitMirroredType(b *strings.Builder, record *recordModel) {
+	sort.Slice(record.Fields, func(i, j int) bool { return record.Fields[i].Offset < record.Fields[j].Offset })
+	var offsets []string
+	for _, field := range record.Fields {
+		offsets = append(offsets, fmt.Sprintf("%s at offset %d", field.GoName, field.Offset))
 	}
-	if f.Kind.hasThis() {
-		if f.Kind == bindCtor {
-			args = append(args, "uintptr("+allocated+")")
-		} else {
-			args = append(args, "uintptr("+f.Recv.Name+")")
+	fmt.Fprintf(b, "// %s is %s: a POD, %d bytes, %s.\n", record.GoName, record.CxxName, record.Size, strings.Join(offsets, ", "))
+	fmt.Fprintf(b, "type %s struct {\n", record.GoName)
+	for _, field := range record.Fields {
+		fmt.Fprintf(b, "\t%s %s\n", field.GoName, field.Type.Go)
+	}
+	b.WriteString("}\n\n")
+	b.WriteString("// The C++ layout is proven at compile time: a wrong size, alignment or\n// field offset does not compile.\n")
+	fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Sizeof(%s{})]byte{}\n", record.Size, record.GoName)
+	fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Alignof(%s{})]byte{}\n", record.Align, record.GoName)
+	for _, field := range record.Fields {
+		fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Offsetof(%s{}.%s)]byte{}\n", field.Offset, record.GoName, field.GoName)
+	}
+}
+
+// emitOpaqueType writes the Go value that owns C++ storage.
+func (m *packageModel) emitOpaqueType(b *strings.Builder, record *recordModel) {
+	fmt.Fprintf(b, "// %s is %s. The object belongs to C++; obj is where it lives.\n", record.GoName, record.CxxName)
+	fmt.Fprintf(b, "type %s struct {\n\tobj *cppgo.Object\n}\n\n", record.GoName)
+	fmt.Fprintf(b, `// cppgoAddr is the object address handed to C++, or 0 for a nil or closed
+// value.
+func (%s *%s) cppgoAddr() uintptr {
+	if %s == nil || %s.obj == nil {
+		return 0
+	}
+	return %s.obj.Addr()
+}
+`, receiverName(record.GoName), record.GoName, receiverName(record.GoName), receiverName(record.GoName), receiverName(record.GoName))
+}
+
+// emitMirroredConstructors writes New<Type>() and Clone() for a record whose Go
+// value is its C layout: both are ordinary Go operations.
+func (m *packageModel) emitMirroredConstructors(b *strings.Builder, record *recordModel) {
+	if !record.DefaultConstructible {
+		return
+	}
+	fmt.Fprintf(b, "\n// New%s returns a zero %s.\n", record.GoName, record.GoName)
+	fmt.Fprintf(b, "func New%s() (*%s, error) { return &%s{}, nil }\n", record.GoName, record.GoName, record.GoName)
+	if !record.CopyConstructible {
+		return
+	}
+	recv := receiverName(record.GoName)
+	fmt.Fprintf(b, "\n// Clone copies the value.\n")
+	fmt.Fprintf(b, "func (%s *%s) Clone() (*%s, error) {\n", recv, record.GoName, record.GoName)
+	fmt.Fprintf(b, "\tif %s == nil {\n\t\treturn nil, cppgo.ErrClosed\n\t}\n", recv)
+	fmt.Fprintf(b, "\tclone := *%s\n\treturn &clone, nil\n}\n", recv)
+}
+
+// emitConstructor writes one factory constructor.
+func (m *packageModel) emitConstructor(b *strings.Builder, record *recordModel, ctor *binding) {
+	ctx := callContext{thisExpr: "obj.Addr()", keepThis: "obj"}
+	doc := fmt.Sprintf("New%s constructs a %s.", strings.TrimPrefix(ctor.GoName, "New"), record.CxxName)
+	m.emitBindingDoc(b, ctor, doc)
+	fmt.Fprintf(b, "func %s(%s) (*%s, error) {\n", ctor.GoName, goParams(ctor.Params), record.GoName)
+	b.WriteString("\tif err := cppgoOpen(\"\"); err != nil {\n\t\treturn nil, err\n\t}\n")
+	b.WriteString("\tcppgo.ProbeStack()\n")
+	hasDtor := record.Dtor != nil
+	if hasDtor {
+		b.WriteString("\tconstructed := false\n")
+	}
+	b.WriteString("\tvar obj *cppgo.Object\n")
+	if hasDtor {
+		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, func() {\n", record.Size, record.Align)
+		b.WriteString("\t\tif !constructed {\n\t\t\treturn\n\t\t}\n")
+		b.WriteString("\t\tcppgo.ProbeStack()\n")
+		fmt.Fprintf(b, "\t\t%s(%s, obj.Addr())\n", record.Dtor.Trampoline, record.Dtor.SymbolVar)
+		b.WriteString("\t})\n")
+	} else {
+		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
+	}
+	call := ctor.Trampoline + "(" + strings.Join(m.callArgs(ctor, ctx), ", ") + ")"
+	if ctor.Status {
+		fmt.Fprintf(b, "\tif cppgoStatus := %s; cppgoStatus != 0 {\n", call)
+		b.WriteString("\t\tobj.Release()\n")
+		fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", ctor.sym.QualifiedName)
+	} else {
+		fmt.Fprintf(b, "\t%s\n", call)
+	}
+	if hasDtor {
+		b.WriteString("\tconstructed = true\n")
+	}
+	fmt.Fprintf(b, "\treturn &%s{obj: obj}, nil\n}\n", record.GoName)
+}
+
+// emitClone writes the copy constructor binding as Clone().
+func (m *packageModel) emitClone(b *strings.Builder, record *recordModel, clone *binding) {
+	recv := receiverName(record.GoName)
+	ctx := callContext{thisExpr: "obj.Addr()", keepThis: "obj", recvExpr: recv + ".cppgoAddr()", recvKeep: recv}
+	m.emitBindingDoc(b, clone, "Clone copies the object through its copy constructor.")
+	fmt.Fprintf(b, "func (%s *%s) Clone() (*%s, error) {\n", recv, record.GoName, record.GoName)
+	fmt.Fprintf(b, "\tif %s == nil || %s.obj == nil {\n\t\treturn nil, cppgo.ErrClosed\n\t}\n", recv, recv)
+	b.WriteString("\tif err := cppgoOpen(\"\"); err != nil {\n\t\treturn nil, err\n\t}\n")
+	b.WriteString("\tcppgo.ProbeStack()\n")
+	hasDtor := record.Dtor != nil
+	if hasDtor {
+		b.WriteString("\tconstructed := false\n")
+	}
+	b.WriteString("\tvar obj *cppgo.Object\n")
+	if hasDtor {
+		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, func() {\n", record.Size, record.Align)
+		b.WriteString("\t\tif !constructed {\n\t\t\treturn\n\t\t}\n")
+		b.WriteString("\t\tcppgo.ProbeStack()\n")
+		fmt.Fprintf(b, "\t\t%s(%s, obj.Addr())\n", record.Dtor.Trampoline, record.Dtor.SymbolVar)
+		b.WriteString("\t})\n")
+	} else {
+		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
+	}
+	call := clone.Trampoline + "(" + strings.Join(m.callArgs(clone, ctx), ", ") + ")"
+	if clone.Status {
+		fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
+		m.emitKeepAlive(b, clone, ctx)
+		b.WriteString("\tif cppgoStatus != 0 {\n")
+		b.WriteString("\t\tobj.Release()\n")
+		fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", clone.sym.QualifiedName)
+	} else {
+		fmt.Fprintf(b, "\t%s\n", call)
+		m.emitKeepAlive(b, clone, ctx)
+	}
+	if hasDtor {
+		b.WriteString("\tconstructed = true\n")
+	}
+	fmt.Fprintf(b, "\treturn &%s{obj: obj}, nil\n}\n", record.GoName)
+}
+
+// emitClose writes the destructor method.
+func (m *packageModel) emitClose(b *strings.Builder, record *recordModel, dtor *binding) {
+	recv := receiverName(record.GoName)
+	m.emitBindingDoc(b, dtor, "Close destroys the object. It returns cppgo.ErrClosed when the receiver has no live object.")
+	fmt.Fprintf(b, "func (%s *%s) Close() error {\n", recv, record.GoName)
+	fmt.Fprintf(b, "\tif %s == nil || %s.obj == nil {\n\t\treturn cppgo.ErrClosed\n\t}\n", recv, recv)
+	fmt.Fprintf(b, "\tobj := %s.obj\n\t%s.obj = nil\n\tobj.Release()\n", recv, recv)
+	fmt.Fprintf(b, "\treturn cppgoCloseError(%q)\n}\n", dtor.sym.QualifiedName)
+}
+
+// emitStorageOnlyClose writes Close for an opaque record that declares no
+// destructor: only the storage is released.
+func (m *packageModel) emitStorageOnlyClose(b *strings.Builder, record *recordModel) {
+	recv := receiverName(record.GoName)
+	fmt.Fprintf(b, `
+// Close releases the object storage. It returns cppgo.ErrClosed when the
+// receiver has no live object.
+func (%s *%s) Close() error {
+	if %s == nil || %s.obj == nil {
+		return cppgo.ErrClosed
+	}
+	obj := %s.obj
+	%s.obj = nil
+	obj.Release()
+	return nil
+}
+`, recv, record.GoName, recv, recv, recv, recv)
+}
+
+// emitPackageFunctions writes the static members and free functions.
+func (m *packageModel) emitPackageFunctions(b *strings.Builder) {
+	var funcs []*binding
+	for _, binding := range m.bindings {
+		if binding.Owner == nil || binding.IsStatic {
+			funcs = append(funcs, binding)
 		}
 	}
-	for _, p := range f.Params {
-		switch p.Info.kind {
-		case kindString:
-			args = append(args, "cppgo.StrPtr("+p.Name+")", "uintptr(len("+p.Name+"))")
-		case kindSlice:
-			args = append(args, "cppgo.Ptr("+p.Name+")", "uintptr(len("+p.Name+"))")
-		case kindBool:
-			args = append(args, "cppgoBoolInt64("+p.Name+")")
+	sort.Slice(funcs, func(i, j int) bool { return funcs[i].GoName < funcs[j].GoName })
+	for _, binding := range funcs {
+		m.emitCall(b, nil, binding)
+	}
+}
+
+// callContext carries the expressions a call needs that depend on the binding's
+// Go receiver.
+type callContext struct {
+	thisExpr string
+	keepThis string
+	recvExpr string
+	recvKeep string
+}
+
+// callArgs renders the trampoline arguments, including the implicit this and a
+// clone's hidden source.
+func (m *packageModel) callArgs(binding *binding, ctx callContext) []string {
+	args := []string{binding.SymbolVar}
+	cloneSource := binding.IsClone
+	for _, arg := range binding.Wire {
+		switch {
+		case arg.label == "this":
+			args = append(args, ctx.thisExpr)
+		case cloneSource:
+			args = append(args, ctx.recvExpr)
+			cloneSource = false
 		default:
-			args = append(args, mirrorExpr(p))
+			args = append(args, arg.expr)
 		}
 	}
 	return args
 }
 
-// abiFromMirror converts a call result to the bound function's result type.
-//
-// bool is the only shape that needs more than a cast: the Itanium ABI returns
-// it in AL and leaves the rest of RAX unspecified, so the value is masked
-// before it is compared.
-func abiFromMirror(info *typeInfo, src, expr string) string {
-	if info.kind == kindBool {
-		return expr + "&0xff != 0"
+// emitCall writes one function or method wrapper.
+func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding *binding) {
+	recv := ""
+	ctx := callContext{}
+	if record != nil {
+		recv = receiverName(record.GoName)
+		if record.Mirrored {
+			ctx = callContext{thisExpr: "uintptr(unsafe.Pointer(" + recv + "))", keepThis: recv}
+		} else {
+			ctx = callContext{thisExpr: recv + ".cppgoAddr()", keepThis: recv}
+		}
 	}
-	return fromMirror(info, src, expr)
-}
-
-// abiZeroPrefix renders the zero value(s) a failed library load returns, before
-// the error of a binding that has one.
-func abiZeroPrefix(f *Func) string {
-	if value := valueResult(f); value != nil {
-		return zeroValue(value.Info) + ", "
-	}
-	return ""
-}
-
-// abiWrapperParams renders the parameter list of a direct ABI wrapper: the
-// receiver first, because it is the `this` argument, then the declaration's own
-// parameters.
-func abiWrapperParams(f *Func) string {
-	parts := make([]string, 0, len(f.Params)+1)
-	if f.Recv != nil {
-		parts = append(parts, f.Recv.Name+" "+f.Recv.Info.goType)
-	}
-	for _, p := range f.Params {
-		parts = append(parts, p.Name+" "+p.Info.goType)
-	}
-	return strings.Join(parts, ", ")
-}
-
-// emitWrapper renders the idiomatic Go binding for one shim-mode function.
-func emitWrapper(b *strings.Builder, sig *signature) {
-	f := sig.fn
-	b.WriteString("\n")
-	for _, line := range f.Doc {
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	if len(f.Doc) > 0 {
-		b.WriteString("//\n")
-	}
-	fmt.Fprintf(b, "// %s binds %s to the C function %q.\n", f.wrapperName(), f.signature(), f.Symbol)
-	fmt.Fprintf(b, "func %s(%s)%s {\n", f.wrapperName(), wrapperParams(f), wrapperResults(f))
-
-	if sig.ret.kind == resNone || sig.ret.kind == resValue {
-		b.WriteString("\tif err := cppgoEnsure(); err != nil {\n\t\tpanic(err)\n\t}\n")
+	m.emitBindingDoc(b, binding, docLine(record, binding))
+	if record != nil {
+		fmt.Fprintf(b, "func (%s *%s) %s(%s)%s {\n", recv, record.GoName, binding.GoName, goParams(binding.Params), goResults(binding))
+		fmt.Fprintf(b, "\tif %s == nil", recv)
+		if !record.Mirrored {
+			fmt.Fprintf(b, " || %s.obj == nil", recv)
+		}
+		b.WriteString(" {\n")
+		if binding.ErrorResult {
+			fmt.Fprintf(b, "\t\treturn %scppgo.ErrClosed\n", errorZeroPrefix(binding))
+			b.WriteString("\t}\n")
+		} else {
+			fmt.Fprintf(b, "\t\tpanic(%q)\n\t}\n", "cppgo: "+displaySignature(binding.sym)+" on a closed "+record.GoName)
+		}
 	} else {
-		fmt.Fprintf(b, "\tif err := cppgoEnsure(); err != nil {\n\t\treturn %serr\n\t}\n", zeroPrefix(sig))
+		fmt.Fprintf(b, "func %s(%s)%s {\n", binding.GoName, goParams(binding.Params), goResults(binding))
+	}
+	// A length parameter shared by several slices is one C++ argument: the Go
+	// caller must not hand over differently sized arrays.
+	m.emitLengthChecks(b, binding)
+
+	if err := cppgoOpenCode(binding, "\t"); err != "" {
+		b.WriteString(err)
 	}
 	b.WriteString("\tcppgo.ProbeStack()\n")
-
-	ret := localName(f, "cppgoRet")
-	status := localName(f, "cppgoStatus")
-	call := callExpr(sig, ret)
-
-	switch sig.ret.kind {
-	case resNone:
-		fmt.Fprintf(b, "\t%s\n", call)
-		emitKeepAlive(b, sig)
-	case resValue:
-		expr := fromMirror(sig.ret.info, sig.ret.slot.goType, ret)
-		if len(keepAliveParams(sig)) == 0 {
-			b.WriteString("\treturn ")
-			b.WriteString(fromMirror(sig.ret.info, sig.ret.slot.goType, call))
-			b.WriteString("\n")
-			break
+	call := binding.Trampoline + "(" + strings.Join(m.callArgs(binding, ctx), ", ") + ")"
+	switch {
+	case binding.Status:
+		// A status thunk delivers its value through the out-pointer and, when
+		// the binding has one, reports the failure as an error. A status thunk
+		// always has an error result: it exists because the call can throw.
+		if binding.Out != nil {
+			fmt.Fprintf(b, "\tvar cppgoResult %s\n", binding.OutLocal)
 		}
-		fmt.Fprintf(b, "\t%s := %s\n", ret, call)
-		emitKeepAlive(b, sig)
-		fmt.Fprintf(b, "\treturn %s\n", expr)
-	case resStatus:
-		fmt.Fprintf(b, "\t%s := %s\n", status, call)
-		emitKeepAlive(b, sig)
-		fmt.Fprintf(b, "\tif %s != 0 {\n", status)
-		emitStatusErrors(b, sig, status)
-		b.WriteString("\t}\n\treturn nil\n")
-	case resStatusValue:
-		fmt.Fprintf(b, "\tvar %s %s\n", ret, sig.ret.tmpType)
-		fmt.Fprintf(b, "\t%s := %s\n", status, call)
-		emitKeepAlive(b, sig)
-		fmt.Fprintf(b, "\tif %s != 0 {\n", status)
-		emitStatusErrors(b, sig, status)
-		fmt.Fprintf(b, "\t}\n\treturn %s, nil\n", fromMirror(sig.ret.info, sig.ret.tmpType, ret))
+		fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
+		m.emitKeepAlive(b, binding, ctx)
+		fmt.Fprintf(b, "\tif cppgoStatus != 0 {\n\t\treturn %scppgoCallError(%q)\n\t}\n",
+			errorZeroPrefix(binding), binding.sym.QualifiedName)
+		if binding.Result != nil {
+			fmt.Fprintf(b, "\treturn %s, nil\n", convertResult(binding, "cppgoResult"))
+		} else {
+			b.WriteString("\treturn nil\n")
+		}
+	case binding.Result != nil:
+		// A thunk that cannot throw returns the value directly, and a direct
+		// call has no error channel at all.
+		fmt.Fprintf(b, "\tcppgoRet := %s\n", call)
+		m.emitKeepAlive(b, binding, ctx)
+		fmt.Fprintf(b, "\treturn %s\n", convertResult(binding, "cppgoRet"))
+	default:
+		fmt.Fprintf(b, "\t%s\n", call)
+		m.emitKeepAlive(b, binding, ctx)
 	}
 	b.WriteString("}\n")
 }
 
-// emitStatusErrors renders the failure branch of a status-returning call.
-func emitStatusErrors(b *strings.Builder, sig *signature, status string) {
-	fmt.Fprintf(b, "\t\tif err := cppgo.LastError(cppgoLib); err != nil {\n")
-	fmt.Fprintf(b, "\t\t\treturn %sfmt.Errorf(%q, err)\n", zeroPrefix(sig), errorPrefix(sig.fn)+": %w")
-	b.WriteString("\t\t}\n")
-	fmt.Fprintf(b, "\t\treturn %sfmt.Errorf(%q, %s)\n", zeroPrefix(sig), errorPrefix(sig.fn)+": call failed with status %d", status)
-}
-
-// errorPrefix names the C++ entity in an error message: the symbol in shim
-// mode, the qualified C++ name in abi mode.
-func errorPrefix(f *Func) string {
-	if f.abi != nil {
-		return f.abi.sym.QualifiedName
+// emitBindingDoc writes the description and the one evidence line every binding
+// carries.
+func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, description string) {
+	fmt.Fprintf(b, "\n// %s\n", description)
+	mangled := binding.sym.Mangled
+	if mangled == "" {
+		mangled = "synthesised"
 	}
-	return f.Symbol
+	evidence := "//\n// C++: " + displaySignature(binding.sym) + ", " + mangled
+	evidence += " (" + binding.Carrier.String()
+	if binding.Carrier == thunk {
+		evidence += " " + binding.Thunk
+	}
+	evidence += ", " + binding.Reason + ")"
+	if m.verified != "" {
+		evidence += ", verified against " + m.verified
+	}
+	fmt.Fprintf(b, "%s\n", evidence)
 }
 
-// emitKeepAlive pins the arguments that point into Go memory for the whole
-// duration of the call.
-func emitKeepAlive(b *strings.Builder, sig *signature) {
-	params := keepAliveParams(sig)
-	if len(params) == 0 {
+// docLine is the generated description of a call binding.
+func docLine(record *recordModel, binding *binding) string {
+	name := simpleName(binding.sym.QualifiedName)
+	if record != nil {
+		return fmt.Sprintf("%s calls %s.", binding.GoName, record.CxxName+"::"+name)
+	}
+	return fmt.Sprintf("%s calls %s.", binding.GoName, binding.sym.QualifiedName)
+}
+
+// emitLengthChecks writes the pre-call length comparison for every slice group
+// that feeds one C++ length parameter.
+func (m *packageModel) emitLengthChecks(b *strings.Builder, binding *binding) {
+	seen := map[string]bool{}
+	for _, param := range binding.Params {
+		if len(param.Group) < 2 || seen[param.Group[0].Name] {
+			continue
+		}
+		seen[param.Group[0].Name] = true
+		first := param.Group[0].Name
+		var conditions []string
+		printed := []string{"len(" + first + ")"}
+		verbs := []string{"%d"}
+		for _, other := range param.Group[1:] {
+			conditions = append(conditions, fmt.Sprintf("len(%s) != len(%s)", first, other.Name))
+			printed = append(printed, "len("+other.Name+")")
+			verbs = append(verbs, "%d")
+		}
+		message := "cppgo: " + binding.sym.QualifiedName + ": the slices must have the same length, got " + strings.Join(verbs, " and ")
+		fmt.Fprintf(b, "\tif %s {\n", strings.Join(conditions, " || "))
+		if binding.ErrorResult {
+			fmt.Fprintf(b, "\t\treturn %sfmt.Errorf(%q, %s)\n", errorZeroPrefix(binding), message, strings.Join(printed, ", "))
+		} else {
+			fmt.Fprintf(b, "\t\tpanic(fmt.Sprintf(%q, %s))\n", message, strings.Join(printed, ", "))
+		}
+		b.WriteString("\t}\n")
+	}
+}
+
+// emitKeepAlive pins every Go allocation the call handed to C++.
+func (m *packageModel) emitKeepAlive(b *strings.Builder, binding *binding, ctx callContext) {
+	var names []string
+	if binding.This && ctx.keepThis != "" {
+		names = append(names, ctx.keepThis)
+	}
+	cloneSource := binding.IsClone
+	for _, arg := range binding.Wire {
+		if arg.label == "this" {
+			continue
+		}
+		if cloneSource {
+			cloneSource = false
+			names = append(names, ctx.recvKeep)
+			continue
+		}
+		if arg.keep != "" {
+			names = append(names, arg.keep)
+		}
+	}
+	if len(names) == 0 {
 		return
-	}
-	names := make([]string, len(params))
-	for i, p := range params {
-		names[i] = p.Name
 	}
 	fmt.Fprintf(b, "\tcppgo.KeepAlive(%s)\n", strings.Join(names, ", "))
 }
 
-// keepAliveParams lists the parameters that reference Go memory.
-func keepAliveParams(sig *signature) []*Param {
-	var out []*Param
-	for _, p := range sig.fn.Params {
-		switch p.Info.kind {
-		case kindString, kindSlice, kindPointer:
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// zeroPrefix renders the zero value(s) of the value results plus a comma, so
-// that an error can be appended to a return statement.
-func zeroPrefix(sig *signature) string {
-	if sig.ret.kind == resStatus || sig.ret.kind == resNone {
-		return ""
-	}
-	return zeroValue(sig.ret.info) + ", "
-}
-
-// zeroValue is the Go zero value of a type.
-func zeroValue(info *typeInfo) string {
-	switch info.kind {
-	case kindBool:
-		return "false"
-	case kindPointer:
-		return "nil"
-	case kindHandle:
-		return "cppgo.Handle(0)"
-	case kindObject:
-		return info.goType + "(0)"
-	}
-	return "0"
-}
-
-// wrapperParams renders the Go parameter list of a wrapper.
-func wrapperParams(f *Func) string {
-	parts := make([]string, len(f.Params))
-	for i, p := range f.Params {
-		parts[i] = p.Name + " " + p.Info.goType
-	}
-	return strings.Join(parts, ", ")
-}
-
-// wrapperResults renders the Go result list of a wrapper.
-func wrapperResults(f *Func) string {
-	switch len(f.Results) {
-	case 0:
-		return ""
-	case 1:
-		return " " + f.Results[0].Info.goType
-	}
-	parts := make([]string, len(f.Results))
-	for i, r := range f.Results {
-		parts[i] = r.Info.goType
-	}
-	return " (" + strings.Join(parts, ", ") + ")"
-}
-
-// callExpr renders the trampoline invocation, including argument conversion.
-func callExpr(sig *signature, ret string) string {
-	args := []string{sig.fn.symVar()}
-	for _, p := range sig.fn.Params {
-		switch p.Info.kind {
-		case kindString:
-			args = append(args, "cppgo.StrPtr("+p.Name+")", "uintptr(len("+p.Name+"))")
-		case kindSlice:
-			args = append(args, "cppgo.Ptr("+p.Name+")", "uintptr(len("+p.Name+"))")
-		case kindBool:
-			args = append(args, "cppgoBoolInt64("+p.Name+")")
-		default:
-			args = append(args, mirrorExpr(p))
-		}
-	}
-	if sig.ret.kind == resStatusValue {
-		args = append(args, "unsafe.Pointer(&"+ret+")")
-	}
-	return fmt.Sprintf("%s(%s)", sig.fn.trampName(), strings.Join(args, ", "))
-}
-
-// mirrorExpr converts a parameter to the Go type of its mirror slot.
-func mirrorExpr(p *Param) string {
-	if p.Info.goType == p.Info.slot {
-		return p.Name
-	}
-	return p.Info.slot + "(" + p.Name + ")"
-}
-
-// fromMirror converts an expression of Go type src back to the bound
-// function's result type.
-func fromMirror(info *typeInfo, src, expr string) string {
-	switch info.kind {
-	case kindBool:
-		return expr + " != 0"
-	case kindPointer:
-		return "(" + info.goType + ")(" + expr + ")"
-	case kindHandle:
-		return "cppgo.Handle(" + expr + ")"
-	}
-	if info.goType == src {
-		return expr
-	}
-	return info.goType + "(" + expr + ")"
-}
-
-// localName returns base, suffixed if needed so it cannot shadow a parameter.
-func localName(f *Func, base string) string {
-	name := base
-	for {
-		clash := false
-		for _, p := range f.Params {
-			if p.Name == name {
-				clash = true
+// emitTrampolineDeclarations declares every assembly trampoline.
+func (m *packageModel) emitTrampolineDeclarations(b *strings.Builder) {
+	b.WriteString("\n// Assembly trampolines. Each one reads its arguments, switches to a 16-byte\n// aligned stack for the C call, restores the Go stack pointer and only then\n// stores the result. They must not be called directly.\n")
+	for _, binding := range m.bindings {
+		b.WriteString("\n")
+		fmt.Fprintf(b, "// %s is the NOSPLIT trampoline for %s.\n", binding.Trampoline, binding.Symbol)
+		parts := make([]string, 0, len(binding.Slots))
+		result := ""
+		for _, slot := range binding.Slots {
+			if slot.label == "ret" {
+				result = " " + slot.goType
+				continue
 			}
+			parts = append(parts, slot.label+" "+slot.goType)
 		}
-		if !clash {
-			return name
-		}
-		name += "_"
+		fmt.Fprintf(b, "func %s(%s)%s\n", binding.Trampoline, strings.Join(parts, ", "), result)
 	}
 }
 
-// trampolineParams renders the Go parameter list of a trampoline declaration.
-func trampolineParams(sig *signature) string {
-	parts := make([]string, 0, len(sig.slots))
-	for _, sl := range sig.slots {
-		parts = append(parts, sl.label+" "+sl.goType)
+// goParams renders a Go parameter list.
+func goParams(params []*goParam) string {
+	parts := make([]string, len(params))
+	for i, param := range params {
+		parts[i] = param.Name + " " + param.Type.Go
 	}
 	return strings.Join(parts, ", ")
 }
 
-// trampolineResult renders the result of a trampoline declaration.
-func trampolineResult(sig *signature) string {
-	if sig.ret.slot == nil {
+// goResults renders a Go result list.
+func goResults(binding *binding) string {
+	switch {
+	case binding.Result != nil && binding.ErrorResult:
+		return " (" + binding.Result.Go + ", error)"
+	case binding.Result != nil:
+		return " " + binding.Result.Go
+	case binding.ErrorResult:
+		return " error"
+	default:
 		return ""
 	}
-	return " (ret " + sig.ret.slot.goType + ")"
+}
+
+// errorZeroPrefix is the zero value a failed error-returning binding reports,
+// plus a comma: every one of them has an error as its last result.
+func errorZeroPrefix(binding *binding) string {
+	if binding.Result == nil {
+		return ""
+	}
+	return zeroValue(binding.Result) + ", "
+}
+
+// zeroValue is the Go zero of a result type.
+func zeroValue(t *goType) string {
+	switch t.Kind {
+	case goBool:
+		return "false"
+	case goPointer:
+		return "nil"
+	default:
+		return "0"
+	}
+}
+
+// convertResult turns the register or out-pointer value into the Go result.
+func convertResult(binding *binding, local string) string {
+	result := binding.Result
+	if binding.Status {
+		return convertFromLocal(result, local)
+	}
+	switch result.Kind {
+	case goBool:
+		return local + "&0xff != 0"
+	case goPointer:
+		return "(*" + strings.TrimPrefix(result.Go, "*") + ")(" + local + ")"
+	case goInteger:
+		if result.Go == "int64" || result.Go == "uint64" {
+			return local
+		}
+		return result.Go + "(" + local + ")"
+	default:
+		return local
+	}
+}
+
+// convertFromLocal converts an out-pointer local, whose type is the exact C
+// width, to the Go result.
+func convertFromLocal(result *goType, local string) string {
+	switch result.Kind {
+	case goBool:
+		return local + " != 0"
+	case goPointer:
+		return "(*" + strings.TrimPrefix(result.Go, "*") + ")(" + local + ")"
+	default:
+		return local
+	}
+}
+
+// cppgoOpenCode is the prologue every wrapper runs: it loads the library and,
+// when the binding has no error result, panics because a failed load is a
+// configuration error the caller cannot handle.
+func cppgoOpenCode(binding *binding, indent string) string {
+	if binding.ErrorResult {
+		return indent + "if err := cppgoOpen(\"\"); err != nil {\n" + indent + "\treturn " + errorZeroPrefix(binding) + "err\n" + indent + "}\n"
+	}
+	return indent + "if err := cppgoOpen(\"\"); err != nil {\n" + indent + "\tpanic(err)\n" + indent + "}\n"
 }
 
 // gofmtSource formats generated Go source.

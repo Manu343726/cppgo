@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
+	"strings"
 
 	"github.com/Manu343726/cppgo/internal/gen"
 )
@@ -31,6 +31,18 @@ type cli struct {
 func (c *cli) printf(format string, args ...any) { fmt.Fprintf(c.stdout, format, args...) }
 
 func (c *cli) errorf(format string, args ...any) { fmt.Fprintf(c.stderr, format+"\n", args...) }
+
+// stringList is a repeatable flag: -header a.hpp -header b.hpp appends.
+type stringList []string
+
+// String implements flag.Value.
+func (l *stringList) String() string { return strings.Join(*l, ",") }
+
+// Set implements flag.Value.
+func (l *stringList) Set(value string) error {
+	*l = append(*l, value)
+	return nil
+}
 
 // run is the whole CLI: it dispatches the subcommand and returns the process
 // exit code. main is the only place that calls os.Exit.
@@ -114,12 +126,17 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		}
 		c.printGenUsage(c.stderr)
 	}
-	dir := fs.String("dir", ".", "package directory holding the //cppgo: directives")
-	out := fs.String("out", "", "output directory (defaults to -dir, rewriting the sources in place)")
+	var headers, bind, exclude, rename stringList
+	fs.Var(&headers, "header", "C++ header to bind; repeat for several")
+	packageName := fs.String("package", "", "Go package name")
+	library := fs.String("library", "", "shared object Open loads")
+	out := fs.String("out", ".", "output directory")
+	compileCommands := fs.String("compile-commands", "", "compile_commands.json (or its directory) for the header's flags")
+	fs.Var(&bind, "bind", "add a root; repeatable")
+	fs.Var(&exclude, "exclude", "remove a root; repeatable")
+	fs.Var(&rename, "rename", "<qualified signature>=<GoName>; repeatable")
 	check := fs.Bool("check", checkMode, "report whether the generated files are up to date instead of writing them")
 	quiet := fs.Bool("q", false, "suppress the per-binding report and the confirmation message")
-	force := fs.Bool("force", false, "downgrade direct-ABI validation failures to warnings for a binding you accept")
-	compileCommands := fs.String("compile-commands", "", "compile_commands.json (or its directory) to take the C++ header's flags from")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -128,30 +145,31 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		fs.Usage()
 		return exitUsage
 	}
-	if *dir == "" {
-		c.errorf("cppgo %s: -dir must not be empty", verb)
+	if len(headers) == 0 {
+		c.errorf("cppgo %s: -header is required: name the C++ header to bind", verb)
+		fs.Usage()
 		return exitUsage
 	}
-	info, err := os.Stat(*dir)
-	if err != nil {
-		c.errorf("cppgo %s: %v", verb, err)
-		return exitError
-	}
-	if !info.IsDir() {
-		c.errorf("cppgo %s: %s is not a directory", verb, *dir)
+	if *out == "" {
+		c.errorf("cppgo %s: -out must not be empty", verb)
 		return exitUsage
 	}
+
 	cfg := gen.Config{
-		Dir:             *dir,
+		Headers:         headers,
+		Package:         *packageName,
+		Library:         *library,
 		Out:             *out,
 		Check:           *check,
-		Force:           *force,
 		CompileCommands: *compileCommands,
+		Bind:            bind,
+		Exclude:         exclude,
+		Rename:          rename,
 		Warnings:        c.stderr,
 	}
 	if !*quiet && !*check {
-		// The per-binding report is the answer to "what did this bind, and
-		// what did it assume?", so it goes to stdout for "gen".
+		// The per-binding carrier report is the answer to "what did this
+		// bind, and how?", so it goes to stdout for "gen".
 		cfg.Report = c.stdout
 	}
 	if err := gen.Generate(cfg); err != nil {
@@ -159,7 +177,7 @@ func (c *cli) generate(args []string, checkMode bool) int {
 		return exitError
 	}
 	if *check && !*quiet {
-		c.printf("%s: generated files are up to date\n", *dir)
+		c.printf("%s: generated files are up to date\n", *out)
 	}
 	return exitOK
 }
@@ -179,17 +197,18 @@ func wantsHelp(args []string) bool {
 
 // printUsage is the top-level help.
 func (c *cli) printUsage(w io.Writer) {
-	fmt.Fprintln(w, "cppgo generates Go bindings for C++ that call into it directly,")
-	fmt.Fprintln(w, "through one assembly trampoline per function, with no cgo involved.")
+	fmt.Fprintln(w, "cppgo generates a type-safe Go package from C++ headers and calls into")
+	fmt.Fprintln(w, "them through one assembly trampoline per binding, plus a generated shim")
+	fmt.Fprintln(w, "for everything the direct ABI cannot express. No cgo is involved.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "usage:")
-	fmt.Fprintln(w, "  cppgo gen   -dir <pkgdir> [-out <outdir>] [-check]")
-	fmt.Fprintln(w, "  cppgo check -dir <pkgdir> [-out <outdir>]")
+	fmt.Fprintln(w, "  cppgo gen   -header <path> -package <name> -library <name> [-out <dir>]")
+	fmt.Fprintln(w, "  cppgo check -header <path> -package <name> -library <name> [-out <dir>]")
 	fmt.Fprintln(w, "  cppgo version")
 	fmt.Fprintln(w, "  cppgo help [command]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
-	fmt.Fprintf(w, "  %-8s %s\n", "gen", "write the wrappers, the trampolines, the C++ shim header and the stub file")
+	fmt.Fprintf(w, "  %-8s %s\n", "gen", "write the Go package, the trampolines and the C++ shim")
 	fmt.Fprintf(w, "  %-8s %s\n", "check", "verify that the generated files are up to date, without writing")
 	fmt.Fprintf(w, "  %-8s %s\n", "version", "print the version of the generator")
 	fmt.Fprintf(w, "  %-8s %s\n", "help", "print this message, or the help of one command")
@@ -199,67 +218,66 @@ func (c *cli) printUsage(w io.Writer) {
 
 // printGenUsage documents "cppgo gen".
 func (c *cli) printGenUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: cppgo gen -dir <pkgdir> [-out <outdir>] [-check] [-q]")
-	fmt.Fprintln(w, "                  [-force] [-compile-commands <path>]")
+	fmt.Fprintln(w, "usage: cppgo gen -header <path> [-header <path>]... -package <name>")
+	fmt.Fprintln(w, "                  -library <name-or-path> [-out <dir>] [-compile-commands <path>]")
+	fmt.Fprintln(w, "                  [-bind <qualified>]... [-exclude <qualified>]...")
+	fmt.Fprintln(w, "                  [-rename '<signature>=<GoName>']... [-check] [-q]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "gen reads the Go package in -dir and writes its bindings.")
+	fmt.Fprintln(w, "gen reads the C++ headers through libclang and writes:")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "In the direct ABI mode (//cppgo:header present, or //cppgo:mode abi) it")
-	fmt.Fprintln(w, "writes three files, calls the C++ symbols directly and prints one report")
-	fmt.Fprintln(w, "line per binding:")
+	fmt.Fprintf(w, "  %-18s %s\n", gen.GenFileName, "the Go API, the generated Open and the trampoline")
+	fmt.Fprintf(w, "  %-18s %s\n", "", "declarations")
+	fmt.Fprintf(w, "  %-18s %s\n", gen.AsmFileName, "one NOSPLIT trampoline per binding")
+	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimHeaderFileName, "the extern \"C\" thunk declarations")
+	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimSourceFileName, "the thunks: compile this into the library")
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %-18s %s\n", gen.GenFileName, "idiomatic wrappers, lazy library binding and the")
-	fmt.Fprintf(w, "  %-18s %s\n", "", "declarations of the assembly trampolines")
-	fmt.Fprintf(w, "  %-18s %s\n", gen.AsmFileName, "one NOSPLIT trampoline per bound function")
-	fmt.Fprintf(w, "  %-18s %s\n", gen.SourceFileName, "the input file with every bound function body")
-	fmt.Fprintf(w, "  %-18s %s\n", "", "replaced by a delegation to its wrapper")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "In the shim mode (//cppgo:mode shim, or no header at all) it writes the")
-	fmt.Fprintf(w, "same three plus %s, the extern \"C\" prototypes the C++ side\n", gen.ShimFileName)
-	fmt.Fprintln(w, "implements, and the bindings are declared with //cppgo:external <symbol>.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "The direct ABI mode declares the library once with //cppgo:library <name>,")
-	fmt.Fprintln(w, "the header with //cppgo:header <path>, each mirror type with")
-	fmt.Fprintln(w, "//cppgo:class <qualified C++ name> on a `type X cppgo.Handle`, and each")
-	fmt.Fprintln(w, "binding with //cppgo:ctor, //cppgo:dtor, //cppgo:method <name> or")
-	fmt.Fprintln(w, "//cppgo:function <qualified name>. Every binding is resolved against the")
-	fmt.Fprintln(w, "header: an inline member, a virtual function, a template, a struct passed")
-	fmt.Fprintln(w, "by value or a std:: type is a build error, not a runtime crash.")
+	fmt.Fprintln(w, "Every binding gets exactly one carrier: the direct trampoline when it is")
+	fmt.Fprintln(w, "noexcept, not virtual, defined out of line and register representable; a")
+	fmt.Fprintln(w, "generated thunk everywhere else. The report names the carrier and why.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "flags:")
-	fmt.Fprintln(w, "  -dir string")
-	fmt.Fprintln(w, "        package directory holding the //cppgo: directives (default \".\")")
+	fmt.Fprintln(w, "  -header string")
+	fmt.Fprintln(w, "        C++ header to bind; repeatable")
+	fmt.Fprintln(w, "  -package string")
+	fmt.Fprintln(w, "        Go package name")
+	fmt.Fprintln(w, "  -library string")
+	fmt.Fprintln(w, "        shared object Open loads; when it is a readable file, its dynamic")
+	fmt.Fprintln(w, "        symbol table cross-checks every direct binding")
 	fmt.Fprintln(w, "  -out string")
-	fmt.Fprintln(w, "        output directory; defaults to -dir, which rewrites the input")
-	fmt.Fprintln(w, "        sources in place instead of writing a copy")
+	fmt.Fprintln(w, "        output directory (default \".\")")
+	fmt.Fprintln(w, "  -compile-commands string")
+	fmt.Fprintln(w, "        compile_commands.json (or its directory) to take the header's flags")
+	fmt.Fprintln(w, "        from, instead of discovering them")
+	fmt.Fprintln(w, "  -bind qualified")
+	fmt.Fprintln(w, "        add a root (a namespace, class, member or function); repeatable")
+	fmt.Fprintln(w, "  -exclude qualified")
+	fmt.Fprintln(w, "        remove a root; repeatable")
+	fmt.Fprintln(w, "  -rename 'signature=GoName'")
+	fmt.Fprintln(w, "        resolve a Go name collision; repeatable")
 	fmt.Fprintln(w, "  -check")
 	fmt.Fprintln(w, "        report whether the generated files are up to date instead of writing")
 	fmt.Fprintln(w, "  -q")
 	fmt.Fprintln(w, "        suppress the per-binding report and the confirmation message")
-	fmt.Fprintln(w, "  -force")
-	fmt.Fprintln(w, "        downgrade a direct-ABI validation failure to a warning, for a")
-	fmt.Fprintln(w, "        binding you accept anyway; the generated file says so")
-	fmt.Fprintln(w, "  -compile-commands string")
-	fmt.Fprintln(w, "        compile_commands.json (or the directory holding one) to take the")
-	fmt.Fprintln(w, "        header's compilation flags from, instead of discovering them")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "example:")
-	fmt.Fprintln(w, "  cppgo gen -dir ./bindings/mathx -out ./bindings/mathx")
+	fmt.Fprintln(w, "  cppgo gen -header include/mathx/vector.hpp -package mathx \\")
+	fmt.Fprintln(w, "            -library libmathx -out ./mathx")
 }
 
 // printCheckUsage documents "cppgo check".
 func (c *cli) printCheckUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: cppgo check -dir <pkgdir> [-out <outdir>] [-q]")
+	fmt.Fprintln(w, "usage: cppgo check -header <path> [-header <path>]... -package <name>")
+	fmt.Fprintln(w, "                    -library <name-or-path> [-out <dir>] [-q]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "check regenerates the bindings in memory and compares them with the")
-	fmt.Fprintln(w, "files on disk. It writes nothing, exits 0 when everything is up to")
-	fmt.Fprintln(w, "date and 1 when a file is missing or stale, which is the shape a CI")
-	fmt.Fprintln(w, "gate wants.")
+	fmt.Fprintln(w, "check regenerates the package in memory and compares it with the files on")
+	fmt.Fprintln(w, "disk. It writes nothing, exits 0 when everything is up to date and 1 when")
+	fmt.Fprintln(w, "a file is missing or stale, which is the shape a CI gate wants.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "It accepts the same -dir, -out and -q flags as \"cppgo gen\".")
+	fmt.Fprintln(w, "It accepts the same manifest flags as \"cppgo gen\".")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "example:")
-	fmt.Fprintln(w, "  cppgo check -dir ./bindings/mathx || echo out of date")
+	fmt.Fprintln(w, "  cppgo check -header include/mathx/vector.hpp -package mathx \\")
+	fmt.Fprintln(w, "              -library libmathx -out ./mathx || echo out of date")
 }
 
 // printVersionUsage documents "cppgo version".
