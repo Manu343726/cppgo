@@ -1,6 +1,0 @@
-# Hugo build artifacts. The repository-level .gitignore already covers
-# /site/public and /site/resources; this file keeps the site directory clean
-# even when it is added on its own.
-public/
-resources/
-.hugo_build.lock
