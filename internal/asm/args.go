@@ -8,6 +8,10 @@
 // same ABI through runtime.cgocall, which is the only state in which the callee
 // may call back into Go (see package callback).
 //
+// A call made this way is not a preemption point. The goroutine keeps its P for
+// the duration of the call, so a long foreign call delays the stop-the-world
+// phase of a collection until it returns.
+//
 // Only amd64 is implemented. The !amd64 files keep this package compiling and
 // panic on the first foreign call.
 package asm

@@ -34,6 +34,12 @@ package cppgo
 // The zero Handle is the null pointer, and it is what a failing constructor
 // leaves behind. Foreign code rejects it. A generated binding never hands a
 // Handle out in an exported signature.
+//
+// # How it works
+//
+// The address is kept in a uintptr rather than in an unsafe.Pointer because the
+// memory is not Go's: an unsafe.Pointer would let the collector trace foreign
+// memory, and go vet rejects the conversion of a foreign address to one anyway.
 type Handle uintptr
 
 // IsNil reports whether h is the null handle.
