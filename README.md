@@ -10,7 +10,7 @@ It is a generator (`cppgo gen`) plus a small Go runtime that the generated
 package imports. libclang and a C++ compiler are needed to *generate*. The
 program you ship needs neither.
 
-**Status.** The generator, the runtime and the two examples are in the tree and
+**Status.** The generator, the runtime and the two examples are implemented and
 tested. The full error projection, the wider operators/inheritance work and the
 OpenCV, ArrayFire and Eigen target slices are designed and not shipped; each is
 marked where it appears in the documentation.
@@ -102,12 +102,10 @@ error.** Two C++ conventions are projected today:
   becomes an error: the Go signature returns only the error, and a non-zero value
   is the failure.
 
-Designed and not shipped
-([issue #19](https://git.manu343726.com/manu343726/cppgo/issues/19)):
-`std::error_code`, `std::expected`, `errno`, `std::variant`, a configured `bool`
-plus out-parameters, and custom result types. Until then, a function returning
-`std::error_code` is refused at generation time with a message that says what to
-do.
+Designed and not shipped: `std::error_code`, `std::expected`, `errno`,
+`std::variant`, a configured `bool` plus out-parameters, and custom result types.
+Until then, a function returning `std::error_code` is refused at generation time
+with a message that says what to do.
 
 [Report failures from C++ to Go](https://manu343726.github.io/cppgo/how-to/errors/)
 has the error types, the `errors.As` examples and the designed table.
@@ -167,10 +165,10 @@ shape day-to-day use:
 ## Build and test
 
 ```console
-$ make build       # CGO_ENABLED=0 go build ./..., then every cmd/ binary into bin/
+$ make build       # CGO_ENABLED=0 go build ./..., then the command into bin/
 $ make test        # two passes: CGO_ENABLED=0 go test, then CGO_ENABLED=1 -race
 $ make lint        # go vet, then golangci-lint when it is installed
-$ make cover-gate  # statement coverage >= 99% on ./... (scripts/coverage-gate.sh)
+$ make cover-gate  # statement coverage >= 99% on ./...
 $ make examples    # build, generate and test both examples
 $ make site        # build this documentation site with hugo
 ```
@@ -183,20 +181,16 @@ coverage and examples in one shot.
 ## Documentation
 
 The manual is published at <https://manu343726.github.io/cppgo/> and built from
-[`site/`](https://github.com/Manu343726/cppgo/blob/main/site) with Hugo 0.169.
-It follows four sections: tutorials, how-to guides, reference and explanation.
+[`site/`](https://github.com/Manu343726/cppgo/blob/main/site). It follows four
+sections: tutorials, how-to guides, reference and explanation —
+[Performance](https://manu343726.github.io/cppgo/explanation/benchmarks/) is the
+cost comparison, and
 [Architecture](https://manu343726.github.io/cppgo/explanation/architecture/) is
 where *how it works* is written down.
 
-- [`DESIGN.md`](https://github.com/Manu343726/cppgo/blob/main/DESIGN.md) is the
-  design contract the code is held to.
-- [`docs/adr/`](https://github.com/Manu343726/cppgo/blob/main/docs/adr) holds one
-  decision record per decision, never edited after acceptance.
-- [`examples/`](https://github.com/Manu343726/cppgo/blob/main/examples) is the
-  executable half of the tutorial.
-
-Where the contract and the site disagree about what exists, the code and its
-tests decide: the site describes the build in the tree.
+[`examples/`](https://github.com/Manu343726/cppgo/blob/main/examples) is the
+executable half of the tutorial: every command there is one of the examples'
+`Makefile` targets.
 
 ## Contributing
 
