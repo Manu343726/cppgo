@@ -4,7 +4,7 @@ description = "One class, end to end: a C++ header and its out-of-line definitio
 weight = 20
 +++
 
-This page binds one real C++ class from scratch. Every file below is complete;
+This page binds one real C++ class from scratch. Every file below is complete.
 copy them into a directory and the last command prints `5` and `10`.
 
 **Audience:** your first binding. You need Go, libclang and a C++ compiler as
@@ -12,9 +12,9 @@ described in [installation]({{< ref "manual/installation.md" >}}).
 
 ## 1. The C++ library
 
-Two files: a header that *declares*, and a source that *defines*. The split is
-not cosmetic — a member defined inside the class definition is implicitly inline,
-and the compiler is not required to emit a callable symbol for it. cppgo can
+Two files. A header that *declares*, and a source that *defines*. The split is
+not cosmetic, a member defined inside the class definition is implicitly inline,
+and the compiler has no obligation to emit a callable symbol for it. cppgo can
 still bind it (through a thunk), but an out-of-line `noexcept` member is the one
 that takes the fast path.
 
@@ -102,13 +102,13 @@ Read the report as three answers:
   with the qualifiers that decide the carrier.
 - **`direct`** — the generated trampoline calls the mangled symbol
   `_ZN5mathx6Vector5scaleEd` in your library. The constructor is `thunk`
-  because it is not `noexcept`: an exception has to be caught in a C++ frame.
+  because it omits `noexcept`. An exception has to be caught in a C++ frame.
 - **the reason** — why that carrier. `noexcept, out of line, not virtual,
   register class` is the direct carrier's recipe.
 
 Because the header is the unit of selection, the package contains the whole
-class, not only the members you were thinking of. `-bind` and `-exclude` narrow
-it when a header is too large; see [the generation
+class. `-bind` and `-exclude` narrow
+it when a header is too large. See [the generation
 input]({{< ref "manual/manifest.md" >}}).
 
 ## 3. The Go package you got
@@ -123,7 +123,7 @@ zz_cppgo_shim.cpp  zz_cppgo_shim.h
 - `zz_cppgo.gen.go` is the API: types, `NewVector`, methods, `Close`, `Open`.
 - `zz_cppgo_amd64.s` has one `NOSPLIT` trampoline per binding.
 - `cppgo_shim/` holds the generated C++ thunks. It is cppgo's source, not
-  yours; the Go tool ignores it because it is one directory down.
+  yours. The Go tool ignores it because it is one directory down.
 - `libcppgo_mathx.so` is the shim cppgo compiled and linked against the
   library.
 
@@ -143,12 +143,12 @@ func (v *Vector) Scale(k float64)
 Three shapes are worth noticing:
 
 - **`NewVector` is a function, `Close` is a method.** The destructor is always
-  `Close() error`; a second `Close` and a nil receiver return
+  `Close() error`. A second `Close` and a nil receiver return
   `cppgo.ErrClosed`, never a use-after-free.
-- **`Scale` has no error, `Norm` has one.** `scale` is `noexcept`, so the call
-  is direct and cannot fail; `norm` is not, so the thunk catches what it throws
-  and the signature carries the error. The rule is the C++ declaration's, not a
-  choice you make in Go.
+- **`Scale` has no error, `Norm` has one.** `scale` declares `noexcept`. The
+  call is direct and cannot fail. `norm` declares no `noexcept`, so the thunk
+  catches what it throws and the signature carries the error. The rule comes
+  from the C++ declaration.
 - **`Close` and `Norm` return errors a zero value can produce** — a closed
   object and a C++ failure respectively.
 
@@ -211,17 +211,17 @@ $ ./mathxdemo
 10
 ```
 
-The binary is dynamically linked because it loads `libmathx.so` at run time — but
+The binary is dynamically linked because it loads `libmathx.so` at run time, but
 it needed no C toolchain to build, and it contains no `import "C"`.
 
 <div class="callout callout-warn">
 <span class="callout-title">Keep the two objects together</span>
 <p>
 The shim is linked with <code>-Wl,-rpath,$ORIGIN</code> and names your library by
-soname, so the default deployment is "the user's library beside the shim". If you
+soname, and the default deployment is "the user's library beside the shim". If you
 keep it elsewhere, set <code>CPPGO_LIBRARY_PATH</code> or
 <code>mathx.CppgoLibraryPath</code> before the first call. A missing shim is an
-<code>Open</code> error naming the file; a missing library is the loader naming
+<code>Open</code> error naming the file. A missing library is the loader naming
 the soname.
 </p>
 </div>
@@ -237,7 +237,7 @@ $ cppgo check -header include/mathx/vector.hpp -package mathx \
 ./mathx: generated files are up to date
 ```
 
-`check` writes nothing and builds nothing: it regenerates the sources in memory
+`check` writes and builds no artefacts. It regenerates the sources in memory
 and compares them byte for byte. See [cppgo check in
 CI]({{< ref "manual/ci.md" >}}).
 
@@ -245,7 +245,7 @@ CI]({{< ref "manual/ci.md" >}}).
 
 - Every generation flag, including `-bind`, `-instantiate`, `-rename` and
   `-status`: [the generation input]({{< ref "manual/manifest.md" >}}).
-- What each generated file contains, and why: [generated
+- What each generated file contains is in [generated
   code]({{< ref "reference/generated-code.md" >}}).
-- What to do when the generator refuses a construct: [when generation
+- For a refused construct, read [when generation
   refuses]({{< ref "tutorials/when-generation-refuses.md" >}}).

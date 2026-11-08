@@ -30,7 +30,7 @@ From a checkout of the repository, `make build` produces the same binary at
 
 Released binaries are published on the
 [releases page](https://github.com/Manu343726/cppgo/releases) for
-`linux/amd64`, `linux/arm64`, `darwin/amd64` and `darwin/arm64` — those are the
+`linux/amd64`, `linux/arm64`, `darwin/amd64` and `darwin/arm64`, those are the
 targets the release workflow cross-compiles the CLI for. The runtime is still
 Linux/amd64 only in this version, so those other binaries can run the generator
 but cannot execute a binding.
@@ -47,8 +47,8 @@ A locally built or `go install`ed binary reports `dev` unless it was built with
 
 ## Let cppgo find libclang
 
-`internal/cxx` loads libclang at run time through purego — no cgo, no headers
-needed. `CPPGO_LIBCLANG` names a specific library; otherwise it searches the
+`internal/cxx` loads libclang at run time through purego, no cgo, no headers
+needed. `CPPGO_LIBCLANG` names a specific library. Otherwise it searches the
 bare names `libclang.so` and `libclang.dylib`, the common system directories,
 and the versioned and per-LLVM layouts including the Homebrew paths on macOS.
 
@@ -61,7 +61,7 @@ cppgo gen: cppgo: include/mathx/vector.hpp: cxx: libclang not found (searched
 libclang.so, /usr/lib/libclang.so, ...; install libclang-dev or set CPPGO_LIBCLANG)
 ```
 
-The search runs once per process; changing the variable takes effect in a new
+The search runs once per process. Changing the variable takes effect in a new
 process.
 
 ## The compiler must match the library
@@ -91,7 +91,7 @@ $ g++ -std=c++17 -O2 -fPIC -shared -Wl,-soname,libmathx.so \
       -Iinclude -o build/libmathx.so src/vector.cpp
 ```
 
-The soname matters for deployment: the shim records `libmathx.so` in its
+The soname matters for deployment. The shim records `libmathx.so` in its
 `DT_NEEDED` entry, never the build path, so the same generated package works
 after the tree moves.
 
@@ -110,10 +110,10 @@ mathx::Vector::scale(double) noexcept   direct _ZN5mathx6Vector5scaleEd    noexc
 cppgo: built mathx/libcppgo_mathx.so with /usr/bin/g++
 ```
 
-That is the real report: one line per binding, the carrier, the symbol, and the
+That is the real report. One line per binding, the carrier, the symbol, and the
 reason. If the flags were guessed because there was no `compile_commands.json`
 or `.clangd`, a warning goes to stderr and the parse may have missed include
-paths; [validation]({{< ref "manual/validation.md" >}}) explains how to fix it.
+paths. [validation]({{< ref "manual/validation.md" >}}) explains how to fix it.
 
 ## Deploy the two objects together
 
@@ -129,7 +129,7 @@ $ go run .
 
 `CPPGO_LIBRARY_PATH` or the generated `CppgoLibraryPath` points the package at
 a library kept somewhere else. For a single file to ship, the runtime provides
-`cppgo.OpenFS` for `//go:embed`; wiring it into a generated package is still
+`cppgo.OpenFS` for `//go:embed`. Wiring it into a generated package is still
 open ([#20](https://git.manu343726.com/manu343726/cppgo/issues/20)).
 
-Next: [quickstart]({{< ref "manual/quickstart.md" >}}).
+Next is [quickstart]({{< ref "manual/quickstart.md" >}}).

@@ -21,15 +21,14 @@ from real runs.
 </p>
 </div>
 
-- **[mathx]({{< ref "examples/mathx.md" >}})** — one small class: constructor,
+- **[mathx]({{< ref "examples/mathx.md" >}})** — one small class with a constructor,
   `Close`, copy constructor, `const` accessors, a slice parameter, a mutator,
   a static member, and the inline member v3 used to refuse (bound through a
   thunk in v4).
-- **[stats]({{< ref "examples/stats.md" >}})** — arithmetic over `[]float64`:
-  the same data crossing as `(pointer, length)` in both directions, a pointer
+- **[stats]({{< ref "examples/stats.md" >}})** — arithmetic over `[]float64`. The same data crosses as `(pointer, length)` in both directions, a pointer
   identity check, and an `int32_t` status turned into a Go error with
   `-status`.
 
 Each page shows the header, the exact `cppgo gen` invocation, the carrier report
-and the generated API. The repository's `Makefile`s are the build once #4 lands;
+and the generated API. The repository's `Makefile`s are the build once #4 lands.
 until then, the commands on the pages are the v4 commands to run by hand.

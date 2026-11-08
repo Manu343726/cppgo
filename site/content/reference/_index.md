@@ -11,7 +11,7 @@ This section is the lookup half of the documentation. It has three pages:
   promise.
 - **[The generated files]({{< ref "reference/generated-code.md" >}})** —
   `zz_cppgo.gen.go`, `zz_cppgo_amd64.s`, the shim's two sources and the
-  compiled shim: what each block is and why.
+  compiled shim. What each block is and why.
 - **[The CLI]({{< ref "reference/cli.md" >}})** — `cppgo gen`, `check`,
   `version` and `help`, with every flag and every exit code.
 
@@ -20,5 +20,5 @@ or flag.
 
 The canonical API documentation is generated from the source and published at
 [pkg.go.dev/github.com/Manu343726/cppgo](https://pkg.go.dev/github.com/Manu343726/cppgo).
-When the two disagree, pkg.go.dev wins: it is the godoc comment on the code you
+When the two disagree, pkg.go.dev wins. It is the godoc comment on the code you
 are importing, this page is the narrative around it.

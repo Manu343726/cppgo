@@ -18,8 +18,7 @@ type Vector struct {
 ```
 
 `cppgo.Object` is the Go allocation the C++ value lives in. It pins the storage
-with `runtime.Pinner`, so the collector cannot move it while C++ holds the
-address, and it counts references so a view can share the object without a
+with `runtime.Pinner`. The collector cannot move it while C++ holds the address, and it counts references so a view can share the object without a
 second destructor. A generated constructor creates one:
 
 ```go
@@ -47,9 +46,9 @@ func NewVector(x float64, y float64) (*Vector, error) {
 ```
 
 The `16` and `8` are `sizeof` and `alignof` measured from the header by
-libclang, not guessed from the Go type. The release function is the destructor:
-it runs exactly once, when the last reference goes — and the `constructed` flag
-is what keeps it from running on an object whose constructor threw.
+libclang, not guessed from the Go type. The release function is the destructor.
+It runs exactly once, when the last reference goes, and the `constructed` flag
+keeps it from running on an object whose constructor threw.
 
 ## `Close` is the destructor
 
@@ -65,10 +64,8 @@ func (v *Vector) Close() error {
 }
 ```
 
-- **A second `Close`, a nil receiver, or the zero value returns
-  `cppgo.ErrClosed`.** It does not run the destructor twice.
-- **`Close` can report an error**: a destructor is not `noexcept` in C++ unless
-  it says so, so a throw is caught by the shim and returned here.
+- **A second `Close`, a nil receiver, or the zero value returns `cppgo.ErrClosed`.** It runs the destructor once.
+- **`Close` can report an error**: a C++ destructor can throw unless it declares `noexcept`. A throw is then caught by the shim and returned here.
 - **There is no finalizer.** The object dies when Go calls `Close`, not when the
   collector notices that the `*Vector` is unreachable. `defer v.Close()` belongs
   immediately after a successful construction.
@@ -78,14 +75,14 @@ func (v *Vector) Close() error {
 <p>
 The <code>*cppgo.Object</code> keeps the C++ object alive, and the C++ object
 may own memory of its own. That is the same rule as C++ <code>new</code> without
-<code>delete</code>: not a leak the runtime can fix, but a leak you wrote.
+<code>delete</code>. The runtime cannot fix the leak, and the leak is yours.
 </p>
 </div>
 
 ## Copying and views
 
 `Clone()` is the copy constructor. It constructs a second object in fresh
-storage and returns its own `*Vector`; closing one does not close the other.
+storage and returns its own `*Vector`. Each object has its own lifetime.
 
 ```go
 clone, err := v.Clone()
@@ -96,13 +93,12 @@ defer clone.Close()
 ```
 
 A **view** is a second Go value sharing one object. `cppgo.Object.Retain` adds a
-reference and `Release` drops one; the destructor runs at the last one. The
+reference and `Release` drops one. The destructor runs at the last one. The
 generated API uses views for the `As<Base>()` conversion, which is part of the
 two-phase inheritance work and is **not emitted yet**: the emitter refuses
-inheritance today, so there is no `As` in a generated package.
+inheritance today. A generated package has no `As`.
 
-Copying the Go struct is not a copy of the C++ object: `Vector` is a pointer to
-one `cppgo.Object`, and the object is shared.
+Copying the Go struct copies a reference to the C++ object: `Vector` is a pointer to one `cppgo.Object`, and the object is shared.
 
 ## Mirrored records are values
 
@@ -117,19 +113,18 @@ type Point struct {
 
 `Point` needs no `Close`: it is its own storage, and `NewPoint()` returns a zero
 value. Passing it by value copies the bytes, exactly as in C++. The generated
-package adds a `Clone()` that copies the fields, which is a convenience, not an
-ownership rule.
+package adds a `Clone()` that copies the fields, which is a convenience.
 
 ## The library is loaded once
 
 A generated package loads its two shared objects on the first binding call and
 keeps them for the life of the process. There is no generated `Close` for a
-library; if you need to unload one, you are using the runtime package directly,
-and you own the ordering: destroy the objects, stop the calls, then close.
+library. If you need to unload one, you are using the runtime package directly,
+and you own the ordering. Destroy the objects, stop the calls, then close.
 
 `cppgo.Library.Close` unloads the object. Every later `Symbol` call fails with
 `cppgo.ErrClosed`, and so does a second `Close`. What `Close` **cannot** do is
-wait for calls already running inside the library: there is no per-call
+wait for calls already running inside the library. There is no per-call
 reference count, and closing while another goroutine is in one of its functions
 is a use-after-free.
 
@@ -137,13 +132,12 @@ is a use-after-free.
 
 - **Calling the same C++ object from several goroutines** is exactly as safe as
   calling it from several C++ threads. cppgo adds no lock. A `const` method that
-  only reads is fine; a mutating method needs the synchronisation it would need
+  only reads is fine. A mutating method needs the synchronisation it would need
   in C++.
 - **Resolving symbols** from several goroutines is safe: `Library.Symbol` takes
   a read lock and `Close` is serialised against it.
-- **The error message is thread-local.** `cppgo_last_error` is per-thread, and a
-  goroutine is not pinned to an OS thread. The generated wrapper reads it
-  immediately after the failing call, on the same goroutine; a hand-written
+- **The error message is thread-local.** `cppgo_last_error` is per-thread, and a goroutine may migrate between OS threads. The generated wrapper reads it
+  immediately after the failing call, on the same goroutine. A hand-written
   binding must keep the status check and `LastError` adjacent.
 
-Next: [validation]({{< ref "manual/validation.md" >}}).
+Next is [validation]({{< ref "manual/validation.md" >}}).

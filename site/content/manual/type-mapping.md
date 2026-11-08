@@ -9,9 +9,9 @@ crosses, or you are deciding whether a C++ type can cross at all.
 
 ## The table
 
-You do not write the Go type: cppgo maps the C++ declaration and the generated
+You do not write the Go type. Cppgo maps the C++ declaration and the generated
 signature is the answer. The table is how to read it. **Measured** means an
-end-to-end test in this repository exercises it against a real library;
+end-to-end test in this repository exercises it against a real library.
 **designed** means the mechanism is specified and the row is not yet proven end
 to end.
 
@@ -47,12 +47,12 @@ to end.
 | `std::function<R(Args...)>` | `func(Args...) R` | the shim constructs it from the Go function; measured |
 
 `long double` and `__int128` have no Go value type. A signature that uses one is
-a generation error naming the parameter and the fix: widen or narrow it at the
+a generation error naming the parameter and the fix. Widen or narrow it at the
 C++ boundary to `double`/`int64`, or wrap it.
 
 ## Pointers and lengths become slices
 
-A pointer parameter followed by an integer length parameter becomes a slice: the
+A pointer parameter followed by an integer length parameter becomes a slice. The
 pointer is the data, the length is `len(slice)`, and the slice is borrowed for
 the call.
 
@@ -68,7 +68,7 @@ The C++ side must not keep the pointer after it returns. Go may reuse that
 memory as soon as the call is over, and the wrapper's `KeepAlive` only keeps it
 reachable for the duration of the call.
 
-One length may serve several pointers; the generated binding checks before the
+One length may serve several pointers. The generated binding checks before the
 call that every slice sharing a length has the same length, and returns an error
 if not:
 
@@ -76,7 +76,7 @@ if not:
 cppgo: mathx::saxpy: the slices must have the same length, got 3 and 4
 ```
 
-A Go `string` crosses the same way: a pointer and a length, no copy and no NUL
+A Go `string` crosses the same way. A pointer and a length, no copy and no NUL
 terminator. A C++ function that wants a C string needs the terminator in a
 `[]byte` you own.
 
@@ -98,7 +98,7 @@ type Point struct {
 Everything else is an **opaque value type**: a Go struct with unexported
 storage, `Close()` from the destructor, `Clone()` from the copy constructor when
 one exists, and generated accessors for every public field. A class with private
-members is opaque; that is the normal case, not a failure.
+members is opaque. That is the normal case, not a failure.
 
 ## Callbacks
 
@@ -114,7 +114,7 @@ std::int32_t apply(const std::function<std::int32_t(std::int32_t)> &fn,
 func (s *Signal) Apply(fn func(int32) int32, value int32) (int32, error)
 ```
 
-The limits are the ABI's, not a policy: at most six integer and eight
+The limits are the ABI's, not a policy. At most six integer and eight
 floating-point arguments, and one register result. A callback that takes a
 stack-passed argument is a generation error naming the sixth argument.
 
@@ -124,16 +124,16 @@ These are stated as one-line generation errors, naming the declaration and the
 fix:
 
 - **enums**, nested types, inheritance, static data members, member function
-  templates, operators and conversion operators, variadic functions — constructs
-  the emitter does not emit yet;
-- a **class template** with no `-instantiate` entry;
-- a macro that is the whole API;
-- `long double` / `__int128`;
-- an incomplete type used where a value is needed;
+  templates, operators and conversion operators, variadic functions, constructs
+  the emitter does not emit yet.
+- a **class template** with no `-instantiate` entry.
+- a macro that is the whole API.
+- `long double` / `__int128`.
+- an incomplete type used where a value is needed.
 - a callback taking more than six integer or eight floating-point arguments.
 
 The full list, with the exact messages, is in
 [validation]({{< ref "manual/validation.md" >}}).
 
-Next: [how arguments are assigned to registers]({{< ref
+Next is [how arguments are assigned to registers]({{< ref
 "manual/calling-convention.md" >}}).

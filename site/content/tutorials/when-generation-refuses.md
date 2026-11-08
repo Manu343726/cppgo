@@ -5,25 +5,25 @@ weight = 40
 +++
 
 The generator refuses rather than emitting a call it cannot explain. Every
-refusal writes nothing, names the file, the line and the declaration, and ends
+refusal writes no output, names the file, the line and the declaration, and ends
 with the thing to supply. The skill is reading which of three kinds it is.
 
 **Audience:** a `cppgo gen` run that failed.
 
 ## The three kinds
 
-1. **A construct this build does not emit yet.** Enums, inheritance, operators,
+1. **A construct this build omits today.** Enums, inheritance, operators,
    variadic functions, nested types, templates without `-instantiate`. The fix
    is in the C++ surface (move it, wrap it, name it) or the construct's turn in
    the emitter.
-2. **A manifest entry that names nothing.** `-bind`, `-exclude`,
+2. **A manifest entry that names no declaration.** `-bind`, `-exclude`,
    `-instantiate`, `-rename` and `-status` are checked against what the parse
-   saw; an unmatched entry is an error.
+   saw. An unmatched entry is an error.
 3. **A shim the compiler rejected.** The C++ generated for the thunks did not
    compile, because the flags or the compiler do not match the header.
 
 There is no fourth kind and no override. v4 has no `-force` and no mode to opt
-into: a construct is emitted or it is refused.
+into. A construct is emitted or it is refused.
 
 ## Case 1: an enum
 
@@ -37,11 +37,10 @@ by this build yet; pass the value as its underlying integer at the C++ boundary
 ```
 
 **What it means.** Enums have no Go type yet. The refusal is checked before
-selection, so an enum anywhere in the parsed headers fails the run even if you
-did not bind it. Splitting the header is the workaround that keeps the rest
+selection. An enum anywhere in the parsed headers fails the run even if you did not bind it. Splitting the header is the workaround that keeps the rest
 bindable.
 
-**The fix today.** Pass the value as an integer at the C++ boundary: change the
+**The fix today.** Pass the value as an integer at the C++ boundary. Change the
 signature to take the underlying type, or wrap the call in a named function that
 does.
 
@@ -94,7 +93,7 @@ func (c *CellInt) Close() error
 ```
 
 The generic Go API (`Cell[T]`) and the collection of instantiations a Go program
-uses are the next phase; the concrete package above is what this build emits.
+uses are the next phase. The concrete package above is what this build emits.
 
 ## Case 4: an operator
 
@@ -119,7 +118,7 @@ fixed argument list to lay out; replace the ellipsis with a fixed parameter list
 or a span
 ```
 
-**What it means.** `...` has no fixed register layout, so there is nothing to
+**What it means.** `...` has no fixed register layout. There is no call to
 emit. Take a slice (`const double *values, std::size_t n`) or a `std::span`.
 
 ## Case 6: a nested type
@@ -180,19 +179,19 @@ When a run fails, ask in this order:
 
 1. **Does the message name a construct from [the refusal
    list]({{< ref "manual/validation.md" >}})?** The second half of the message
-   is the fix: an integer at the boundary, a named function, a concrete
+   is the fix. An integer at the boundary, a named function, a concrete
    `-instantiate`, a slice instead of `...`.
-2. **Does it name a flag entry?** The entry does not match the parse. Fix the
+2. **Does it name a flag entry?** The entry fails to match the parse. Fix the
    name, or make the declaration visible (flags, include, explicit
    instantiation).
-3. **Does it say the generated shim does not compile?** The parse and the
+3. **Does it say the generated shim fails to compile?** The parse and the
    compile disagree about flags, compiler or a self-contained header. Fix those
-   first; do not change the C++ API to satisfy a guessed flag set.
+   first. Do not change the C++ API to satisfy a guessed flag set.
 4. **Does it name a file and line in a header you do not own?** The construct is
    in a third-party header. Wrap the part you need in a small header of your
-   own — a named function, a concrete type — and bind that.
+   own, a named function, a concrete type, and bind that.
 
-The report prints nothing for a refused run, because nothing was emitted. The
+The run prints no report, because it emitted no files. The
 error is the whole answer.
 
 Back to the [manual]({{< ref "manual/_index.md" >}}), or read the same failures

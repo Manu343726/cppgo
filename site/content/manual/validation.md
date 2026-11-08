@@ -10,9 +10,9 @@ package.
 ## Why validation exists
 
 A generated call is a promise that a symbol exists and that its arguments fit
-the carrier. `cppgo gen` establishes both before it emits anything: the header
+the carrier. `cppgo gen` establishes both before it emits anything. The header
 parse supplies types, sizes, `const`-ness, virtual-ness and the exception
-specification, and — when `-library` is a readable file — the library's dynamic
+specification, and, when  `-library` is a readable file, the library's dynamic
 symbol table proves that a direct binding's name is really exported.
 
 The generator never leaves a declaration unbound by accident. Every binding gets
@@ -26,9 +26,9 @@ them from clangd's configuration instead of inventing them:
 
 1. `-compile-commands <path>` when given (a `compile_commands.json` or its
    directory), else the database `.clangd` names, else the nearest
-   `compile_commands.json` walking up from the header;
+   `compile_commands.json` walking up from the header.
 2. `.clangd` files beside the header and in its ancestors, merged as clangd
-   does;
+   does.
 3. otherwise `-std=c++17 -I<header dir>`, **reported as an assumption**.
 
 When the flags are the fallback, a warning goes to stderr:
@@ -39,7 +39,7 @@ assumption (assumed: -std=c++17 -I/src/mathx); a parse without the project's
 real flags can misread the header
 ```
 
-That warning is serious for a header with its own includes: a failed include
+That warning is serious for a header with its own includes. A failed include
 means libclang sees a partial declaration, and the validation is only as good as
 what it saw. Point `-compile-commands` at your build's database.
 
@@ -56,17 +56,16 @@ cppgo: built mathx/libcppgo_mathx.so with /usr/bin/g++
 
 The columns are:
 
-1. **the C++ signature**, with `const` and `noexcept` where the header has them;
-2. **the carrier** — `direct`, `thunk` or `reentrant`;
-3. **the symbol** the binding reaches: a mangled name of your library for a
-   direct binding, a generated `cppgo_thunk_<hash>` for a shim binding;
+1. **the C++ signature**, with `const` and `noexcept` where the header has them.
+2. **the carrier**, one of `direct`, `thunk` or `reentrant`.
+3. **the symbol** the binding reaches. A mangled name of your library for a
+   direct binding, a generated `cppgo_thunk_<hash>` for a shim binding.
 4. **the reason** the carrier was chosen.
 
 Read the carrier and the reason together. `direct` with
-`noexcept, out of line, not virtual, register class` is the fast path;
+`noexcept, out of line, not virtual, register class` is the fast path.
 `thunk` with `not noexcept: an exception would unwind into Go` is the safe one.
-The hash is stable for a given qualified signature, so a diff in it means the
-signature changed.
+The hash is stable for a given qualified signature. A diff in it means the signature changed.
 
 When `-library` is a readable file, a direct binding's evidence comment ends
 `, verified against libname.so` in the generated file. That is the ELF
@@ -75,8 +74,8 @@ exported can still be direct.
 
 ## What this build refuses
 
-Each of these is a generation error that writes nothing. The message names the
-file, the line, the declaration, what is wrong, and what to do — the shape is
+Each of these is a generation error that writes no output. The message names the
+file, the line, the declaration, what is wrong, and what to do, the shape is
 `cppgo: <file>:<line>: <declaration>: <what is wrong>; <fix>`.
 
 | input | message (short form) | what to do |
@@ -98,9 +97,8 @@ file, the line, the declaration, what is wrong, and what to do — the shape is
 | `-rename` that matches nothing, or several declarations | both declarations | name the full signature |
 | `-status` on a non-32-bit, non-integer return | the type it found | name a function that returns `int32_t` |
 
-The current refusal set is deliberately broad: it is checked **before**
-selection, so a header that declares any enum anywhere fails even if you did not
-bind it. That is a limitation of this phase, not a policy; the constructs are
+The current refusal set is deliberately broad. It is checked **before**
+selection. A header that declares any enum anywhere fails even if you did not bind it. That is a limitation of this phase, not a policy. The constructs are
 part of the design and their turn comes after the v4 epic.
 
 ## A shim that does not compile
@@ -114,12 +112,11 @@ cppgo: <file>:<line>: <declaration>: the generated shim does not compile; <compi
 ```
 
 On that path only, cppgo compiles one thunk at a time to find which binding the
-diagnostic belongs to, so a header that the shim cannot include still produces
-an error naming the declaration instead of a wall of compiler output.
+diagnostic belongs to. A header that the shim cannot include still produces an error naming the declaration instead of a wall of compiler output.
 
 ## Determinism and `check`
 
-The generated Go and C++ are byte-identical for the same inputs: bindings are
+The generated Go and C++ are byte-identical for the same inputs. Bindings are
 sorted by qualified name and thunk names come from a stable hash of the
 qualified signature. `cppgo check` is the gate:
 
@@ -129,8 +126,7 @@ $ cppgo check -header include/mathx/vector.hpp -package mathx \
 mathx: generated files are up to date
 ```
 
-It regenerates in memory and compares every source byte for byte. It does not
-compile the shim, because the shim is a build artefact; the way to verify it is
+It regenerates in memory and compares every source byte for byte. It leaves the shim alone, because the shim is a build artefact. The way to verify it is
 to build it, which `cppgo gen` does on every run.
 
-Next: [cppgo check in CI]({{< ref "manual/ci.md" >}}).
+Next is [cppgo check in CI]({{< ref "manual/ci.md" >}}).

@@ -1,4 +1,4 @@
-# mathx — the direct ABI mode on one small class
+# mathx, the direct ABI mode on one small class
 
 `mathx::Vector` is a C++17 class with a constructor, a destructor, two const
 accessors, a const method that takes a slice, a mutator and a static member. All
@@ -39,7 +39,7 @@ ok  	github.com/Manu343726/cppgo/examples/mathx	0.015s
 No line in that report is hand-written: `cppgo gen` read the header through
 libclang, resolved each declaration to its mangled name, and refused to emit a
 trampoline it could not prove would link. `abi from compile_commands.json` is the
-primary tier — the flags came from this project's own compilation database, so
+primary tier. The flags came from this project's own compilation database, and
 the parse used the same `-std=c++17 -fPIC -I…` a real build uses.
 
 ## What this example teaches
@@ -106,11 +106,11 @@ func (v Vector) Destroy()
 func Dims() int32
 ```
 
-`//cppgo:class` on a `cppgo.Handle` is what makes the receiver *be* the object
-pointer: `Vector` is a `uintptr`, so there is no struct, no field to remember and
+`//cppgo:class` on a `cppgo.Handle` makes the receiver *be* the object
+pointer: `Vector` is a `uintptr`. There is no struct, no field to remember and
 nothing for the collector to trace. `//cppgo:method` resolves against that class,
 `//cppgo:ctor` builds one, `//cppgo:dtor` destroys it, and `//cppgo:function`
-takes a qualified name for everything with no `this` — a free function or, as
+takes a qualified name for everything with no `this`, a free function or, as
 here, a static member.
 
 ## What the generator produced
@@ -121,7 +121,7 @@ One `NOSPLIT` trampoline per bound symbol: `this` in `RDI`, a slice as
 reference](https://manu343726.github.io/cppgo/reference/generated-code/)
 documents it line by line.
 
-The wrapper around it is ordinary Go: a `sync.Once` for the `dlopen`, a
+The wrapper around it is ordinary Go. A `sync.Once` for the `dlopen`, a
 `ProbeStack()` for the stack headroom the foreign frame may need, the call, then
 `cppgo.KeepAlive(ys)` so the backing array is still there while C++ is reading
 it.
@@ -130,14 +130,13 @@ The constructor is the one place with real work on the Go side. libclang was
 asked for `sizeof`/`alignof` (16/8 for two doubles), the wrapper allocates that
 much Go memory, records the handle in a package-level registry so the collector
 cannot reclaim it, and passes the address as the first integer argument. The
-destructor calls `~Vector` and drops the registry entry — which is why
+destructor calls `~Vector` and drops the registry entry, which is why
 `TestDestroyReleasesStorage` can assert the count goes back down.
 
 ## The limitation, demonstrated
 
-`norm_squared()` is defined *inside* the class body in the header, so it is
-implicitly inline and the shared object exports no symbol for it. This is not a
-detail a reader should take on faith, so the example ships a target that binds it
+`norm_squared()` is defined *inside* the class body in the header. It is
+implicitly inline and the shared object exports no symbol for it. A reader need not take this on faith. The example ships a target that binds it
 and shows the refusal:
 
 ```console
@@ -146,15 +145,15 @@ cppgo gen refused it, as it must:
   cppgo gen: build/inline-demo/mathx.go:82: mathx::Vector::norm_squared: it is defined inside its class definition or has internal linkage, so it is implicitly inline and the library exports no symbol for it: move the definition out into a source file and rebuild, or bind it through the shim mode
 ```
 
-That is the whole value proposition of the ABI mode in one line: the alternative
+That is the whole value proposition of the ABI mode in one line. The alternative
 would be a trampoline that compiles, links, and dies on the first call when
-`dlsym` answers nothing. The scratch copy lives under `build/inline-demo/`, so
-the real package is untouched. The long form of this failure, and its three
+`dlsym` answers nothing. The scratch copy lives under `build/inline-demo/`. The
+real package is untouched. The long form of this failure, and its three
 fixes, is in the site's [when the generator
 refuses](https://manu343726.github.io/cppgo/tutorials/when-generation-refuses/)
 page.
 
-The same rule rejects the other shapes the direct ABI mode cannot express: a
+The same rule rejects the other shapes the direct ABI mode cannot express. A
 virtual function, a template without an explicit instantiation, a `std::` type
 by value, a struct parameter passed by value, and more than 6 integer or 8 float
 argument registers.
@@ -173,19 +172,19 @@ report](https://manu343726.github.io/cppgo/manual/validation/).
 
 ## Requirements
 
-- Go 1.25 or newer (`go.mod` pins it; this repo is developed on 1.27).
+- Go 1.25 or newer (`go.mod` pins it. This repo is developed on 1.27).
 - A C++17 compiler (`g++` or `clang++`, override with `make CXX=clang++`).
 - libclang, because `cppgo gen` parses the header with it. On Debian/Ubuntu:
-  `sudo apt install clang libclang-dev`; on Arch: `sudo pacman -S clang`.
+  `sudo apt install clang libclang-dev`. On Arch: `sudo pacman -S clang`.
 
 The example builds its own `cppgo` binary from the repository root into
-`build/cppgo` — the same code as `go install …/cmd/cppgo@latest` would, without
+`build/cppgo`, the same code as `go install …/cmd/cppgo@latest` would, without
 requiring the install and without any chance of testing a different version.
 
 ## Where the shared library comes from at run time
 
 `//cppgo:library libmathx` names the library, and the generated bindings call
-`dlopen("libmathx")`, which searches the loader's paths — **not** the current
+`dlopen("libmathx")`, which searches the loader's paths. **not** the current
 directory. A program that uses this package therefore has to tell it where the
 file is, in one of two ways:
 

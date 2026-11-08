@@ -36,25 +36,24 @@ Exit codes are the CLI's usual ones:
 | `1` | generation failed, or a file is missing or stale |
 | `2` | the command line itself was wrong (unknown flag, missing `-header`, extra argument) |
 
-`-q` suppresses the success message, which is what a CI log wants. The failure
+`-q` suppresses the success message. A CI log wants only the failure. The failure
 message still goes to stderr and still exits 1.
 
 ## Why check instead of gen in CI
 
 `gen` writes the package and **compiles the shim**. On a CI runner that means a
 build that "passes" while producing a diff nobody looks at. `check` is the
-read-only form: it proves that the committed Go, assembly and shim sources are
+read-only form. It proves that the committed Go, assembly and shim sources are
 exactly what the current headers and flags produce. If someone edits a header and
 forgets to regenerate, the job fails and the error names the stale files.
 
-The comparison covers the sources, not the compiled `libcppgo_<package>.so`.
-That binary is a build artefact: it is verified by compiling it, never by
+The comparison covers the sources and leaves the compiled `libcppgo_<package>.so` to `gen`.
+That binary is a build artefact. It is verified by compiling it, never by
 comparing bytes.
 
 ## A GitHub Actions job
 
-The generator needs libclang. A `check` job does **not** need a C++ compiler,
-because it writes nothing and builds nothing; a job that also runs `cppgo gen`
+The generator needs libclang. A `check` job runs on libclang alone. It writes and builds no artefacts. A job that also runs `cppgo gen`
 or builds the package's tests does.
 
 ```yaml
@@ -120,32 +119,27 @@ real headers and validating against a guess:
 ```
 
 Without it, the generator may fall back to `-std=c++17 -I<header dir>` and print
-the assumed-flags warning. That is not a failure by itself, but a header whose
-own includes are missing will parse incompletely, and a construct that should
-have been refused might pass — or the reverse.
+the assumed-flags warning. The warning alone is harmless, but a header whose own includes are missing will parse incompletely, and a construct that should
+have been refused might pass, or the reverse.
 
 ## Cache and reproducibility
 
-- `cppgo check` is deterministic: it compares bytes. The emitter sorts every
+- `cppgo check` is deterministic. It compares bytes. The emitter sorts every
   list and derives thunk names from a stable hash, so a timestamp or a map
   iteration order cannot make the gate flaky.
 - The generated sources are ordinary Go and assembly. **Commit them.**
 - Pin the libclang and the C++ compiler versions. The parse decides which
-  declarations and mangled names exist; the compiler decides whether the shim
-  builds. A different libclang on the runner can legitimately produce different
-  output for the same header, which is a real change to review, not a flaky
-  test.
+  declarations and mangled names exist. The compiler decides whether the shim
+  builds. A different libclang on the runner can legitimately produce different output for the same header. That is a real change to review.
 
 <div class="callout callout-warn">
-<span class="callout-title">The gate checks bytes, not behaviour</span>
+<span class="callout-title">The gate checks bytes</span>
 <p>
 A green <code>cppgo check</code> means "the generated sources match the headers
-and the flags". It does not mean the library exports the symbol: that is
-resolved at load time by <code>dlopen</code>/<code>dlsym</code>, or at
+and the flags". The symbol itself is resolved at load time by <code>dlopen</code>/<code>dlsym</code>, or at
 generation time when <code>-library</code> names a readable file. If you want CI
-to prove the call works, add a test that opens the two objects and calls one
-binding — which is what the repository's own end-to-end test does.
+to prove the call works, add a test that opens the two objects and calls one binding. The repository's own end-to-end test does exactly that.
 </p>
 </div>
 
-Next: [troubleshooting]({{< ref "manual/troubleshooting.md" >}}).
+Next is [troubleshooting]({{< ref "manual/troubleshooting.md" >}}).

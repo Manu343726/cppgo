@@ -19,7 +19,7 @@ from the committed v3 package.
 </p>
 </div>
 
-`mathx` is a two-double `Vector` with a deliberately small surface: a
+`mathx` is a two-double `Vector` with a deliberately small surface. A
 constructor and destructor, `const` accessors, a slice parameter, a mutator, a
 static member, and one member defined inside the class body. That last one is the
 interesting difference from v3: v4 **binds** it, through a thunk.
@@ -64,9 +64,7 @@ private:
 ```
 
 Everything except `norm_squared` is declared here and defined out of line in
-`src/vector.cpp`. `norm_squared` has no out-of-line symbol; the generated shim
-includes the header, so the body is compiled into the shim and the call is
-reachable anyway.
+`src/vector.cpp`. `norm_squared` has no out-of-line symbol. The generated shim includes the header. The body is compiled into the shim, and the call reaches it.
 
 ## Generate
 
@@ -89,13 +87,12 @@ cppgo: built mathx/libcppgo_mathx.so with /usr/bin/g++
 ```
 
 Read the reasons. `norm_squared` is a thunk because the library exports no
-symbol for an inline body; `scale` is a thunk because the header does not say
-`noexcept`. A v4 package whose header marked `scale` `noexcept` would report it
-`direct` instead — the carrier follows the declaration.
+symbol for an inline body. `scale` is a thunk because the header omits `noexcept`. A v4 package whose header marked `scale` `noexcept` would report it
+`direct` instead, the carrier follows the declaration.
 
 The copy constructor reports `no mangled symbol` because the example defines no
-copy constructor and the implicitly-declared one is not exported. `Clone` still
-works: the thunk copies the object as C++.
+copy constructor and the compiler exports no symbol for the implicit one. `Clone` still
+works. The thunk copies the object as C++.
 
 ## The generated API
 
@@ -115,9 +112,8 @@ func VectorDims() (int32, error)
 
 Two decisions worth noticing:
 
-- **`Dims` is `VectorDims`**, a package function. A static member has no `this`,
-  so it is not a method.
-- **`NormSquared` exists.** In v3 this was the example's counter-example: an
+- **`Dims` is `VectorDims`**, a package function. A static member has no `this`, and the result is a package function.
+- **`NormSquared` exists.** In v3 this was the example's counter-example. An
   inline member the generator refused. In v4 it is an ordinary thunk-carried
   method, and the package contains no hole where the member used to be.
 
@@ -153,30 +149,26 @@ $ go run .
 ```
 
 The full program printed more than the excerpt (it also printed the two
-`error` values and `VectorDims` → `2 <nil>`); the numbers are the ones above.
+`error` values and `VectorDims` → `2 <nil>`). The numbers are the ones above.
 
 ## What it teaches
 
 - **The header is the API.** One run bound the constructor, the destructor, the
   copy constructor, every accessor, the slice method, the mutator, the static
-  member and the inline member. Nothing was declared in Go.
-- **The carrier follows the C++ declaration.** `scale` is not `noexcept` in this
-  header, so it returns an error; that is a fact about the header, not a choice
-  the Go caller makes. Marking it `noexcept` moves it to the direct carrier and
+  member and the inline member. The Go side declared nothing.
+- **The carrier follows the C++ declaration.** This header declares `scale` without `noexcept`. The method therefore returns an error. The header decides it. Marking it `noexcept` moves it to the direct carrier and
   removes the error.
-- **An inline body is no longer a refusal.** The shim includes the header, so
-  the body is compiled into the shim and `NormSquared` is reachable.
-- **A static member is a function, not a method.** `VectorDims()`, not
-  `v.Dims()`.
-- **A slice crosses as (pointer, length).** `Dot` takes `[]float64`; the header
+- **An inline body is supported.** The shim includes the header, and `NormSquared` is reachable.
+- **A static member is a package function.** The package exposes `VectorDims()`, and there is no `v.Dims()` method.
+- **A slice crosses as (pointer, length).** `Dot` takes `[]float64`. The header
   already declares the `const double *` and the `std::size_t`, and the wrapper
   pairs them.
 
 ## Numbers
 
-This page quotes no benchmark numbers for the example: they depend on your
-machine and your compiler. The project-level numbers for the crossing itself —
-with the clock caveat — are on [benchmarks]({{< ref "project/benchmarks.md"
+This page quotes no benchmark numbers for the example. They depend on your
+machine and your compiler. The project-level numbers for the crossing itself, 
+with the clock caveat, are on [benchmarks]({{< ref "project/benchmarks.md"
 >}}). The `stats` example next door is the one with bulk data and a status code.
 
-Next: [stats]({{< ref "examples/stats.md" >}}).
+Next is [stats]({{< ref "examples/stats.md" >}}).

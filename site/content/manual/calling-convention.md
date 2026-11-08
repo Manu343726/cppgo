@@ -8,7 +8,7 @@ weight = 50
 convention, or checking why a signature needs a thunk.
 
 cppgo's generated code and its generated trampolines come from the same tables,
-so the convention is cppgo's own — modelled on the System V AMD64 ABI (the
+so the convention is cppgo's own, modelled on the System V AMD64 ABI (the
 agreement Linux/x86-64 uses for C). Both sides of the boundary are written by the
 same emitter, which is why the rules can be this small.
 
@@ -21,8 +21,7 @@ Arguments are assigned in declaration order, independently per class:
 | integers and pointers | `RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9` |
 | floats (`float`, `double`) | `XMM0` … `XMM7` |
 
-A float argument does not consume an integer slot, and an integer argument does
-not consume an XMM slot. A Go `string` or slice is **two integer arguments**:
+A float argument takes an XMM slot, and an integer argument takes an integer slot. The two banks are counted independently. A Go `string` or slice is **two integer arguments**:
 the pointer, then the length.
 
 ```
@@ -39,9 +38,7 @@ becomes:
 | out | `RCX` | where the thunk writes the `double` |
 | status | `RAX` | 0 on success, non-zero on a caught exception |
 
-The last two exist because `dot` is not `noexcept`: the call goes through a
-thunk, and the thunk returns a status and writes the value through the
-out-pointer.
+The last two exist because `dot` omits `noexcept`. The call goes through a thunk, and the thunk returns a status and writes the value through the out-pointer.
 
 ## Member functions: `this` is an integer argument
 
@@ -62,18 +59,16 @@ _ZNK5mathx6Vector3dotEPKdm      mathx::Vector::dot(const double *, size_t) const
 
 That is what the Itanium C++ ABI specifies, and it is why a `const` method needs
 no special handling: `const` changes the mangling (`K`), not the call. A
-constructor also takes `this` first; its float arguments then start at `XMM0`,
+constructor also takes `this` first. Its float arguments then start at `XMM0`,
 so `Vector(double, double)` is `this=RDI`, `x=XMM0`, `y=XMM1`.
 
-Static member functions and free functions have no `this`, so their first
-argument is `RDI`.
+Static member functions and free functions have no `this`. Their first argument is `RDI`.
 
 ### The hidden `sret` pointer
 
 When a record is returned by value, the Itanium ABI passes a destination pointer
-as a hidden first argument (`sret` — "structure return"). The generated thunk
-passes the address of storage the Go side owns and constructs the result there,
-so the value never has to fit in one register. This is one of the reasons a
+as a hidden first argument (`sret`, "structure return"). The generated thunk
+passes the address of storage the Go side owns and constructs the result there. The value never has to fit in one register. This is one of the reasons a
 by-value return is a thunk rather than a direct call.
 
 ## Results
@@ -105,13 +100,12 @@ more than 6 INTEGER or 8 SSE arguments  →  thunk takes a pointer to a block an
 ```
 
 That row is **designed, not measured**: no fixture in this repository has a
-signature that long yet. What is measured is the rule that decides it — the
-direct carrier is never chosen for an argument list that does not fit.
+signature that long yet. What is measured is the rule that decides it, the direct carrier is never chosen for an argument list that overflows the register file.
 
 ## The trampoline
 
 Two real generated trampolines. The first is the direct carrier for
-`mathx::Vector::scale(double) noexcept`, which returns nothing:
+`mathx::Vector::scale(double) noexcept`, a function with no result:
 
 ```asm
 // func cppgoCall_5e3a9d471306(fn uintptr, this uintptr, a1 float64)
@@ -146,29 +140,27 @@ TEXT ·cppgoCall_7d8c482bce3e(SB), NOSPLIT, $0-36
 Read either in two parts. What belongs on this page is where the values come
 from:
 
-1. **`fn` is not a C argument.** It is an ordinary Go argument, read from the Go
+1. **`fn` is a Go argument.** It is an ordinary Go argument, read from the Go
    frame into `R12`, and `CALL R12` is what reaches the symbol.
 2. **The C arguments are loaded into their registers before `SP` moves**, because
    `FP` is relative to `SP`.
 3. **The result is stored after `SP` is restored**, for the same reason.
 
-The rest — the `SP` switch, the 16-byte alignment SysV requires before the
-`CALL`, and what `NOSPLIT` buys — is explained once in [How it
+The rest, the  `SP` switch, the 16-byte alignment SysV requires before the
+`CALL`, and what `NOSPLIT` buys, is explained once in [How it
 works]({{< ref "project/architecture.md" >}}).
 
-`R12` and `R13` are callee-saved in SysV, so the C++ function preserves them
-across the call without cppgo doing anything.
+`R12` and `R13` are callee-saved in SysV. The C++ function preserves them across the call without cppgo doing anything.
 
 ## What the caller pays
 
 `ProbeStack` runs before every call and guarantees `StackReserve` (32 KiB) of
-headroom; the mechanism, and why it is not a large Go local array, is in [How it
+headroom. The mechanism, and why the probe is assembly instead of a large Go local array, is in [How it
 works]({{< ref "project/architecture.md" >}}). It measured 14.9 ns against
 13.9 ns for the bare trampoline, at the clock [benchmarks]({{< ref
 "project/benchmarks.md" >}}) describes.
 
 The other cost is that the `P` stays with the goroutine on the direct and thunk
-carriers: the runtime does not hand it off, so a foreign call in flight delays a
-GC cycle by up to its duration. The reentrant carrier enters through
-`runtime.cgocall` and pays the runtime's handshake instead; that is what makes a
+carriers. The runtime keeps the `P` with the goroutine. A foreign call in flight therefore delays a GC cycle by up to its duration. The reentrant carrier enters through
+`runtime.cgocall` and pays the runtime's handshake instead. That is what makes a
 callback legal, and it costs about ten times a direct call.

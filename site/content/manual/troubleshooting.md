@@ -16,8 +16,8 @@ cppgo gen: cppgo: include/mathx/vector.hpp: cxx: libclang not found (searched
 libclang.so, /usr/lib/libclang.so, ...; install libclang-dev or set CPPGO_LIBCLANG)
 ```
 
-**Why.** The generator parses the header with libclang; without it there is
-nothing to read, so it fails instead of guessing.
+**Why.** The generator parses the header with libclang. Without it there is
+no declaration to read. The run finds nothing to parse and fails instead of guessing.
 
 **Fix.** Install your distribution's libclang development package (the message
 suggests `libclang-dev`), or set `CPPGO_LIBCLANG=/path/to/libclang.so`.
@@ -33,8 +33,7 @@ cppgo: <file>:<line>: <declaration>: the generated shim does not compile;
 
 **Why.** The shim is C++ that cppgo compiles with the flags it discovered for
 the header. The parse can succeed while the compile fails, because the two use
-different flag sets or a different standard, or because the header is not
-self-contained (it relies on an include the translation unit does not have).
+different flag sets or a different standard, or because the header depends on an include the translation unit lacks.
 
 **Fix, in order:**
 
@@ -45,11 +44,11 @@ self-contained (it relies on an include the translation unit does not have).
    discovered flags name no standard.
 3. If the diagnostic names a member the shim cannot touch (a private destructor,
    a deleted copy constructor), the header is exposing something a caller cannot
-   use either. Expose a public wrapper; the generator binds what a caller can
+   use either. Expose a public wrapper. The generator binds what a caller can
    call.
 
 The error names the declaration because cppgo re-compiles one thunk at a time on
-the failure path; the diagnostic is the compiler's, not a summary.
+the failure path. The diagnostic is the compiler's, not a summary.
 
 ## A construct this build refuses
 
@@ -61,7 +60,7 @@ instantiated; name a concrete instantiation with -instantiate 'tmpl::Cell<...>'
 ```
 
 **Why.** The construct has no representation in the emitter yet. It is a
-refusal, not a bad declaration: nothing is written, so nothing can fail later.
+refusal, not a bad declaration. The run writes no output, and no later call can fail.
 
 **Fix.** The second half of the message says what to supply:
 
@@ -77,7 +76,7 @@ refusal, not a bad declaration: nothing is written, so nothing can fail later.
 | *operators and conversion operators* | `operator+`, `operator bool` | give it a name |
 | *a variadic function* | `...` | a fixed list or a span |
 
-One consequence surprises people: the refusal is checked **before selection**,
+One consequence surprises people. The refusal is checked **before selection**,
 so a header that declares an enum anywhere fails even when you `-exclude` it.
 Split the header, or wait for the construct.
 
@@ -93,7 +92,7 @@ cppgo: -bind cv::Mat: it names nothing this header declares
 
 **Why.** `-bind`, `-exclude`, `-instantiate`, `-rename` and `-status` are
 checked against what the parse actually saw. A typo must not silently shrink the
-API, so an unmatched entry is an error.
+API. An unmatched entry is an error.
 
 **Fix.** Check the qualified name against the header. A common cause is a
 namespace alias, or a declaration in a system header that libclang did not
@@ -114,7 +113,7 @@ carrier, and the proof that the symbol exists comes from the library's dynamic
 symbol table. Without `-library`, cppgo cannot check it.
 
 **Fix.** Pass `-library build/libyourlib.so`. For a header-only library there is
-no symbol, so there is nothing direct to check: omit `-library` and the whole
+no symbol. There is no direct binding to check. Omit `-library` and the whole
 package is shim-carried.
 
 ## The first call panics
@@ -123,11 +122,11 @@ package is shim-carried.
 call, naming the shim path or a symbol.
 
 **Why.** A generated package loads its two objects on the first call. A binding
-with an `error` result returns the failure; one without an error result has
-nowhere to put it, so it panics. That is deliberate: the program was built
-against a library that is not there.
+with an `error` result returns the failure. One without an error result has
+nowhere to put it. It panics. That is deliberate. The program was built
+against a library that is absent.
 
-**Fix.** Read the message; it names what failed:
+**Fix.** Read the message. It names what failed:
 
 | message names | cause | fix |
 |---|---|---|
@@ -148,7 +147,7 @@ real flags can misread the header
 ```
 
 **Why.** The header was parsed without the include paths, defines or standard
-the build uses. libclang then sees a partial or wrong declaration — sometimes
+the build uses. libclang then sees a partial or wrong declaration, sometimes
 none at all, which reads as *it names nothing this header declares*.
 
 **Fix.** Generate a `compile_commands.json` (`cmake
@@ -168,23 +167,23 @@ CompileFlags:
 ```
 
 Then check that the warning is gone. The warning is the only signal that the
-parse may be missing something; a successful run without it is the normal state.
+parse may be missing something. A successful run without it is the normal state.
 
 ## When in doubt, ask the report
 
 The per-binding report is the tool explaining itself. Before changing code, run
 `cppgo gen` without `-q` and read:
 
-1. **the carrier** — `direct` means a trampoline calls your symbol; `thunk`
+1. **the carrier** — `direct` means a trampoline calls your symbol. `thunk`
    means the shim does, which is where an inline body, a `std::` type or an
-   exception is handled; `reentrant` means a callback was involved;
+   exception is handled. `reentrant` means a callback was involved.
 2. **the symbol** — a mangled name of your library, or a stable
-   `cppgo_thunk_<hash>`;
+   `cppgo_thunk_<hash>`.
 3. **the reason** — the sentence that decided the carrier.
 
 If the reason is *not noexcept*, the signature has an error because the thunk
 can report a caught exception. If it is *inline body*, the thunk is the only
-carrier that can reach it. Neither is a problem; they explain the API you see.
+carrier that can reach it. Neither is a problem. They explain the API you see.
 
 Back to the [manual]({{< ref "manual/_index.md" >}}), or read [when generation
 refuses]({{< ref "tutorials/when-generation-refuses.md" >}}) for the decision

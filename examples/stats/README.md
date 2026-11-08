@@ -1,9 +1,9 @@
-# stats — a large `[]float64`, in both directions
+# stats, a large  `[]float64`, in both directions
 
-This is the case a Go program actually calls out to C++ for: arithmetic over a
-big slice of numbers. Every function takes its data as `(pointer, length)` —
-which is what a Go slice already is — and the results are written into a buffer
-the caller owns, so nothing is copied or marshalled in either direction.
+This is the case a Go program actually calls out to C++ for. Arithmetic over a
+big slice of numbers. Every function takes its data as `(pointer, length)`, 
+which is what a Go slice already is, and the results are written into a buffer
+the caller owns. Nothing is copied or marshalled in either direction.
 
 ```console
 $ cd examples/stats
@@ -22,9 +22,8 @@ $ make bench    # the C++ calls against the pure-Go equivalents
 | what a call actually costs, measured | `make bench`, numbers below |
 
 The pure-Go implementations the tests and benchmarks compare against are in
-[`stats_test.go`](stats_test.go) — `goMean`, `goStddev`, `goCountAbove`,
-`goHistogram` — so the comparison is against code you can read, not a number in
-this file.
+[`stats_test.go`](stats_test.go), `goMean`, `goStddev`, `goCountAbove`,
+`goHistogram`. The comparison is against code you can read.
 
 ## Layout
 
@@ -64,7 +63,7 @@ func DataPointer(xs []float64) *float64
 func Histogram(xs, bins []float64, lo, hi float64) error
 ```
 
-A Go slice spends **two** C++ parameters — pointer, then length — at its own
+A Go slice spends **two** C++ parameters, pointer, then length, at its own
 position in the declaration. That is why `histogram` is
 
 ```cpp
@@ -73,10 +72,10 @@ int32_t histogram(const double *xs, size_t n, double *bins, size_t nbins, double
 
 and not six arguments in some other order. A slice is two integer arguments
 (pointer, length) and a `double` is one XMM argument, assigned in declaration
-order; [register assignment](https://manu343726.github.io/cppgo/manual/calling-convention/)
+order. [register assignment](https://manu343726.github.io/cppgo/manual/calling-convention/)
 has the full table.
 
-Note the `size_t` in the header and the `using std::size_t;` above it: the
+Note the `size_t` in the header and the `using std::size_t;` above it. The
 generator reports a result type as it is spelled in the source, and
 `std::size_t` in a *result* position trips the same rule that refuses
 `std::string`. In a parameter position it is the length half of a `(pointer,
@@ -84,7 +83,7 @@ length)` pair and is fine either way.
 
 ## The error channel
 
-A direct C++ call has no shim to catch an exception, so failure has to be an
+A direct C++ call has no shim to catch an exception. Failure travels as an
 ordinary return value. `histogram` returns `int32_t`:
 
 ```cpp
@@ -93,8 +92,8 @@ if (!(hi > lo)) {
 }
 ```
 
-and the Go binding declares **only** an `error`, which is what tells the
-generator to read that integer as a status:
+and the Go binding declares **only** an `error`. That tells the generator to
+read the integer as a status:
 
 ```go
 //cppgo:function stats::histogram
@@ -117,8 +116,8 @@ return nil
 
 `cppgo.LastError` looks up `cppgo_last_error` in the library and copies the
 message out. That accessor is the one symbol in this example that is deliberately
-`extern "C"` — a return register cannot carry a message — and it is optional: a
-library that never fails does not need one. `TestHistogramErrorPath` asserts both
+`extern "C"`, a return register cannot carry a message, and it is optional. A
+library that never fails needs no accessor. `TestHistogramErrorPath` asserts both
 the message and the `stats::histogram` prefix the wrapper adds.
 
 ## "No copy", proved rather than claimed
@@ -140,7 +139,7 @@ if xs[0] != 100 {
 
 The pointer that arrived is the pointer that left, and writing through it changes
 the Go slice, because it is Go memory. `TestHistogramWritesThroughTheSlice` does
-the same for the output direction: the counts appear in the caller's `bins`, and
+the same for the output direction. The counts appear in the caller's `bins`, and
 a second call starts from zero because the C++ `std::fill` cleared that same
 array.
 
@@ -166,13 +165,12 @@ disabled and the CPU pinned at **964.8 MHz**:
 
 Later runs, taken while three other builds were in progress, read 51–69 ns for
 the 8-element case and 37–56 ns for the bare call. The absolute numbers move with
-the load; the **ratio** between the million-element arms and the fact that the
+the load. The **ratio** between the million-element arms and the fact that the
 crossing is a fixed ~35 ns did not. Run it on an idle machine, or compare cycles
 rather than nanoseconds.
 
-**Read the ratios, not the nanoseconds.** The clock is pinned at 964.8 MHz, so
-everything absolute is inflated by roughly 4.5x against the same code running
-with boost; the cycle column is derived from the ns at 0.9648 GHz and is the
+**Read the ratios.** The clock is pinned at 964.8 MHz. Everything absolute is
+inflated by roughly 4.5x against the same code running with boost. The cycle column is derived from the ns at 0.9648 GHz and is the
 number that travels.
 
 What the rows mean:
@@ -180,33 +178,31 @@ What the rows mean:
 - **The crossing is a constant, and that is the whole point.** 35 ns is ~80% of
   the 44 ns an 8-element `Mean` costs, and 0.001% of the 3.40 ms a million-element
   one costs. Per element at n = 1 048 576 it is 0.03 ns. That is why the shape is
-  "one call over the slice": the boundary does not scale, the data does.
+  "one call over the slice". The boundary stays constant and the data scales.
 - **At a million elements the two arms are the same code in a different
-  compiler.** Both means run at ~3.1 cycles per element, which is the latency of
-  a serial `double` add dependency chain, not memory bandwidth: 8 MiB in 3.4 ms
-  is only ~2.5 GB/s, and the loop is bound by the three-cycle FP add, not by
-  DRAM. `Histogram` is ~11 cycles per element in both, which is the `divsd`
-  latency. Neither gap is a cppgo gap.
-- **`CountAbove` is 1.45x faster on the C++ side**, and that is a compiler
-  difference, not a boundary one: g++ 16 at `-O2` vectorises the
-  compare-and-count loop, the Go compiler does not. It is included precisely
-  because it is the kind of thing that makes calling out to C++ worth it — and
+  compiler.** Both means run at ~3.1 cycles per element. That is the latency of
+  a serial `double` add dependency chain: 8 MiB in 3.4 ms is only ~2.5 GB/s, and
+  the loop is bound by the three-cycle FP add. `Histogram` is ~11 cycles per
+  element in both. That is the `divsd` latency. Both gaps belong to the examples.
+- **`CountAbove` is 1.45x faster on the C++ side.** That is a compiler
+  difference. G++ 16 at `-O2` vectorises the compare-and-count loop. The Go
+  compiler leaves the loop scalar. It is included precisely
+  because it is the kind of thing that makes calling out to C++ worth it, and
   because the boundary is nowhere in the 1.5-vs-2.2 cycles gap.
 - **A call per element would be a disaster.** Rebuild the math with the 35 ns
-  figure: one call per element over a million elements is 35 ms of boundary alone,
+  figure. One call per element over a million elements is 35 ms of boundary alone,
   ten times the whole bulk call. That is the argument for the shape this example
   binds, and the site's [bulk data](https://manu343726.github.io/cppgo/tutorials/bulk-data/)
   tutorial makes it in full.
 
-Where the 35 ns goes: the repository's own benchmark puts the bare trampoline at
+Where the 35 ns goes. The repository's own benchmark puts the bare trampoline at
 ~14 ns (13.9 ns / ~13 cycles at the same clock). The rest is the generated
-wrapper around it — the lazy `dlopen` check, `ProbeStack()`, the argument
-marshalling and the `KeepAlive`. A constant per call, not per element.
+wrapper around it, the lazy  `dlopen` check, `ProbeStack()`, the argument
+marshalling and the `KeepAlive`. A constant per call.
 
-`make bench` reproduces all of it; the arms are labelled `cppgo` and `go`, and
-`SetBytes` is set inside each arm so the throughput column is populated. This is
-the run taken while the machine was busy — which is why the small-element rows
-read higher than the table above, and why it is worth running on an idle box:
+`make bench` reproduces all of it. The arms are labelled `cppgo` and `go`, and
+`SetBytes` is set inside each arm so the throughput column is populated. The small-element rows therefore read higher than the table above. An idle box
+is worth the rerun:
 
 ```console
 $ make bench
@@ -225,11 +221,11 @@ BenchmarkCountAbove/go-16          	     261	   5478591 ns/op	1531.16 MB/s	     
 ```
 
 The `go` arm of `CountAbove` at 5.5 ms in that listing, against 2.3 ms in the
-clean run, is what contention looks like: it hits whichever arm is running when
+clean run, is what contention looks like. It hits whichever arm is running when
 the other work lands.
 
-`B/op` and `allocs/op` being zero is part of the result: a slice crossing the
-boundary allocates nothing, in either direction.
+`B/op` and `allocs/op` being zero is part of the result. A slice crossing the
+boundary makes no allocation in either direction.
 
 ## Requirements
 
@@ -251,6 +247,6 @@ $ make clean
 ```
 
 The test binary reads `CPPGO_STATS_LIB` if it is set (the Makefile sets it) and
-otherwise looks for `build/libstats.so` relative to the package directory — the
+otherwise looks for `build/libstats.so` relative to the package directory. The
 loader does not search the current directory, and `//cppgo:library libstats` is
 just the name the bindings would use in a real deployment.

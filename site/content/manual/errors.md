@@ -9,19 +9,18 @@ caller sees.
 
 ## The rule
 
-**Every call that can fail returns `(T, error)` — value first, error last — and
+**Every call that can fail returns `(T, error)`, value first, error last, and
 every call that cannot fail returns no error at all.** The generated signature
-answers the question before you write any Go: a `noexcept` function that returns
-`int` is `func(...) int32`, not `(int32, error)`, and the package contains no
-error that is always nil.
+answers the question before you write any Go. A `noexcept` function that returns
+`int` is `func(...) int32`, and the package contains no error that is always nil.
 
 The mechanism lives in the C++ shim, which can catch an exception and read a
-status; the projection lives in the Go wrapper.
+status. The projection lives in the Go wrapper.
 
 ## Exceptions
 
-A declaration that is not `noexcept` goes through a thunk. The thunk wraps the
-call — and its argument marshalling — in `try`/`catch`, stores the message in a
+A declaration without `noexcept` goes through a thunk. The thunk wraps the
+call, and its argument marshalling, in `try`/`catch`, stores the message in a
 thread-local string, and returns a status:
 
 ```cpp
@@ -53,10 +52,10 @@ q, err := analytic.Ratio(6, 0)
 
 The message is copied out of C++ immediately, because `cppgo_last_error()` is
 thread-local and valid only until the next call on the same thread. A library
-that cannot fail does not export it at all; `cppgo.LastError` returns nil then.
+that cannot fail omits it entirely. `cppgo.LastError` returns nil then.
 
 The same path covers **construction and destruction**: a constructor that throws
-returns `(nil, error)` and releases the object's storage; `Close` returns the
+returns `(nil, error)` and releases the object's storage. `Close` returns the
 error the destructor stored. `bad_alloc` while marshalling a `std::string` or a
 `std::vector` is caught by the same `try`.
 
@@ -64,20 +63,18 @@ error the destructor stored. `bad_alloc` while marshalling a `std::string` or a
 <span class="callout-title">An exception must not cross a Go frame</span>
 <p>
 The shim is the C++ frame that makes catching possible. A direct binding is
-<code>noexcept</code> by construction, so there is nothing to catch: a throw out
-of a function declared <code>noexcept</code> terminates the process. That is
-measured, not folklore, in <code>internal/callback</code>'s child-process
-tests. A library that throws and whose header cannot be included by the shim
-cannot be bound safely; the fix is a <code>noexcept</code> entry point in the
+<code>noexcept</code> by construction, so no handler exists. A throw out
+of a function declared <code>noexcept</code> terminates the process. That is measured in <code>internal/callback</code>'s child-process tests. A library that throws and whose header cannot be included by the shim
+cannot be bound safely. The fix is a <code>noexcept</code> entry point in the
 library.
 </p>
 </div>
 
 ## `-status`: a 32-bit return that is a code
 
-Some C++ APIs follow the C convention: the function returns an `int32_t`, `0` is
-success, anything else is an error. The declaration alone cannot say that — a
-`bool` or an `int` says nothing — so you name it:
+Some C++ APIs follow the C convention. The function returns an `int32_t`, `0` is
+success, anything else is an error. The declaration alone cannot say that, a
+`bool` or an `int` carries no information, so you name it:
 
 ```console
 $ cppgo gen -header include/stats/stats.hpp -package stats \
@@ -88,12 +85,11 @@ $ cppgo gen -header include/stats/stats.hpp -package stats \
 func Ensure() error
 ```
 
-A non-zero value is wrapped in `*cppgo.CallError`; the integer is not returned as
-a value, because it never was one. The return type has to be a 32-bit integer:
+A non-zero value is wrapped in `*cppgo.CallError`. The integer stays out of the result, because it never was one. The return type has to be a 32-bit integer:
 `-status` on a `void` function or a `double` is a generation error naming the
 type it found.
 
-This is the whole error story v4 emits today, and it is measured: the exception
+This is the whole error story v4 emits today, and it is measured. The exception
 row by `TestExceptionsBecomeErrors` and the generated package's
 `Ratio(6, 0)` assertion, the status row by the `-status` fixture.
 
@@ -101,7 +97,7 @@ row by `TestExceptionsBecomeErrors` and the generated package's
 
 [Issue #19](https://git.manu343726.com/manu343726/cppgo/issues/19) specifies the
 rest of the mapping. The mechanism is implemented and measured in
-`internal/errormap`; the generator does not read it yet.
+`internal/errormap`. The generator ignores it so far.
 
 | C++ convention | how it is recognised | Go |
 |---|---|---|
@@ -115,10 +111,8 @@ rest of the mapping. The mechanism is implemented and measured in
 
 Two rules make the future API predictable:
 
-- **no error is synthesized for a call that cannot fail** (already true);
-- **no failure is dropped** — a declaration that can fail and whose convention
-  is neither inferred nor configured will be a generation error naming the
-  declaration, not a call whose failure becomes a zero value.
+- **no error is synthesized for a call that cannot fail** (already true).
+- **no failure is dropped** — a declaration that can fail and whose convention is missing from both inference and configuration will be a generation error that names the declaration. The alternative is a call whose failure becomes a zero value.
 
 The configuration will be a `cppgo.yaml` beside the generation command, and it
 will be a generation input, so `cppgo check` will fail when it changes without a
@@ -127,7 +121,7 @@ flag and no `cppgo.yaml` reader outside `internal/errormap`'s tests.
 
 ## Library and symbol errors
 
-These are Go errors from the runtime package, not statuses from C++:
+These are Go errors from the runtime package. C++ statuses arrive through the mapping above.
 
 | error | when | `errors.Is` / `errors.As` |
 |---|---|---|
@@ -140,9 +134,8 @@ These are Go errors from the runtime package, not statuses from C++:
 | `cppgo.ErrInsecureCache` | the cache path is not a private directory | `errors.Is` |
 
 A generated package loads its two objects on the **first call**. A binding with
-an `error` result returns the load failure; a binding without one panics, which
-is the intended severity for a program built against a library that is not
-there:
+an `error` result returns the load failure. A binding without one panics, which
+is the intended severity for a program built against a library that is absent:
 
 ```go
 if err := cppgoOpen(""); err != nil {
@@ -162,12 +155,11 @@ side. Measured by the project fixture's `Integrate` panic subtest.
 
 ## What is not an error
 
-- A **zero value of a class type** is a nil object, not a failure. A method on
+- A **zero value of a class type** is a nil object. A method on
   it returns `cppgo.ErrClosed`.
-- A **negative** status is not special: any non-zero value is a failure.
-- **Parameter validation** is not done at call time. A nil slice arrives as
+- A **negative** status behaves like any other failure. Any non-zero value is a failure.
+- The generated code validates no parameters at call time. A nil slice arrives as
   `(nil, 0)`, a null `*T` as a null pointer, and the C++ side has to reject
-  them. The generated code does not synthesize checks beyond the slice-length
-  check described in [type mapping]({{< ref "manual/type-mapping.md" >}}).
+  them. The generated code synthesizes no checks beyond the slice-length check described in [type mapping]({{< ref "manual/type-mapping.md" >}}).
 
-Next: [object lifetimes]({{< ref "manual/lifetimes.md" >}}).
+Next is [object lifetimes]({{< ref "manual/lifetimes.md" >}}).

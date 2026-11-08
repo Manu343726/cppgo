@@ -23,7 +23,7 @@ The first four are sources you commit. The fifth is a build artefact: `cppgo
 gen` compiles it, `cppgo check` does not compare it.
 
 The shim's sources live in a subdirectory because the Go tool refuses a
-directory containing a `.cpp` unless the package uses cgo — and a generated
+directory containing a `.cpp` unless the package uses cgo, and a generated
 package never does.
 
 Every generated file starts with the banner and, in the Go file, the exact
@@ -77,7 +77,7 @@ var (
 
 Resolution happens once per process, under a mutex. A thunk that cannot be
 resolved means the `.so` beside the package is not the one the generated Go was
-built against, and the message says so: *the shim cppgo compiled is stale; run
+built against, and the message says so: *the shim cppgo compiled is stale. Run
 cppgo gen again*.
 
 ### The types
@@ -111,7 +111,7 @@ takes the opaque path, and its public fields get generated accessors.
 
 ### The wrapper shapes
 
-Every wrapper follows the same five steps: open/probe, convert the arguments,
+Every wrapper follows the same five steps. Open/probe, convert the arguments,
 call the trampoline, keep the arguments alive, convert the result. What differs
 is the carrier.
 
@@ -228,7 +228,7 @@ TEXT ·cppgoCall_eafad677153b(SB), NOSPLIT, $0-32
 	RET
 ```
 
-- `$0-32` is a zero-frame function whose argument block plus result is 32 bytes;
+- `$0-32` is a zero-frame function whose argument block plus result is 32 bytes.
   the `x+off(FP)` offsets are generated.
 - Arguments are loaded **before** `SP` moves and the result is stored **after**
   it is restored, because `FP` is relative to `SP`.
@@ -267,7 +267,7 @@ extern "C" int32_t cppgo_thunk_d691e1c0b71e(int32_t a, int32_t b, int32_t * cppg
 ```
 
 A thunk that returns a `std::string` or a `std::vector` allocates the copy with
-`::operator new[]`; the shim also defines `cppgo_free`, which is what the Go
+`::operator new[]`. The shim also defines `cppgo_free`, which is what the Go
 wrapper calls after it has read the bytes. The shim is linked with
 `-Wl,-rpath,$ORIGIN`, so it finds the user's library beside it.
 
@@ -283,8 +283,8 @@ $ cppgo check -header include/analytic/analytic.hpp -package analytic \
       -library build/libanalytic.so -out ./analytic
 ```
 
-`gen` writes and compiles; `check` compares. Both are deterministic — bindings
-are sorted and thunk names come from a stable hash — and `gen` formats the Go
+`gen` writes and compiles. `check` compares. Both are deterministic, bindings
+are sorted and thunk names come from a stable hash, and  `gen` formats the Go
 files before writing them. See [cppgo check in CI]({{< ref "manual/ci.md" >}}).
 
-Next: [the CLI]({{< ref "reference/cli.md" >}}).
+Next is [the CLI]({{< ref "reference/cli.md" >}}).

@@ -48,7 +48,7 @@ $ cppgo gen -header <path> [-header <path>]... -package <name> \
 Output:
 
 - **stdout** — the per-binding report, one line per binding, then the shim
-  build line, unless `-q`. Format: signature, carrier, symbol, reason. See
+  build line, unless `-q`. Format. Signature, carrier, symbol, reason. See
   [the report]({{< ref "manual/validation.md" >}}).
 - **stderr** — warnings (`cppgo: warning: ...`) and the error that stopped the
   run (`cppgo gen: ...`). Always printed, `-q` or not.
@@ -69,7 +69,7 @@ $ cppgo check -header <path> [-header <path>]... -package <name> \
 ```
 
 Regenerates the sources in memory and compares them byte for byte with the files
-on disk. It writes nothing and builds nothing.
+on disk. It writes and builds no artefacts.
 
 | result | output | exit |
 |---|---|---|
@@ -78,12 +78,12 @@ on disk. It writes nothing and builds nothing.
 | generation error | `cppgo check: <error>` on stderr | `1` |
 | bad command line | `cppgo check: ...` plus usage on stderr | `2` |
 
-The comparison covers the generated sources, not the compiled
+The comparison covers the generated sources and leaves the compiled
 `libcppgo_<package>.so`: the shim is a build artefact, verified by compiling it,
 never by comparing bytes.
 
 `check` also accepts `-check`, `-q` and the same manifest flags because it is
-the same flag set; `-check` is already true.
+the same flag set. `-check` is already true.
 
 ## `cppgo version`
 
@@ -131,12 +131,12 @@ the usage, and exits 2. An extra positional argument after the flags prints
 ## What the generator needs on the machine
 
 - **libclang**, always. Without it the run fails with
-  `cxx: libclang not found (...)`; see [installation]({{< ref
+  `cxx: libclang not found (...)`. See [installation]({{< ref
   "manual/installation.md" >}}).
 - **a C++ compiler** for `gen`, because `gen` compiles the shim. `check` does
-  not need one: it writes and builds nothing.
+    not need one. It writes and builds no artefacts.
 - **the headers**, and a compilation database when they have includes of their
   own.
 
-Next: back to the [manual]({{< ref "manual/_index.md" >}}) or the
+Next. Back to the [manual]({{< ref "manual/_index.md" >}}) or the
 [tutorials]({{< ref "tutorials/_index.md" >}}).

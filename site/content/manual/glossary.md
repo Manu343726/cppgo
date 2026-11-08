@@ -5,7 +5,7 @@ weight = 110
 +++
 
 **Audience:** anyone reading this site who meets a term they do not know. Each
-entry is one or two sentences — enough to keep reading — and links to the page
+entry is one or two sentences, enough to keep reading, and links to the page
 that owns the mechanism when there is one.
 
 ## The C++ side
@@ -55,9 +55,9 @@ The calling convention used on Linux/x86-64, and the one every generated trampol
 implements. The parts that matter for reading this site:
 
 - The first six integer-or-pointer arguments go in `RDI`, `RSI`, `RDX`, `RCX`,
-  `R8`, `R9`; float arguments go in `XMM0`–`XMM7`, counted separately.
+  `R8`, `R9`. Float arguments go in `XMM0`–`XMM7`, counted separately.
 - A non-static member function receives the object pointer (`this`) in the first
-  integer slot; a hidden `sret` pointer takes the slot before it.
+  integer slot. A hidden `sret` pointer takes the slot before it.
 - Results come back in `RAX` (integers, pointers) or `XMM0` (floats).
 - `RSP` must be 16-byte aligned before a `CALL`.
 

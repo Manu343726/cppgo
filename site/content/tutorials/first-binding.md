@@ -4,9 +4,9 @@ description = "Bind one free C++ function and call it from Go: the header, one c
 weight = 10
 +++
 
-This tutorial binds one free function — the smallest end-to-end path. No
+This tutorial binds one free function, the smallest end-to-end path. No
 objects, no slices, no library layout to think about. The point is to see the
-complete loop: a header, a generator run, a generated function, a call.
+complete loop. A header, a generator run, a generated function, a call.
 
 **Audience:** your first binding. You need libclang and a C++ compiler as
 described in [installation]({{< ref "manual/installation.md" >}}).
@@ -45,9 +45,9 @@ $ nm -D --defined-only build/libmathx.so | grep add
 0000000000001140 T _ZN5mathx3addEii
 ```
 
-That `_ZN5mathx3addEii` is the whole ABI in one string: namespace `mathx`,
-function `add`, two `int` parameters. You will not type it anywhere — libclang
-produces it — but seeing it once makes the rest of the tooling legible.
+That `_ZN5mathx3addEii` is the whole ABI in one string. Namespace `mathx`,
+function `add`, two `int` parameters. You will not type it anywhere, libclang
+produces it, but seeing it once makes the rest of the tooling legible.
 
 ## Generate
 
@@ -66,7 +66,7 @@ Read the line as three answers:
 - **`mathx::add(int, int) noexcept`** — the declaration libclang found, with
   the qualifier that decides the carrier.
 - **`direct`** — the generated trampoline calls `_ZN5mathx3addEii` in your
-  library. There is no C wrapper; the trampoline is the whole boundary.
+  library. There is no C wrapper. The trampoline is the whole boundary.
 - **`noexcept, out of line, not virtual, register class`** — why it is direct.
   Every one of those is required for the fast path.
 
@@ -85,11 +85,11 @@ func Add(a int32, b int32) int32
 ```
 
 Why `int32` and not `int`: the C++ function takes `int`, which is 4 bytes on
-LP64. cppgo reads the width from the header and picks the Go type; you do not
+LP64. cppgo reads the width from the header and picks the Go type. You do not
 translate types by hand.
 
 `Add` has no `error` because the C++ declaration is `noexcept`: a call that
-cannot throw cannot fail. Here is the generated body — the whole boundary:
+cannot throw cannot fail. Here is the generated body, the whole boundary:
 
 ```go
 func Add(a int32, b int32) int32 {
@@ -103,10 +103,10 @@ func Add(a int32, b int32) int32 {
 ```
 
 1. **`cppgoOpen`** loads the shim and the user's library and resolves the symbol
-   on the first call; later calls read the cached result.
+   on the first call. Later calls read the cached result.
 2. **`ProbeStack`** makes sure the C++ frame cannot grow past the goroutine's
    stack guard.
-3. **`cppgoCall_…`** is the generated trampoline: it moves the arguments into
+3. **`cppgoCall_…`** is the generated trampoline. It moves the arguments into
    registers, switches to an aligned stack, calls the symbol and returns the
    result.
 4. **The cast back** narrows the 64-bit mirror to the declared `int32`.
@@ -114,7 +114,7 @@ func Add(a int32, b int32) int32 {
 That is the whole boundary. Why the trampoline is assembly, which register
 carries what, and what the collector does with a foreign frame are in [How it
 works]({{< ref "project/architecture.md" >}}) and [register
-assignment]({{< ref "manual/calling-convention.md" >}}); this page is the
+assignment]({{< ref "manual/calling-convention.md" >}}). This page is the
 end-to-end path.
 
 ## Call it
@@ -153,7 +153,7 @@ $ ./adddemo
 5
 ```
 
-The binary is dynamically linked because it loads `libmathx.so` at run time — but
+The binary is dynamically linked because it loads `libmathx.so` at run time, but
 it needed no C toolchain to build, and it contains no `import "C"`.
 
 ## Break it on purpose
@@ -191,12 +191,12 @@ cppgo gen: cppgo: include/mathx/add.hpp:5: mathx::Unit: enums are not emitted
 by this build yet; pass the value as its underlying integer at the C++ boundary
 ```
 
-Nothing is emitted; there is no package that could fail later. The full list of
+Nothing is emitted. There is no package that could fail later. The full list of
 current refusals is in [validation]({{< ref "manual/validation.md" >}}).
 
 ## Where to go next
 
 The function has no state, so there is no lifetime to manage. The next tutorial
 adds a class, a constructor and a `Close`, and with them the first real
-question: where does the C++ object live? See [stateful
+question. Where does the C++ object live? See [stateful
 objects]({{< ref "tutorials/stateful-objects.md" >}}).

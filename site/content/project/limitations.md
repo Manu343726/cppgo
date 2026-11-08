@@ -5,7 +5,7 @@ weight = 30
 +++
 
 cppgo is early, and the honest version of its scope is more useful than a
-feature list. Everything here is a current limitation, not a bug report.
+feature list. Everything here is a current limitation.
 
 ## Platform
 
@@ -43,27 +43,27 @@ feature list. Everything here is a current limitation, not a bug report.
 | more than 6 integer / 8 XMM arguments | **rejected** | group into a pointer |
 | more than one library per Go package | **not supported** | one package per library |
 
-The rejections are deliberate: each one is a shape where the generated code
+The rejections are deliberate. Each one is a shape where the generated code
 would be wrong at run time, and the generator prefers a build error. There is no
-mode to opt into: the carrier is chosen from the declaration, and the refusal is
+mode to opt into. The carrier is chosen from the declaration, and the refusal is
 final until the construct is implemented ([validation]({{< ref
 "manual/validation.md" >}})).
 
 ## Runtime trade-offs
 
-- **The `P` is not released during a call.** Short calls are fast; a blocking
+- **The `P` stays with the goroutine during a call.** Short calls are fast. A blocking
   call delays a GC cycle by up to its duration. For long or blocking work, move
   the C++ to a separate process.
 - **The foreign frame lives on the goroutine stack**, inside a 32 KiB reserve.
   Deep recursion or a large C++ stack frame can exhaust it.
 - **No finalizers.** Every constructor needs an explicit destructor.
-- **`Close` does not wait for in-flight calls.** The caller owns the ordering.
-- **A binary that loads a `.so` is dynamically linked.** The promise is "no cgo,
-  no C toolchain", not "one static file".
+- **`Close` leaves in-flight calls running.** The caller owns the ordering.
+- **A binary that loads a `.so` is dynamically linked.** The promise covers the
+  build, with no cgo and no C toolchain.
 - **One `CppgoLibraryPath` per package.** It overrides the single library the
-  package declared; there is no registry of libraries.
+  package declared. There is no registry of libraries.
 
-## The ABI-inference ladder: two of three tiers are not implemented
+## The ABI-inference ladder. Two of three tiers wait for an implementation
 
 The design describes three ways to learn a binding's ABI, most-specific first.
 **Only tier 1 is implemented.**
@@ -81,14 +81,14 @@ This matters in practice:
   exist in this version**. Today the report says `abi from
   compile_commands.json`, `abi from .clangd`, `abi from arguments` or
   `abi from fallback flags (assumed)`.
-- `//cppgo:abi` is not a directive the parser accepts. A package that uses it
+- The parser rejects `//cppgo:abi`. A package that uses it
   fails to generate.
 - There is no `.dynsym` reading and no demangling fallback. If libclang cannot
-  see the declaration, the binding cannot be emitted; use shim mode.
+  see the declaration, the binding cannot be emitted. Use shim mode.
 
 The `internal/cxx` package does read the ELF dynamic symbol table in its own
 tests, to cross-check that what the model calls "has an out-of-line body" is what
-`nm -D` shows. That is a test oracle, not tier 2.
+`nm -D` shows. That is a test oracle.
 
 ## Roadmap
 
@@ -97,23 +97,22 @@ In the order the design records them, with no dates:
 1. **arm64.** The package must keep building and panicking clearly everywhere
    else until then.
 2. **By-value struct and class returns** — the sret slot is already reserved in
-   the layout; what is missing is the destination and the Go-side layout of the
+   the layout. What is missing is the destination and the Go-side layout of the
    returned type.
 3. **Callbacks from C++ into Go.** v1 says batch instead.
 4. **Tiers 2 and 3** of the ABI ladder, for libraries shipped without headers.
 
-None of these are promised by this documentation; they are the directions the
-design contract names. If a page or a comment here reads as a feature, and the
-code does not do it, the code is right and the page is wrong — please treat it
+None of these are promised by this documentation. They are the directions the
+design contract names. If a page or a comment here reads as a feature, and the code has not done it, the code is right and the page is wrong, please treat it
 that way.
 
-## What is not a limitation
+## What works today
 
 - **No cgo at build time.** `CGO_ENABLED=0` builds and tests the library.
 - **No C toolchain to build the Go side.** You need one for *your* C++ library,
   not for cppgo.
 - **No `import "C"` anywhere.**
-- **Symbols are resolved at run time**, so the same binary can load a different
+- **Symbols are resolved at run time.** The same binary can load a different
   build of the library.
 
-Next: [FAQ]({{< ref "project/faq.md" >}}).
+Next is [FAQ]({{< ref "project/faq.md" >}}).

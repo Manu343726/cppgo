@@ -2,25 +2,25 @@
 
 `cppgo` generates a Go package that calls a C++ library without cgo, without
 `import "C"`, and without a hand-written `extern "C"` layer. Point it at your
-C++ headers and the compilation flags your build already uses; it parses them
+C++ headers and the compilation flags your build already uses. It parses them
 with libclang and emits the Go API a Go programmer would have written:
 `NewVector(...)`, methods, `Close()`.
 
 **Audience:** a Go developer who has a C++ library and has never built a
-foreign-function interface (FFI — the layer that lets code compiled from one
+foreign-function interface (FFI, the layer that lets code compiled from one
 language call code compiled from another). Every C++ term this page uses is
 defined in the [glossary](https://manu343726.github.io/cppgo/manual/glossary/).
 
 ## How it works, in one paragraph
 
-Each bound declaration gets exactly one **carrier** — the way the generated Go
+Each bound declaration gets exactly one **carrier**, the way the generated Go
 code reaches the C++ function. A function that is `noexcept`, not virtual, and
 whose arguments fit the platform's registers is called by a generated `NOSPLIT`
 assembly **trampoline** straight into the C++ ABI: no runtime handshake,
 15.9 ns/op measured 2026-11-08 with `go test -bench . -benchtime 200000x`.
-Everything else — virtual methods, inline bodies,
+Everything else, virtual methods, inline bodies,
 `std::string` and `std::vector`, records passed by value, templates, exceptions
-— is carried by a **thunk**: a small `extern "C"` function generated into
+, is carried by a **thunk**: a small `extern "C"` function generated into
 `zz_cppgo_shim.cpp`, compiled by cppgo itself into `libcppgo_<package>.so`, and
 linked against your library. Your sources and your build are never modified and
 never include generated code. A signature that passes a Go function to C++ uses
@@ -60,9 +60,9 @@ $ g++ -std=c++17 -O2 -fPIC -shared -Wl,-soname,libmathx.so \
       -Iinclude -o build/libmathx.so src/vector.cpp
 ```
 
-Ask cppgo for the Go package. The `-library` flag names your shared object, so
-the generated shim is linked against it and every direct binding is
-cross-checked against its dynamic symbol table:
+Ask cppgo for the Go package. The `-library` flag names your shared object. The generated shim is linked
+against it, and every direct binding is cross-checked against its dynamic
+symbol table:
 
 ```console
 $ cppgo gen -header include/mathx/vector.hpp -package mathx \
@@ -93,13 +93,13 @@ v.Scale(2)           // no error: scale() is noexcept, so the call is direct
 fmt.Println(v.Norm()) // 10
 ```
 
-That snippet is the real generated package — `NewVector`, `Norm`, `Scale` and
+That snippet is the real generated package, `NewVector`, `Norm`, `Scale` and
 `Close` are the identifiers the v4 emitter produced from the header above.
 
 ### Deployment
 
 The shim links your library by its **soname** and is linked
-`-Wl,-rpath,$ORIGIN`, so the two shared objects resolve each other when they
+`-Wl,-rpath,$ORIGIN`. The two shared objects resolve each other when they
 sit in one directory. The generated `Open` looks for the user's library, in
 order, at `CPPGO_LIBRARY_PATH`, `CppgoLibraryPath`, beside the shim, then on the
 loader's search path:
@@ -116,18 +116,18 @@ program built with the objects on `LD_LIBRARY_PATH` wants.
 For the C++ side as one file to ship, the runtime provides
 `cppgo.OpenFS(fs.FS, name)`: it extracts every embedded `.so` to a private
 per-user cache and loads the named one. `//go:embed` is the intended source. The
-generated package's `Open` takes a path today; wiring the embedded file system
+generated package's `Open` takes a path today. Wiring the embedded file system
 into it is [issue #20](https://git.manu343726.com/manu343726/cppgo/issues/20).
 
 ## Errors
 
-Every call that can fail returns `(T, error)`, value first, error last; a call
+Every call that can fail returns `(T, error)`, value first, error last. A call
 that cannot fail returns no error at all. Today that covers:
 
 - **exceptions** — a declaration that is not `noexcept` goes through a shim
   thunk that wraps the call in `try`/`catch` and puts the message in a
   thread-local string, which becomes `*cppgo.CallError` wrapping
-  `*cppgo.NativeError`;
+  `*cppgo.NativeError`.
 - **`-status <qualified-name>`** — a C++ function whose 32-bit return is a
   status becomes a Go function that returns only `error` (measured:
   `func Ensure() error`).
@@ -135,7 +135,7 @@ that cannot fail returns no error at all. Today that covers:
 `std::error_code`, `std::expected`, `std::optional`, `errno` and the
 `bool` + out-parameter convention are designed in
 [`DESIGN.md`](DESIGN.md) and tracked as
-[issue #19](https://git.manu343726.com/manu343726/cppgo/issues/19); the
+[issue #19](https://git.manu343726.com/manu343726/cppgo/issues/19). The
 generator does not emit them yet.
 
 ## Requirements
@@ -148,14 +148,14 @@ generator does not emit them yet.
 | **a C++ compiler** | cppgo compiles the generated shim with it, so it must match the library's compiler family, standard library and `_GLIBCXX_USE_CXX11_ABI` (`g++`, then `clang++`, or `-cxx`) |
 | **[purego](https://github.com/ebitengine/purego)** | the only third-party runtime dependency: `dlopen`/`dlsym` without cgo |
 
-The Go side needs no C toolchain and no `import "C"`; `CGO_ENABLED=0 go build`
+The Go side needs no C toolchain and no `import "C"`. `CGO_ENABLED=0 go build`
 works. A program that loads a shared library at run time is dynamically linked
-by definition — the promise is "no cgo, no C toolchain", not "one static file".
+by definition, the promise is "no cgo, no C toolchain", not "one static file".
 
 ## What it is good at, and what it costs
 
 The target use cases are C++ libraries whose API is worth keeping whole:
-**Eigen** (header-only and template-heavy, so the shim is the whole binary),
+**Eigen** (header-only and template-heavy, with the shim as the whole binary),
 **OpenCV** (hundreds of overloads, `cv::Mat`, `std::string` everywhere), and
 **ArrayFire** (a C++ API over a C one, with exceptions). Bindings for those are
 contract test plans, not yet shipped code.
@@ -163,7 +163,7 @@ contract test plans, not yet shipped code.
 The trade-offs, stated rather than hidden:
 
 - **The `P` is not released during a call.** A foreign call in flight delays a
-  GC cycle by up to its duration: right for short, compute-bound calls, wrong
+  GC cycle by up to its duration. Right for short, compute-bound calls, wrong
   for calls that block. Move blocking work to another process.
 - **The C++ frame lives on the goroutine stack**, inside a 32 KiB reserve
   established before every call. Deep recursion can exhaust it.
@@ -171,13 +171,13 @@ The trade-offs, stated rather than hidden:
   a C++ ABI and standard library. The generator rejects a libstdc++/libc++
   mix.
 - **An exception must never cross a Go frame.** A direct binding is `noexcept`
-  by construction; a throw with no C++ frame above it terminates the process.
+  by construction. A throw with no C++ frame above it terminates the process.
 - **A callback-capable binding costs about 10× a direct one** (151 ns against
   15.9 ns, measured 2026-11-08 with `go test -bench . -benchtime 200000x`),
   because the argument block cannot live on a stack that a callback may grow.
 
 The full list is on the [limitations
-page](https://manu343726.github.io/cppgo/project/limitations/); the measured
+page](https://manu343726.github.io/cppgo/project/limitations/). The measured
 numbers, with the command and the clock caveat, are on
 [benchmarks](https://manu343726.github.io/cppgo/project/benchmarks/).
 
@@ -210,14 +210,14 @@ $ make bench        # every benchmark in the repository
 $ make site         # the Hugo site, into site/public/
 ```
 
-`make test` runs twice on purpose: the first pass proves the no-cgo contract,
+`make test` runs twice on purpose. The first pass proves the no-cgo contract,
 the second is the race detector, which the Go toolchain refuses with cgo
 disabled. Neither pass replaces the other. `make verify` runs everything CI
 runs.
 
 ## Where the documentation lives
 
-- **The published manual** is the Hugo site under [`site/`](site/) — tutorials,
+- **The published manual** is the Hugo site under [`site/`](site/), tutorials,
   the manual, the reference, the examples, and the project pages. Build it with
   `make site`.
 - **The decisions** are the ADRs under [`docs/adr/`](docs/adr/), each one
@@ -236,4 +236,4 @@ From a checkout, `make build` puts the same binary in `bin/cppgo`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

@@ -4,7 +4,7 @@ description = "Why the boundary is shaped this way, how a call works, what it co
 weight = 50
 +++
 
-The manual tells you how to use cppgo. This section is about the thing itself:
+The manual tells you how to use cppgo. This section is about the thing itself. It explains
 why the boundary is shaped the way it is, how the generated artefacts fit
 together, what it costs, what it does not do yet, and the four questions that
 come up every time someone sees the project.

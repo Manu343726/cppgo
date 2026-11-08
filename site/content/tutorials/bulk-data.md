@@ -5,11 +5,11 @@ weight = 30
 +++
 
 A `[]float64` is contiguous memory. Crossing the boundary once and letting C++
-loop over all of it is the shape that makes the FFI disappear; crossing once per
+loop over all of it is the shape that makes the FFI disappear. Crossing once per
 element is the shape that makes it dominate.
 
 **Audience:** you have a class working and now you need arrays, strings, or a
-result that does not fit in one register.
+result that overflows one register.
 
 ## The wrong shape first
 
@@ -37,18 +37,17 @@ for i := 0; i < 10_000_000; i++ {
 ```
 
 On the machine in [benchmarks]({{< ref "project/benchmarks.md" >}}) a direct call
-measured **15.9 ns** (2026-11-08, `go test -bench . -benchtime 200000x`); a thunk
+measured **15.9 ns** (2026-11-08, `go test -bench . -benchtime 200000x`). A thunk
 adds a C++ frame on top. Ten million calls is boundary time spent before the
-C++ function does any work, and it also forces the loop to stay scalar: each
+C++ function does any work, and it also forces the loop to stay scalar. Each
 `At` is an opaque call the compiler cannot vectorise across.
 
-The nanoseconds are not the objection by themselves — the objection is the
-shape. A per-element API hands the C++ compiler one element at a time and
+The nanoseconds are not the objection. The objection is the shape. A per-element API hands the C++ compiler one element at a time and
 forbids every optimisation that needs to see the array.
 
-## The right shape: a borrowed slice
+## The right shape. A borrowed slice
 
-Bind the routine, not the accessor. The `mathx` fixture does both directions:
+Bind the routine. The `mathx` fixture does both directions:
 
 ```cpp
 // mathx::Vector — this is already in the header the tutorial uses.
@@ -64,12 +63,12 @@ func Saxpy(a float64, x []float64, y []float64) error
 ```
 
 Each Go slice becomes **two C++ parameters at its own position**: the pointer,
-then the length. That is why `saxpy` takes `x, x_len` and `y, y_len` — the
+then the length. That is why `saxpy` takes `x, x_len` and `y, y_len`, the
 arguments occupy `RDI`, `RSI`, `RDX`, `RCX` in declaration order, and a `double`
 takes an XMM slot instead of an integer one ([register
 assignment]({{< ref "manual/calling-convention.md" >}}) has the whole table).
 
-The generated wrapper for `Saxpy` does one more thing: it checks that the slices
+The generated wrapper for `Saxpy` does one more thing. It checks that the slices
 that share a length really do, because the C++ side takes one `n` for both:
 
 ```go
@@ -78,7 +77,7 @@ if len(x) != len(y) {
 }
 ```
 
-A C++ signature with one shared `n` and two pointers is a legitimate API; the
+A C++ signature with one shared `n` and two pointers is a legitimate API. The
 generated binding is where the invariant is enforced, because the C++ compiler
 cannot see the second slice's Go length.
 
@@ -107,20 +106,20 @@ The wrapper passes `cppgo.Ptr(slice)` and `uint64(len(slice))`, then
 - **The callee must not keep the pointer.** It is valid only for the duration of
   the call. A C++ function that stores it in a member and reads it later is
   reading memory Go may have reused.
-- **The caller owns the buffer.** C++ writes into it; it does not allocate or
-  free it.
+- **The caller owns the buffer.** C++ writes into it. Allocation stays on the
+  Go side.
 - **An empty slice is `(nil, 0)`.** That is a legal pair, and the C++ side must
   handle `n == 0` without dereferencing. It also means an empty slice and a nil
   slice are indistinguishable at the boundary.
 - **The wrapper's `KeepAlive` is what keeps the memory reachable** until the call
   returns. A hand-written binding must do the same.
 
-## Results that are not one register
+## Results beyond one register
 
 Two shapes produce a new Go value:
 
 - **`std::vector<T>`** is copied out into a fresh slice. The C++ object lives and
-  dies inside the thunk; the Go slice does not alias it:
+  dies inside the thunk. The Go slice owns its own memory:
 
   ```cpp
   std::vector<double> window(std::size_t n);
@@ -139,17 +138,17 @@ Two shapes produce a new Go value:
   func Describe(prefix string, value float64) (string, error)
   ```
 
-The difference matters for the contract: a `[]float64` **parameter** is
-borrowed, so C++ sees Go's memory; a `[]float64` **result** is copied, so Go
+The difference matters for the contract. A `[]float64` **parameter** is
+borrowed. C++ sees Go's memory. A `[]float64` **result** is copied, and Go
 owns the result. A function that must write into storage the caller already owns
 should take a `double *` and a length instead of returning a `std::vector`.
 
 ## Measuring the difference
 
-Do not take the arithmetic above as a benchmark of your workload: it isolates
+Do not take the arithmetic above as a benchmark of your workload. It isolates
 the boundary, and the C++ loop's cost depends on what it does per element. The
 first benchmark below assumes the `At` accessor from the top of this page, which
-the generated `Vector` deliberately does not have; the second binds the loop.
+the generated `Vector` deliberately omits. The second binds the loop.
 Write a Go benchmark and run it:
 
 ```go
@@ -176,14 +175,14 @@ func BenchmarkDot(b *testing.B) {
 
 The gap you see will be the gap between "the compiler can vectorise" and "the
 compiler cannot", and it will be much larger than one trampoline per kilobyte.
-Run it on your machine; the numbers on this site are one frozen CPU, and they
-show the order of magnitude of the crossing, not your throughput.
+Run it on your machine. The numbers on this site are one frozen CPU, and they
+show the order of magnitude of the crossing.
 
 ## Concurrency
 
 Two goroutines may pass **different** buffers to the same function at the same
-time: nothing is shared. Two goroutines writing the **same** buffer need the same
+time. Nothing is shared. Two goroutines writing the **same** buffer need the same
 synchronisation they would need in C++, because cppgo adds none.
 
-Next: [when generation refuses]({{< ref "tutorials/when-generation-refuses.md"
+Next is [when generation refuses]({{< ref "tutorials/when-generation-refuses.md"
 >}}).

@@ -5,7 +5,7 @@ weight = 20
 +++
 
 A free function has no state. A class does, and state means someone must decide
-where the object lives and when it dies. cppgo decides the first: the generated
+where the object lives and when it dies. cppgo decides the first. The generated
 `NewVector` allocates Go storage, pins it, and hands the address to the C++
 constructor. You decide the second: `Close`.
 
@@ -34,21 +34,20 @@ func (v *Vector) Scale(k float64)
 
 Four things to notice:
 
-- **`NewVector` is a function, not a method.** A constructor has no receiver; the
+- **`NewVector` is a package function.** A constructor has no receiver. The
   generated name is always `New<Type>`.
 - **`Vector` is opaque.** Its only field is unexported (`obj *cppgo.Object`), so
-  a Go caller cannot reach into the C++ layout — and cannot accidentally copy
+  a Go caller cannot reach into the C++ layout, and cannot accidentally copy
   the object by copying a struct value.
 - **`Scale` has no error, `Norm` has one.** `scale` is `noexcept` in the header,
-  so its call is direct and cannot fail; `norm` is not, so it goes through a
-  thunk that can catch an exception.
+  so its call is direct and cannot fail. `norm` declares no `noexcept`. It goes through a thunk that can catch an exception.
 - **`Close` is the destructor**, named once and defined by the generated
   package.
 
 ## Where the object lives
 
-`NewVector` allocates `sizeof(Vector)` bytes — measured from the header by
-libclang, 16 here — and pins them:
+`NewVector` allocates `sizeof(Vector)` bytes, measured from the header by
+libclang, 16 here, and pins them:
 
 ```go
 obj = cppgo.NewObject(16, 8, func() {
@@ -60,7 +59,7 @@ obj = cppgo.NewObject(16, 8, func() {
 })
 ```
 
-The release function is the destructor: it runs when the object's last
+The release function is the destructor. It runs when the object's last
 reference goes. The `constructed` flag is what stops it from running on an
 object whose constructor threw. The full generated body and the reference count
 are in [object lifetimes]({{< ref "manual/lifetimes.md" >}}).
@@ -95,13 +94,13 @@ $ go run .
 10
 ```
 
-`NewVector` ran the C++ constructor in Go storage — the equivalent of a
+`NewVector` ran the C++ constructor in Go storage, the equivalent of a
 placement `new`. `Norm` read the object through its pointer. `Scale` mutated it
-in place; no allocation happened on any of the three calls.
+in place. No allocation happened on any of the three calls.
 
 ## Close is safe to call twice
 
-`Close` does not free C++ memory twice. It drops the object reference and
+`Close` frees C++ memory once. It drops the object reference and
 reports that the value is already closed:
 
 ```go
@@ -117,10 +116,10 @@ A method called on a closed or nil `*Vector` returns `cppgo.ErrClosed` as well,
 which is why `Close` can be deferred without a nil check and why a method after
 `Close` is a Go error instead of a segfault.
 
-## Copying is not cloning
+## Copying and cloning
 
 The Go value is a pointer to one object. Copying the pointer copies the
-reference, not the C++ vector:
+reference:
 
 ```go
 a, _ := mathx.NewVector(3, 4)
@@ -131,7 +130,7 @@ n, _ := a.Norm()
 fmt.Println(n) // 10
 ```
 
-`Clone()` is the copy constructor: a second object in fresh storage, with its own
+`Clone()` is the copy constructor. A second object in fresh storage, with its own
 `Close`.
 
 ```go
@@ -145,7 +144,7 @@ defer clone.Close()
 <div class="callout callout-warn">
 <span class="callout-title">There is no finalizer</span>
 <p>
-An object you never close is never destroyed. That is deliberate: a finalizer
+An object you never close is never destroyed. That is deliberate. A finalizer
 runs at an unpredictable time, on an arbitrary goroutine, possibly while the
 library is unloading. <code>defer v.Close()</code> immediately after a successful
 construction is the idiom, exactly as <code>delete</code> follows
@@ -155,8 +154,7 @@ construction is the idiom, exactly as <code>delete</code> follows
 
 ## When construction can fail
 
-`NewVector` returns `(*Vector, error)` because the constructor is not
-`noexcept`. A C++ constructor that throws is caught by the generated thunk, the
+`NewVector` returns `(*Vector, error)` because the constructor omits `noexcept`. A C++ constructor that throws is caught by the generated thunk, the
 storage is released, and no half-built object is returned. The exception on the
 Go side is `*cppgo.CallError` naming `mathx::Vector::Vector`.
 
@@ -164,5 +162,4 @@ Go side is `*cppgo.CallError` naming `mathx::Vector::Vector`.
 
 `Norm()` returns one `double`. Real code passes buffers. [Bulk
 data]({{< ref "tutorials/bulk-data.md" >}}) explains how a `[]float64` crosses,
-what is copied and what is borrowed, and why the answer is not "call the method
-once per element".
+what is copied and what is borrowed, and why the answer avoids a call per element.

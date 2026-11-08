@@ -21,7 +21,7 @@ terms are defined in the [glossary]({{< ref "manual/glossary.md" >}}).
    `(pointer, length)`, `std::vector` results copied into fresh slices, and why a
    call per element is the wrong shape even when the boundary is cheap.
 4. **[When generation refuses]({{< ref
-   "tutorials/when-generation-refuses.md" >}})** — read the error, tell a
+   "tutorials/when-generation-refuses.md" >}})**, read the error, tell a
    construct this build does not emit from a manifest typo from a compiler
    rejection, and pick the fix.
 
