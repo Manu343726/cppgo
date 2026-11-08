@@ -443,7 +443,7 @@ from the issue, plus the boundaries:
 | `void g(const char *, size_t) noexcept` | `G(s string)` | **Accepted**: borrow, read-only |
 | `int h(std::span<int>) noexcept` | `H([]int) int32` | **Accepted**: borrow |
 | `void k(const std::vector<int> &)` | `K([]int)` | **Rejected**: "owns memory: a Go slice or string cannot be adopted by it" |
-| `void k(const std::vector<int> &)` | `K([]string)` | **Rejected**: same; the leaf being a Go pointer does not change the container |
+| `void k(const std::vector<std::string> &)` | `K([]string)` | **Rejected**: same; the leaf being a Go pointer does not change the container |
 | `void m(std::string_view) noexcept` | `M([]byte)` | **Rejected**: "must be a Go string" |
 | `void t(const char *, size_t)` (throwing) | `T([]byte)` | **Rejected**: "can throw, so its Go signature must carry an error result" |
 | `void t(const char *, size_t)` (throwing) | `T([]byte) error` | **Accepted** |
