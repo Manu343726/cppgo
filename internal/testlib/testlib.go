@@ -148,6 +148,16 @@ CPPGO_EXPORT std::int64_t cppgo_fixture_deep_stack(std::int64_t bytes) {
     return sum;
 }
 
+// Calls a function pointer the Go side produced: the fixture of the reentrant
+// carrier. It is only safe when the caller entered C through runtime.cgocall,
+// which is what cppgo.CallReentrant does.
+typedef std::int64_t (*cppgo_fixture_binary)(std::int64_t, std::int64_t);
+
+CPPGO_EXPORT std::int64_t cppgo_fixture_apply(cppgo_fixture_binary fn, std::int64_t a,
+                                              std::int64_t b) {
+    return fn(a, b);
+}
+
 // The cppgo error convention: non-zero return means "call cppgo_last_error".
 CPPGO_EXPORT std::int64_t cppgo_fixture_fail(const char *msg) {
 #ifndef CPPGO_FIXTURE_NO_LAST_ERROR
