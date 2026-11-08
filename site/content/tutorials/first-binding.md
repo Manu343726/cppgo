@@ -280,10 +280,9 @@ CGO_ENABLED=1 go test -race -count=1 .
 ok  	github.com/Manu343726/cppgo/examples/mathx	1.034s
 ```
 
-Measured 2026-11-08 on the machine that built this tree. The first pass proves
-the no-cgo rule: the generated package and the runtime build and run with
-`CGO_ENABLED=0`. The second pass needs cgo because the race detector is built on
-it; the two properties cannot be measured by one command.
+The first pass proves the no-cgo rule: the generated package and the runtime
+build and run with `CGO_ENABLED=0`. The second pass needs cgo because the race
+detector is built on it; the two properties cannot be measured by one command.
 
 ## What you just did
 

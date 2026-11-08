@@ -89,11 +89,10 @@ and status rows work today.
 | a custom result type (`Result<T>`, `absl::StatusOr<T>`) | not inferred | `(T, error)` when its shape is `has_value`/`value`/`error` |
 | `std::variant<T,E>` with a known error alternative | not inferred | `(T, error)`; the config names the alternative, never guessed |
 
-Designed, not shipped:
-[issue #19](https://git.manu343726.com/manu343726/cppgo/issues/19). Until it
-lands, a library that returns `std::error_code` is refused at generation time,
-and the message says what to do: cross the failure as a scalar or a wrapper with
-a supported signature, or use `-status` when the convention is an integer.
+Designed, not shipped. Until it lands, a library that returns `std::error_code`
+is refused at generation time, and the message says what to do: cross the failure
+as a scalar or a wrapper with a supported signature, or use `-status` when the
+convention is an integer.
 
 ## When your C++ cannot be bound safely
 

@@ -21,12 +21,9 @@ step:
 | Go | 1.25 or newer | `go.mod` declares `go 1.25.0` |
 | `cppgo` | a pinned version | a different generator version may write different sources |
 
-The project's own image is the evidence for the first two rows: it pins
-`ARG CLANG_VERSION=22` and installs `g++` from the base distribution
-([Dockerfile](https://github.com/Manu343726/cppgo/blob/main/Dockerfile)).
-Using that image, or your own with the same pins, is the least surprising option.
-
-## 2. Build your library first
+Use an image or a runner with these versions pinned rather than taking whatever
+the runner happens to have. That is the least surprising option, and the only one
+that keeps generation reproducible across machines.## 2. Build your library first
 
 Generation reads what your library exports, so the library has to exist before
 `cppgo gen` runs. This is your build's step, not cppgo's:
@@ -79,15 +76,11 @@ $ CGO_ENABLED=0 go test -count=1 ./...
 $ CGO_ENABLED=1 go test -race -count=1 ./...
 ```
 
-That is why the project's `make test` runs two passes rather than one command
-([`Makefile`](https://github.com/Manu343726/cppgo/blob/main/Makefile)).
 Run both: the first proves the no-cgo property, the second finds data races in
 your package and in the glue around it.
 
-Your tests need the two C++ files at run time, exactly like a deployment. The
-examples pass their paths through the environment and set `CppgoLibraryPath`
-before the first call
-([`examples/mathx/mathx_test.go`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/mathx_test.go)):
+Your tests need the two C++ files at run time, exactly like a deployment. Set the
+path before the first call:
 
 ```go
 func init() {

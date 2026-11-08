@@ -89,9 +89,8 @@ $ cppgo check -header include/box.hpp -package box -out ./box -scan ./cmd/mytool
 
 Those are the generics/operators/inheritance items of the wider generator work,
 not a configuration you have missed. The
-[limits page]({{< ref "explanation/limits.md" >}}) lists each one with the test
-that pins it, and the Eigen target slice, which the two-phase flow exists for, is
-designed and not shipped: see [Design decisions]({{< ref "explanation/decisions.md" >}}).
+[limits page]({{< ref "explanation/limits.md" >}}) lists each one, and the Eigen
+target slice, which the two-phase flow exists for, is designed and not shipped.
 
 ## Related
 

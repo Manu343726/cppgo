@@ -12,10 +12,8 @@ one of them by name. The C++ side then travels inside the Go binary.
 **Status.** `OpenFS` is implemented and tested in the runtime. The package
 `cppgo gen` writes **does not call it yet**: its `Open` loads the two files from
 the filesystem, and connecting `OpenFS` to generated packages is recorded as
-future work in
-[ADR-0003](https://github.com/Manu343726/cppgo/blob/main/docs/adr/0003-embedded-libraries.md).
-So today this page is for code that uses the runtime directly; a generated
-binding still deploys as described in
+future work. So today this page is for code that uses the runtime directly; a
+generated binding still deploys as described in
 [Ship a program that uses a binding]({{< ref "how-to/deploy.md" >}}).
 
 ## The call
@@ -78,7 +76,7 @@ The layout, the digest and the permission rules are in
 
 | What | Effect |
 |---|---|
-| `CPPGO_LIBRARY_PATH=<path>` | `OpenFS` loads that path and unpacks nothing. It is the development override: point the same program at a library the C++ build left in the tree |
+| `CPPGO_LIBRARY_PATH=<path>` | `OpenFS` loads that path and unpacks nothing. It is the development override: point the same program at a library your C++ build left in place |
 | `cppgo.CacheDir()` | names the cache directory |
 | `cppgo.CleanCache()` | removes everything `OpenFS` has unpacked. Clearing the cache costs one extraction, never correctness |
 
@@ -96,5 +94,5 @@ against an attacker who can already write that user's cache directory.
 
 ## Related
 
-- The decision and its alternatives: [ADR-0003](https://github.com/Manu343726/cppgo/blob/main/docs/adr/0003-embedded-libraries.md).
 - The rest of the runtime: [Runtime]({{< ref "reference/runtime.md" >}}).
+- How the cache and the extraction work: [Architecture]({{< ref "explanation/architecture.md" >}}#embedded-objects).

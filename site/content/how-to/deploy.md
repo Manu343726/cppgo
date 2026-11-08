@@ -117,4 +117,4 @@ it yet. See
 ## Related
 
 - The runtime functions used here: [Runtime]({{< ref "reference/runtime.md" >}}).
-- Why two files travel together: [Design decisions]({{< ref "explanation/decisions.md" >}}).
+- How the two files are found at run time: [Architecture]({{< ref "explanation/architecture.md" >}}#loading-the-two-objects).
