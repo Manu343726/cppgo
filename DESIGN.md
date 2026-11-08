@@ -537,6 +537,57 @@ What each target exercises, and what is out of scope with the reason:
 | **OpenCV** | whole-header binding at scale: hundreds of overloads, default arguments, `cv::Mat` as an opaque value with `Close`, `std::string` and `std::vector<T>` everywhere, enums with explicit values | GPU modules that need a CUDA runtime at link time: the shim links what the library links, and a missing device is the library's error, not a binding failure |
 | **ArrayFire** | C++ API over a C API; handles are opaque values; `af::array` by reference; exceptions are `af::exception`, caught by the shim and reported as Go errors | none measured yet; the exception row is the one to verify first, because ArrayFire throws by design |
 
+**Qt is out of scope.** The operator retracted it; no slice, no tag, no CI package.
+
+### The target-slice test harness
+
+Each target is delivered as **a generated binding plus a test against the real library** — never a
+fixture, never a mock, and never a hand-written declaration. A slice is accepted when the test compiles
+its generated package against the real headers, loads the real shared object through the cppgo-built
+shim, and asserts on real values.
+
+Layout, one directory per target:
+
+```
+internal/targets/opencv/     generated package (zz_cppgo.gen.go, zz_cppgo_amd64.s) + opencv_test.go
+internal/targets/arrayfire/  the same, against libaf
+internal/targets/eigen/      the same, header-only: the shim is the whole binary
+```
+
+Tags and skipping:
+
+- each test file carries its own build tag — `//go:build cppgo_opencv`, `//go:build cppgo_arrayfire`,
+  `//go:build cppgo_eigen` — so `go test ./...` on a machine without the library neither compiles the
+  test nor fails;
+- inside the tag, the test **skips with the reason** when the library is absent: `pkg-config --exists
+  opencv4` for OpenCV, `pkg-config --exists af` (or `af/version.h`) for ArrayFire, and
+  `<eigen3/Eigen/Dense>` for Eigen. A skip is a skip, not a silent pass: the message names the package
+  to install (`libopencv-dev`, `libarrayfire-dev`, `libeigen3-dev`);
+- **the ArrayFire slice is never deleted**: if it cannot be installed on the CI image, its tag stays
+  and the opt-in host is documented in the test's own comment and in the target's page. The contract
+  forbids removing a slice because its dependency was awkward once.
+
+The CI image (issues #13/#16) installs the three packages, so the default job runs the slices with
+their tags on; a job that cannot install one runs the rest and reports the skip. The harness is the
+only place the tags are turned on, so a developer's `go test ./...` stays fast.
+
+What each slice asserts:
+
+| slice | generated API exercised | assertions |
+|---|---|---|
+| **OpenCV** | `Mat`, `cvtColor`, `imwrite`/`imread` through the whole-header binding | create a `Mat`, fill it, convert to grey and check `Channels()`, `Rows()`, `Cols()`, `Type()`; write it and read it back with the same shape |
+| **ArrayFire** | `af::array`, `sum`, `matmul`, `fft`, `host` | construct an array from a Go slice, `sum` over an axis, `matmul` of two small matrices against a hand-computed product, `fft` of a constant against the known spectrum, and read the values back through `host` |
+| **Eigen** | the generic `Matrix[T,R,C]` and `Vector[T,N]` API, fixed and dynamic | add, multiply, transpose, inverse and norm with numeric assertions the test computes itself, plus element access at both dimensions; a fixed `Matrix[float64,4,4]` and a dynamic `Matrix[float64,Dynamic,Dynamic]` exercise the two-phase instantiation flow |
+
+**Only the generated API.** No `cppgo.Handle` in a test, no hand-written binding, no C++ file written
+by the test author: if a slice needs one of those, the generator is missing a construct and that is the
+finding, not a workaround in the test. The error rows of such a library (OpenCV's `cv::Exception`,
+ArrayFire's `af::exception`) are asserted as Go errors through the mapping above, which is what makes
+the slices the acceptance test for both halves of v4 at once.
+
+The slices are **not implemented in this workstream**: this section is the contract and the test plan
+they are built against.
+
 ## Whole-header API at scale
 
 A header is the unit of selection, so the generator has to answer the questions a large header asks:
