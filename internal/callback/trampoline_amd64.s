@@ -149,10 +149,3 @@ TEXT ·callbackTableAddr(SB), NOSPLIT, $0-8
 	LEAQ ·callbackTable(SB), AX
 	MOVQ AX, ret+0(FP)
 	RET
-
-TEXT ·dispatchWords(SB), NOSPLIT, $0-16
-	MOVQ ·dispatch(SB), AX
-	MOVQ AX, funval+0(FP)
-	MOVQ (AX), BX
-	MOVQ BX, code+8(FP)
-	RET

@@ -2,7 +2,8 @@ package callback
 
 import (
 	"testing"
-	"unsafe"
+
+	"github.com/Manu343726/cppgo/internal/rtl"
 )
 
 // TestSlotIndex covers every way an address can fail to be a slot: outside the
@@ -70,16 +71,18 @@ func TestLookupRejectsNonSlots(t *testing.T) {
 // assembler would silently break this by emitting a longer form.
 func TestTrampolineIsFiveByteRelativeCalls(t *testing.T) {
 	for i := range callSlotCount {
-		b := *(*byte)(ptrAt(slotAddr(i)))
+		b := slotByte(slotAddr(i))
 		if b != 0xe8 {
 			t.Fatalf("slot %d starts with %#x, want 0xe8 (CALL rel32)", i, b)
 		}
 	}
 }
 
-// ptrAt views a code address as a byte pointer, which is how the layout test
-// reads the instruction the assembler emitted. The address is a text address of
-// this process, not Go memory.
-func ptrAt(addr uintptr) *byte {
-	return (*byte)(unsafe.Pointer(addr)) //nolint:govet // a text address, deliberately
+// slotByte reads the first byte of the instruction at a slot address, which is
+// how the layout test checks what the assembler emitted. rtl.Pointer is the
+// documented conversion from a foreign code address to a pointer (the address
+// is text of this process, not Go memory), and going through it is what keeps
+// go vet's unsafeptr check satisfied without silencing it.
+func slotByte(addr uintptr) byte {
+	return *(*byte)(rtl.Pointer(addr))
 }

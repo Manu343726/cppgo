@@ -25,8 +25,11 @@ Three claims, each measurable in this repository:
   register convention cannot express;
 - **Go-side generated**: the artefacts cppgo emits are Go, Go assembly, and one C++ translation unit
   that cppgo compiles itself. The user's build sees none of them;
-- **measured**: every mechanism in the table below has a test in `internal/callback` or
-  `internal/shim`, and a hard limit is stated with the measurement that found it.
+- **measured where it claims**: every row of the table below either names the test in
+  `internal/callback` or `internal/shim` that measures it, or says **designed** and names the v3
+  behaviour it is derived from. A designed row is not a claim that the construct works yet — it is
+  the next workstream's specification — and every hard limit is stated with the measurement that
+  found it.
 
 ## The three artefacts
 
@@ -134,12 +137,13 @@ the same headers and the same flags, and linked against the user's library:
 | inline / header-only body | includes the header and calls it: the body is compiled into the shim | `TestInlineHeaderOnlyIsReachableOnlyThroughTheShim` |
 | virtual method, virtual destructor | calls it as C++ does — real dispatch through the vtable | `TestVirtualDispatchAndVirtualDestructor` |
 | template | instantiates the concrete specialisation and calls it | `TestTemplateInstantiation` |
-| `std::string` / `string_view` / `vector` / `span` / `array` / `optional` / smart pointers | constructs the C++ value, converts, copies in or out | `TestStdStringAndVector` |
-| POD above 16 bytes / MEMORY class by value | copies it into the call; a result is written through an out-pointer | — |
+| `std::string` / `std::vector` | constructs the C++ value, converts, copies in or out | `TestStdStringAndVector` |
+| `string_view` / `span` / `array` / `optional` / `unique_ptr` / `shared_ptr` | constructs the C++ value, converts, copies in or out | designed, not measured (see the per-construct table) |
+| POD above 16 bytes / MEMORY class by value | copies it into the call; a result is written through an out-pointer | designed, not measured |
 | non-POD by value | copies the Go-held object in, or constructs the result in Go storage | `TestNonPODByValue` |
 | exception-throwing call | wraps the call in `try`/`catch`, converts `std::exception` and `...` into the thread-local message | `TestExceptionsBecomeErrors` |
 | multiple inheritance / virtual base | performs the `static_cast`/`dynamic_cast` that adjusts `this` | `TestMultipleInheritanceAdjustment` |
-| more than 6 INTEGER or 8 SSE arguments | takes a pointer to an argument block and unpacks it | — |
+| more than 6 INTEGER or 8 SSE arguments | takes a pointer to an argument block and unpacks it | designed, not measured |
 | anything with an out parameter | writes through the pointer the Go side provides | every row above |
 | a callback parameter | constructs the `std::function` from the Go function pointer | `TestCallbackThroughTheShim` |
 
@@ -315,11 +319,13 @@ generated trampoline calls the user's symbol; "shim" means the cppgo-built thunk
 | 2 | inline / header-only | shim includes the header; the body is compiled into the shim | `TestInlineHeaderOnlyIsReachableOnlyThroughTheShim` (the user's library exports no symbol, the shim does) | a declaration whose definition is not visible to the shim cannot be bound: the user must include the header that defines it, or provide an out-of-line definition |
 | 3 | `std::string` | copied in and out through a buffer; the `std::string` lives and dies inside the shim | `TestStdStringAndVector` | the shim and the library must use the same standard library and the same `_GLIBCXX_USE_CXX11_ABI` |
 | 3 | `std::vector<T>` | copied in and out through the caller's slice | `TestStdStringAndVector/std::vector_in_and_out` | same as `std::string` |
-| 3 | `std::string_view`, `std::span` | borrowed: `(pointer, length)`, no copy, valid for the call | designed from the v3 table; the shim receives the raw pair and constructs the view | the callee must not retain the view |
-| 3 | `std::array<T,N>` | by value through the shim | designed | same ABI rule as any by-value aggregate |
-| 3 | `std::optional<T>` | `*T`: nil is `nullopt`; the shim constructs and reads it | designed | — |
-| 3 | `std::unique_ptr<T>` | a parameter consumes the Go value, a result is owning (`Close` destroys it) | designed | the deleter must be the default one |
-| 3 | `std::shared_ptr<T>` | a parameter shares (the reference count is copied), a result is owning | designed | a `shared_ptr` the *Go side* must construct out of nothing needs a control block only C++ can allocate: that is a shim entry point, not a layout trick |
+| 3 | `std::string_view`, `std::span` | borrowed: `(pointer, length)`, no copy, valid for the call | **designed, not measured** (v3 oracle at `5b4fef7`; the shim receives the raw pair and constructs the view) | the callee must not retain the view |
+| 3 | `std::array<T,N>` | by value through the shim | **designed, not measured** | same ABI rule as any by-value aggregate |
+| 3 | `std::optional<T>` | `*T`: nil is `nullopt`; the shim constructs and reads it | **designed, not measured** | — |
+| 3 | `std::unique_ptr<T>` | a parameter consumes the Go value, a result is owning (`Close` destroys it) | **designed, not measured** | the deleter must be the default one |
+| 3 | `std::shared_ptr<T>` | a parameter shares (the reference count is copied), a result is owning | **designed, not measured** | a `shared_ptr` the *Go side* must construct out of nothing needs a control block only C++ can allocate: that is a shim entry point, not a layout trick |
+| 4 | POD above 16 bytes / MEMORY class by value | copied through the shim; an sret result goes into Go storage | **designed, not measured** | — |
+| 4 | more than 6 INTEGER or 8 SSE arguments | the shim takes an argument block and unpacks it | **designed, not measured** | a direct binding does not exist for this shape |
 | 4 | non-POD by value | constructed and copied inside the shim; a by-value result is constructed into Go storage through the sret pointer | `TestNonPODByValue` (the copy constructor's +1000 is observable) | the type's copy constructor and destructor must be visible to the shim, which they are when the header declares them |
 | 5 | exceptions | `try`/`catch` in the shim; the message travels in a thread-local string and arrives as a Go `error` | `TestExceptionsBecomeErrors` | **no direct binding may call a function that can throw**: measured, a throw with no C++ frame terminates the process (`TestExceptionFromCIsFatal`, `TestExceptionAfterACallbackIsFatal`, `TestExceptionThroughTheGoCallbackIsFatal`). A library that reports failures as `noexcept` + status needs no shim |
 | 6 | templates | the shim instantiates the specialisation the Go side asked for and calls it | `TestTemplateInstantiation`, `TestTwoPhaseGenerics` | the instantiation must be named: the Go generic API's instantiations are collected and the shim is emitted from that list; a Go instantiation with no C++ counterpart fails at load with the exact `template ...;` line to add |
@@ -483,15 +489,15 @@ not 64-bit is a generation error, not a silent reinterpretation.
 | non-POD record, by value | `*T` | the shim copies into the call; `T` owns Go-pinned storage |
 | `T[N]` (record field) | `[N]T` | fixed-size array |
 | `std::string` | `string` | copied in and out |
-| `std::string_view` | `string` | borrowed for the call |
-| `std::vector<T>` | `[]T` | copied in and out |
-| `std::span<T>` | `[]T` | borrowed |
-| `std::array<T,N>` | `[N]T` | by value |
-| `std::optional<T>` | `*T` | nil is `nullopt` |
-| `std::unique_ptr<T>` | `*T` | a parameter consumes, a result owns |
-| `std::shared_ptr<T>` | `*T` | a parameter shares, a result owns |
-| function pointer | `func(...)` | the callback table's address |
-| `std::function<R(Args...)>` | `func(...)` | the shim constructs the object |
+| `std::string_view` | `string` | borrowed for the call; **designed, not measured** |
+| `std::vector<T>` | `[]T` | copied in and out (measured) |
+| `std::span<T>` | `[]T` | borrowed; **designed, not measured** |
+| `std::array<T,N>` | `[N]T` | by value; **designed, not measured** |
+| `std::optional<T>` | `*T` | nil is `nullopt`; **designed, not measured** |
+| `std::unique_ptr<T>` | `*T` | a parameter consumes, a result owns; **designed, not measured** |
+| `std::shared_ptr<T>` | `*T` | a parameter shares, a result owns; **designed, not measured, not supported yet** |
+| function pointer | `func(...)` | the callback table's address (measured) |
+| `std::function<R(Args...)>` | `func(...)` | the shim constructs the object (measured) |
 
 `long double` and `__int128` have no Go value type; a signature that uses one is a generation error
 naming the parameter and the fix (widen/narrow at the C++ boundary to `double`/`int64`, or wrap it).
@@ -606,9 +612,16 @@ runtime's own test asserts it.
 - **Input.** `-header` (repeatable), `-package`, `-library`, `-compile-commands`, `-bind`,
   `-exclude`, `-instantiate`, `-rename`, `-status`.
 - **Compilation flags** come from `compile_commands.json` and `.clangd`, in clangd's order, never
-  invented. A relative `-I` in a database entry is rebased against the entry's `directory` (clangd
-  does this; libclang does not, and a database that is not rebased produced a phantom binding in v3 —
-  v4 rebases it and has a test).
+  invented. A database entry's relative paths are rebased against the entry's `directory` — the
+  include search paths (`-I`, `-isystem`, `-iquote`, `-idirafter`) and the included files
+  (`-include`, `-imacros`), in both the joined and the separated spelling. clangd does this; libclang
+  resolves a relative path against cppgo's working directory instead, which is a different tree and
+  fails silently: the parse cannot see the header's declarations, and a declaration that resolves
+  some other way is what gets bound. That is v3's phantom binding — a relative `-Iinclude` produced
+  `dyn::offset(int&, double, double)` while the real `ns::offset(Point&, …)` was never seen — and v4
+  rebases the paths in `rebaseArgs`, measured by `TestRebaseArgs`,
+  `TestDiscoverRebasesDatabaseIncludePaths` and
+  `TestProjectSeesTheDeclarationThroughARebasedIncludePath` (the last one fails without the rebase).
 - **Evidence.** libclang answers types, sizes, offsets, visibility, inline-vs-out-of-line, virtual,
   exception specification, defaulted/deleted special members, template arguments and base lists. The
   ELF tier is a cross-check for direct bindings against the library's `.dynsym`.

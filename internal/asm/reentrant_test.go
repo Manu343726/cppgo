@@ -3,6 +3,8 @@
 package asm_test
 
 import (
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"unsafe"
 
@@ -87,4 +89,28 @@ func TestCallReentrantGivesTheCalleeAnAlignedStack(t *testing.T) {
 	direct, _ := asm.Call(symbol("cppgo_fixture_deep_stack"), &a)
 
 	require.EqualValues(t, direct, got)
+}
+
+// TestAssemblyDeclarationsAreVetClean runs vet's asmdecl analyzer over the two
+// packages that carry assembly.
+//
+// asmdecl reports a `TEXT ·name(SB)` with no Go declaration, and whether it is
+// in `go vet`'s default set depends on the toolchain: the project's CI image and
+// a plain `go vet ./...` on this machine disagree. The invariant is not
+// optional — the generated packages are vetted in their own module, and a
+// missing declaration there failed the end-to-end test — so it is checked
+// explicitly rather than inherited from whichever analyzers are on by default.
+func TestAssemblyDeclarationsAreVetClean(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go is not in PATH")
+	}
+
+	root, err := filepath.Abs("../..")
+	require.NoError(t, err)
+
+	cmd := exec.Command(goBin, "vet", "-asmdecl", "./internal/asm", "./internal/callback")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "go vet -asmdecl failed:\n%s", out)
 }

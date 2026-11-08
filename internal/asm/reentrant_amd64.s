@@ -2,9 +2,9 @@
 
 #include "textflag.h"
 
-// reentrantWrapper is the function runtime.cgocall calls. cgocall passes its
-// second argument in DI with the C calling convention; the block it points at
-// is
+// reentrantWrapper is the function runtime.cgocall calls (declared in
+// reentrant_wrapper_amd64.go). cgocall passes its second argument in DI with
+// the C calling convention; the block it points at is
 //
 //	0(DI)  target function address
 //	8(DI)  *Args (I[0..5] at 0..40, F[0..7] at 48..104, results at 112..120)
