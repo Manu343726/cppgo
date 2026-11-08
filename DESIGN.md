@@ -175,10 +175,12 @@ A callback invoked through the direct carrier kills the process: the runtime's c
 not an optimisation.
 
 The reentrant carrier runs the C frames on the M's system stack instead of the goroutine's, so
-`ProbeStack`'s 32 KiB reserve does not apply to them — measured to 4 MiB in
-`TestReentrantCarrierStackBudget` (the budget is the thread stack, 8 MiB by default). It costs one
-16-byte allocation per call, because the argument block that carries the target cannot live on the
-goroutine's stack: a callback may grow that stack, and the C side holds the block's address.
+`ProbeStack`'s 32 KiB reserve is not what protects them: `TestReentrantCarrierStackBudget` puts the
+same 28 KiB frame through both carriers and both reach the fixture's result, which is the measurement
+that the reentrant carrier is not spending the goroutine's reserve — the budget is the thread stack,
+not the 32 KiB the probe guarantees. It costs one 16-byte allocation per call, because the argument
+block that carries the target cannot live on the goroutine's stack: a callback may grow that stack,
+and the C side holds the block's address.
 
 ## What the user writes
 
@@ -395,23 +397,119 @@ explicit and checkable rather than a layout trick:
   `TestCallbackThroughTheShim` measures — and it stays recorded in `internal/callback`'s
   `TestStdFunctionFromGo` as the fallback for a library that already exports those instantiations.
 
-## Exceptions
+## Errors from C++ to Go
 
-**Every call that can throw goes through the shim, and the shim catches.** The rule is exact:
+A C++ library reports failure in at least eight ways, and a Go caller should not be able to tell which
+one it used: **every fallible call returns `(T, error)` — the value first, the error last — and every
+infallible call returns no error at all.** The mechanism lives in the shim (which is C++ and can
+therefore catch, read `std::error_code` and construct a `std::expected`), the projection lives in the
+generated Go package, and `internal/errormap` is the part of it that is shared and measured.
 
-- a **direct** binding is `noexcept` by construction; a non-`noexcept` function is never direct;
-- a **shim** thunk is `noexcept` and returns a status: `0` for success, non-zero for a caught
-  exception, with the message in a thread-local string exported as
-  `extern "C" const char *cppgo_last_error()`. The generated Go wrapper reads it and returns
-  `*cppgo.CallError{Symbol, Err}`;
-- a **destructor** is `noexcept` unless declared otherwise; `Close() error` always exists and reports
-  `cppgo.ErrClosed` for a dead receiver and any exception a `noexcept(false)` destructor raises.
+### The mapping
 
-Measured: `TestExceptionsBecomeErrors` (caught and reported) and the three child-process tests in
-`internal/callback` (a throw with no C++ frame terminates the process, including through a callback).
-**There is no exception support without a C++ frame**, and v4 says so plainly rather than pretending
-otherwise: a library whose API throws and whose headers cannot be included by the shim cannot be bound
-safely, and the fix is a `noexcept` entry point in the library.
+| C++ convention | how it is recognised | shim does | Go signature and error |
+|---|---|---|---|
+| **exceptions**: `std::exception`, a user subclass, `std::system_error` | the declaration is not `noexcept` | `try`/`catch` around the call, and around the marshalling; writes the message, and for `std::system_error` its code and category | `(T, error)`; `*cppgo.CallError` wrapping `*errormap.Message` (text only) or `*errormap.ErrorCode` (code, category, message) |
+| **`std::error_code`** | the return type is `std::error_code` | calls, tests the code, writes code + category + message | `(T, error)`; `*errormap.ErrorCode`; `errors.Is` compares code **and** category |
+| **`std::expected<T,E>`**, `tl::expected<T,E>` | the return type has `has_value()`/`value()`/`error()`, or its spelling is `std::expected` | tests `has_value()`, copies the value out, projects `E` | `(T, error)`; `E = std::error_code` → `*errormap.ErrorCode`; `E = std::string` → `*errormap.Message`; a custom `E` → the type the config names |
+| **`std::optional<T>`** | the return type is `std::optional<T>` | copies the value, or writes "empty" | **not an error by default**: `(T, bool)` — `optional` means "absent", and a value that is absent is not a failure. A package that wants it as an error writes a config entry (`kind: expected`, `absent: error`) naming the message to use, and then it is `(T, error)` |
+| **status int** | a plain integer return, only with a config entry | returns the int, the projection maps it | `(T, error)`; `*errormap.ErrorCode` with the category the config names (default `"status"`) |
+| **`errno`** | a config entry (`kind: errno`) | reads `errno` after the call | `(T, error)`; `*errormap.ErrorCode` with category `"errno"` |
+| **`bool` + out parameters** (`bool parse(const char*, Result*, Error*)`) | **never inferred** — a `bool` says nothing | the config names the value channel and the error channel; the shim writes both | `(T, error)`; the `bool` does not appear in the Go signature |
+| **a custom result type** (`outcome<T>`, `absl::StatusOr<T>`, a project `Result<T>`) | the shape: `has_value()`, `value()`, `error()` | tests the shape and projects the error member | `(T, error)`; the error member is projected as above, or by the type the config names |
+| **`std::variant<T,E>`** with a known error alternative | **never guessed**: a config entry names the alternative | tests `index()`, copies the matching alternative | `(T, error)`; the config names which alternative is the error and how to project it |
+
+Two rules hold across the table, and they are what make the generated API predictable:
+
+- **no error is synthesized for a call that cannot fail.** A `noexcept` function returning `int` is
+  `func(...) int32`, not `(int32, error)`; the generated package has no `error` that is always nil.
+  `TestNonFallibleCallHasNoErrorResult` pins it.
+- **no failure is dropped.** A convention that is neither inferred nor configured is a **generation
+  error**: the report names the declaration and the config entry it needs, and nothing is emitted for
+  it. Silence would mean a call whose failure becomes a zero value.
+
+**Exceptions during marshalling use the same path.** Constructing a `std::string`, a `std::vector` or
+any by-value object can throw `std::bad_alloc`; the shim's `try` covers the marshalling as well as the
+call, so a failure before the call is an error like any other.
+
+**There is no exception support without a C++ frame**, and v4 says so plainly: a direct binding is
+`noexcept` by construction, and a throw with no C++ frame above it terminates the process (measured,
+three times, in `internal/callback`'s child-process tests). A library whose API throws and whose
+headers cannot be included by the shim cannot be bound safely; the fix is a `noexcept` entry point in
+the library.
+
+### The generated Go error types
+
+```go
+// ErrorCode is a std::error_code, a status int or an errno projected into Go.
+// errors.Is compares Code and Category; the fields are exported, so a caller
+// never has to parse the string.
+type ErrorCode struct {
+	Code     int
+	Category string
+	Message  string
+}
+
+// Message is a failure that carries only text: a thrown std::runtime_error, or
+// a std::expected whose error alternative is a string.
+type Message struct {
+	Text string
+}
+```
+
+- the binding returns `*cppgo.CallError{Symbol, Err}` with one of these underneath, so `errors.As`
+  finds both the declaration and the projection, and `errors.Is` finds the failure's identity (a
+  `std::error_code`'s code and category are its identity; a message's text is its own);
+- a custom `E` projects to the Go type the config's `type:` names, generated with that C++ type's
+  accessors; the generated doc comment states whether `errors.Is` and `errors.As` are supported for it
+  — a projection with no comparable identity says `errors.Is` does not apply rather than pretending;
+- the per-symbol report names the mechanism and whether it was inferred or configured, which is the
+  line a reader uses to audit a generated package:
+
+```
+ns::open_file      error_code  inferred     value=return error=return
+ns::parse_int      expected    inferred     value=return error=return
+ns::parse_point    out_param   configured   value=1 error=2
+ns::divide         exception   inferred     value=return error=return
+ns::twice          no error channel         inferred
+```
+
+### The configuration
+
+For the conventions a signature cannot state, a package writes `cppgo.yaml` beside its generation
+command (or a header annotation, for the same data):
+
+```yaml
+errors:
+  "ns::parse":
+    kind: out_param      # exception | error_code | expected | status | errno | out_param | custom | variant
+    value: return        # where the result is: "return", a parameter index, or a parameter name
+    error: 1             # where the failure is: "return", a parameter index, or a parameter name
+    type: ns::ParseError # optional projection: the C++ type of the error
+```
+
+Rules, each of which is a test in `internal/errormap` (`TestConfigValidation`):
+
+- **validated against the declaration at generation time**: a channel that names no parameter, a
+  parameter that cannot carry a channel (a value parameter is not a pointer or a reference), an entry
+  for a symbol the package does not bind, and a kind that returns its own error being given channels —
+  each is a generation error, and **no output is written**;
+- **inferred cases need no entry**, and an entry for one may only add a projection;
+- **a config cannot invent a signature**: it names channels within a declaration the header already
+  has, and nothing else;
+- the file is part of the generated package's inputs, so `cppgo check` fails when it changes without a
+  regeneration.
+
+Evidence for the mechanism, end to end, is `internal/errormap`: a user library and the cppgo-built
+shim built as two objects, one C++ function per row of the table — a `std::error_code` return, a
+`std::expected<T, std::error_code>` (C++23), a `std::runtime_error`, a `std::system_error`, a
+`bool` + out-parameter function driven by `testdata/cppgo.yaml`, and a `ns::Result<T>` inferred from
+its shape — each asserted with `errors.As` and `errors.Is` on the Go side
+(`TestErrorCodeReturn`, `TestExpectedReturn`, `TestExceptionReturn`, `TestConfiguredOutParamReturn`,
+`TestInferredCustomResult`), plus the validation errors above.
+
+*The walkthrough — what a user writes, what the generator reports, and how to migrate a library — is
+the tutorial, issue #5; this section is the mechanism the tutorial documents.*
 
 ## Templates and the two-phase generics flow
 
@@ -617,8 +715,9 @@ runtime's own test asserts it.
   (`-include`, `-imacros`), in both the joined and the separated spelling. clangd does this; libclang
   resolves a relative path against cppgo's working directory instead, which is a different tree and
   fails silently: the parse cannot see the header's declarations, and a declaration that resolves
-  some other way is what gets bound. That is v3's phantom binding — a relative `-Iinclude` produced
-  `dyn::offset(int&, double, double)` while the real `ns::offset(Point&, …)` was never seen — and v4
+  some other way is what gets bound. That is v3's phantom binding — on the `dyn` fixture, a relative
+  `-Iinclude` produced `dyn::offset(int&, double, double)` while the real `dyn::offset(Point&, …)` was
+  never seen — and v4
   rebases the paths in `rebaseArgs`, measured by `TestRebaseArgs`,
   `TestDiscoverRebasesDatabaseIncludePaths` and
   `TestProjectSeesTheDeclarationThroughARebasedIncludePath` (the last one fails without the rebase).
