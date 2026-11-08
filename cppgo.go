@@ -13,9 +13,6 @@
 // Object for storage whose layout Go cannot see, Ptr, StrPtr and KeepAlive for Go
 // memory lent to a call, OpenFS for a shared object embedded in the program, and
 // LastError with the typed errors around it.
-//
-// How a call is made is the generator's business. DESIGN.md is where that is
-// written down; this package owns the contract at the boundary.
 package cppgo
 
 import (
