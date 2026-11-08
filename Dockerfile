@@ -289,6 +289,14 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 #   git              `git describe` in tests, module VCS fallback
 #   make             the Makefile is how CI drives the suite, and examples/*
 #                    are built through their own Makefiles
+#   nodejs           the interpreter `make prose-check` runs the vendored technical-
+#                    prose checker in (`.agents/skills/technical-prose-style/scripts/
+#                    prose-check.mjs` and `scripts/prose-check-godoc.mjs`, both ESM
+#                    with Node built-ins and no npm tree). trixie's package is Node
+#                    20.19.2 — a distro pin, like g++ and make, and the build asserts
+#                    the major, so a base that loses node fails the image instead of
+#                    the prose gate. `scripts/prose-check.sh` also needs `perl`,
+#                    which the base already carries (5.40.1, perl-base).
 #   pkg-config       asked for by the image contract; some cgo paths use it
 #   g++              C++17 fixtures (internal/testlib, examples, build-examples)
 #                    and the race detector's cgo; `cc` also builds the fake
@@ -343,6 +351,7 @@ RUN apt-get update \
       libopencv-imgcodecs-dev \
       libopencv-imgproc-dev \
       make \
+      nodejs \
       pkg-config \
       xz-utils \
  && rm -rf \
@@ -526,6 +535,8 @@ SCRIPT
 # Fail the build, not the job, if a pinned tool is missing or wrong.
 RUN set -eux; \
     go version; \
+    node --version; \
+    node --version | grep -qE '^v(2[0-9]|[3-9][0-9])\.' || { echo "node is older than 20" >&2; exit 1; }; \
     golangci-lint --version; \
     hugo version; \
     test -x /usr/bin/nm; \
