@@ -69,6 +69,7 @@ The full table, including what happens when the registers run out, is
 | term | what it means |
 |---|---|
 | **status convention** | How a thunk reports failure: return `int32_t`, `0` for success, non-zero for failure, with a message available from `cppgo_last_error()`. `-status` applies the same reading to a C++ function whose 32-bit return is a status ([error handling]({{< ref "manual/errors.md" >}})). |
+| **binding manifest** | The command line that names what to bind: `-bind`, `-exclude`, `-instantiate`, `-rename`, `-status`. It names declarations; it never describes a signature ([generation input]({{< ref "manual/manifest.md" >}})). |
 | **libclang** | The clang C++ parser packaged as a shared library. cppgo loads it (through purego) to read your header: types, sizes, mangled names, virtual-ness, and whether a definition exists ([installation]({{< ref "manual/installation.md" >}})). |
 | **`cppgo.Object`** | The Go allocation an opaque C++ value lives in: pinned so its address does not move, reference-counted so a view can share it, released by the destructor at the last reference. It is how a generated type keeps its C++ object without exposing a pointer ([object lifetimes]({{< ref "manual/lifetimes.md" >}})). |
 | **`cppgo.Handle`** | A low-level `uintptr` that refers to a foreign object. It appears in the runtime package only; a generated API never names it. |

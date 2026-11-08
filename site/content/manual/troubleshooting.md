@@ -1,137 +1,11 @@
 +++
 title = "Troubleshooting"
-description = "The failures you will actually hit: an inline member with no symbol, a virtual function, a std:: type by value, arity and width mismatches, register exhaustion, a missing libclang, and wrong compilation flags."
+description = "The failures you will actually hit: libclang missing, a shim that does not compile, a construct this build refuses, a manifest entry that names nothing, and a load failure at the first call."
 weight = 100
 +++
 
-## "It has no symbol": defined inline
-
-**Symptom**
-
-```
-mathx.go:24: mathx::Vector::x: it is defined inside its class definition or has
-internal linkage, so it is implicitly inline and the library exports no symbol
-for it: move the definition out into a source file and rebuild, or bind it
-through the shim mode
-```
-
-**Why.** A member function defined inside its class definition is implicitly
-inline. The compiler may emit no out-of-line body at all, so the library has no
-dynamic symbol for `dlsym` to find. This is not an edge case: idiomatic C++
-defines short accessors and often the constructor that way.
-
-**Fix, in order of preference:**
-
-1. **Move the definition out of line.** In the header keep
-   `double x() const;`, and in the `.cpp` write `double Vector::x() const
-   { return x_; }`. Then regenerate. This costs one line and keeps the fast
-   path.
-2. **Add an out-of-line factory.** If you cannot edit the header (a third-party
-   SDK), add a wrapper class of your own whose constructor is out of line:
-   `Vector wrap_vector(double x, double y);` defined in your `.cpp`.
-3. **Shim mode.** An `extern "C"` entry point can call the inline function
-   inside its own translation unit, where the definition is visible:
-   `extern "C" double mathx_vector_x(void *v) { return static_cast<Vector*>(v)->x(); }`
-
-The same message appears for a namespace-scope `static` function, which has
-internal linkage and cannot be exported either.
-
-## "It is virtual"
-
-**Symptom**
-
-```
-mathx::Shape::area: it is virtual: the call has to go through the vtable to
-reach an override, so a fixed symbol cannot be called directly; use the shim
-mode, or bind a non-virtual member
-```
-
-**Why.** A fixed mangled symbol is one implementation. A virtual call must read
-the object's vtable and dispatch to the override, and the generated trampoline
-does not do that.
-
-**Fix.** Use the shim mode (`extern "C"` entry point that calls the virtual
-function normally, with the compiler emitting the dispatch), or bind a
-non-virtual member. A virtual destructor has the same problem and the same
-answer.
-
-## A `std::` type by value
-
-**Symptom**
-
-```
-mathx::Vector::describe: parameter 1 (name string): the C++ parameter is
-"std::string", a standard-library type: its ABI (and its lifetime) is the shim
-mode's business
-```
-
-**Why.** `std::string` is not one pointer in the ABI; it is a small object with
-its own layout, copy semantics and allocator. The same is true of
-`std::vector`, `std::span` and every other non-POD standard type.
-
-**Fix.** Change the signature to take the parts that cross cleanly
-(`const char *` plus `std::size_t`), take a pointer/reference and let a shim
-unwrap it, or use shim mode. Taking `const std::string &` is a pointer slot, so
-it can be bound with `**T`-style reasoning — but the C++ side still needs to
-know the type, which the direct mode cannot express from a Go `[]byte`.
-
-## Arity mismatch
-
-**Symptom**
-
-```
-mathx::Vector::dot: the binding describes 2 arguments but the C++ signature
-takes 3
-```
-
-**Why.** The count in the message is the number of C++ parameters after the Go
-types are expanded: a Go `string` or slice spends **two** C++ parameters (pointer
-and length). So `func Dot(ys []float64)` describes 2 — which matches
-`dot(const double *, size_t)` — and the mismatch appears when the C++ signature
-has one more parameter than your Go declaration accounts for.
-
-**Fix.** Count on the C++ side, then expand the Go side: one slice = two. If the
-C++ function takes `(const double *ys, size_t n, double scale)`, the Go
-declaration needs `(ys []float64, scale float64)`. A `string` expands the same
-way, and a Go declaration with three scalars and one slice describes five C++
-parameters, not four.
-
-## Width or register-class mismatch
-
-**Symptom**
-
-```
-parameter 2 (n int): the Go type is int (8-byte) but the C++ type is "int"
-(4-byte): the two must have the same width, because the value is passed in one
-register
-```
-
-**Why.** Go `int` is 64-bit. C++ `int` is 32-bit on every platform cppgo
-supports. The value travels in one register, so the widths have to agree exactly;
-silently truncating would be a bug that only shows on large values.
-
-**Fix.** Match the width: C++ `int` → Go `int32`, C++ `long` / `long long` /
-`size_t` → Go `int64` / `uint64` / `int` / `uint`. A float bound to an integer
-parameter gives the other message (*"travels in the other register class"*):
-change the Go type, or change the C++ type, but do not `-force` it.
-
-## Register exhaustion
-
-**Symptom**
-
-```
-function Build needs 7 integer argument registers, but the SysV ABI only
-provides 6 (RDI, RSI, RDX, RCX, R8, R9); group or reduce the arguments
-```
-
-**Why.** The trampoline has no path for stack arguments. Strings and slices
-consume two integer slots each, so a function with four slices already needs
-eight.
-
-**Fix.** Group related values into a struct and pass a pointer to it, or take
-one slice of a struct instead of several parallel slices, or move to shim mode
-where the C ABI's own stack rules apply. Do not `-force`: the seventh argument
-would land nowhere.
+**Audience:** a run failed and you need the cause, or a program panicked on its
+first call.
 
 ## libclang not found
 
@@ -139,39 +13,150 @@ would land nowhere.
 
 ```
 cppgo gen: cppgo: include/mathx/vector.hpp: cxx: libclang not found (searched
-libclang.so, /usr/lib/libclang.so, ...; install libclang-dev or set
-CPPGO_LIBCLANG)
+libclang.so, /usr/lib/libclang.so, ...; install libclang-dev or set CPPGO_LIBCLANG)
 ```
 
-**Why.** The direct ABI mode parses the header with libclang. Without it there
-is nothing to validate, so the generator fails instead of guessing.
+**Why.** The generator parses the header with libclang; without it there is
+nothing to read, so it fails instead of guessing.
 
-**Fix.** Install your distribution's libclang development package (the error
-message suggests `libclang-dev`), or set
-`CPPGO_LIBCLANG=/path/to/libclang.so`. If the build machine cannot have
-libclang at all, switch the package to shim mode on purpose: `//cppgo:mode
-shim`, no `//cppgo:header`, `//cppgo:external` bindings.
+**Fix.** Install your distribution's libclang development package (the message
+suggests `libclang-dev`), or set `CPPGO_LIBCLANG=/path/to/libclang.so`.
+
+## The generated shim does not compile
+
+**Symptom**
+
+```
+cppgo: <file>:<line>: <declaration>: the generated shim does not compile;
+<compiler diagnostic> (compiler: <argv>)
+```
+
+**Why.** The shim is C++ that cppgo compiles with the flags it discovered for
+the header. The parse can succeed while the compile fails, because the two use
+different flag sets or a different standard, or because the header is not
+self-contained (it relies on an include the translation unit does not have).
+
+**Fix, in order:**
+
+1. Pass the real compilation database: `-compile-commands build`. That is what
+   puts the project's include paths and defines on the shim's command line.
+2. Make sure the compiler matches the library's: `-cxx clang++` (or `g++`), and
+   a standard the header accepts. cppgo adds `-std=c++17` only when the
+   discovered flags name no standard.
+3. If the diagnostic names a member the shim cannot touch (a private destructor,
+   a deleted copy constructor), the header is exposing something a caller cannot
+   use either. Expose a public wrapper; the generator binds what a caller can
+   call.
+
+The error names the declaration because cppgo re-compiles one thunk at a time on
+the failure path; the diagnostic is the compiler's, not a summary.
+
+## A construct this build refuses
+
+**Symptom.** A one-line error naming the file, the declaration, and the fix:
+
+```
+cppgo: /src/cell.hpp:9: tmpl::Cell: a class template is not a type until it is
+instantiated; name a concrete instantiation with -instantiate 'tmpl::Cell<...>'
+```
+
+**Why.** The construct has no representation in the emitter yet. It is a
+refusal, not a bad declaration: nothing is written, so nothing can fail later.
+
+**Fix.** The second half of the message says what to supply:
+
+| message contains | cause | answer |
+|---|---|---|
+| *enums are not emitted* | an enum anywhere in the parsed headers | pass the value as its underlying integer |
+| *a class template is not a type* | no `-instantiate` | name the specialisation |
+| *a type nested inside a record* | a nested type | move it to namespace scope |
+| *inherited members and base views* | a base class | bind the base directly, or wrap it |
+| *static data member* | a static field | expose a static function |
+| *member function template* | a member template | expose a concrete member |
+| *a function template has no symbol* | a free template | expose a concrete function |
+| *operators and conversion operators* | `operator+`, `operator bool` | give it a name |
+| *a variadic function* | `...` | a fixed list or a span |
+
+One consequence surprises people: the refusal is checked **before selection**,
+so a header that declares an enum anywhere fails even when you `-exclude` it.
+Split the header, or wait for the construct.
+
+The full list is in [validation]({{< ref "manual/validation.md" >}}).
+
+## A manifest entry that names nothing
+
+**Symptom**
+
+```
+cppgo: -bind cv::Mat: it names nothing this header declares
+```
+
+**Why.** `-bind`, `-exclude`, `-instantiate`, `-rename` and `-status` are
+checked against what the parse actually saw. A typo must not silently shrink the
+API, so an unmatched entry is an error.
+
+**Fix.** Check the qualified name against the header. A common cause is a
+namespace alias, or a declaration in a system header that libclang did not
+expose as public. `-rename` may also need the full signature when a qualified
+name matches several overloads.
+
+## `a direct binding needs -library`
+
+**Symptom**
+
+```
+cppgo: <declaration>: a direct binding needs -library: name the shared object
+its symbol is exported by
+```
+
+**Why.** A declaration the header shows as out of line is routed to the direct
+carrier, and the proof that the symbol exists comes from the library's dynamic
+symbol table. Without `-library`, cppgo cannot check it.
+
+**Fix.** Pass `-library build/libyourlib.so`. For a header-only library there is
+no symbol, so there is nothing direct to check: omit `-library` and the whole
+package is shim-carried.
+
+## The first call panics
+
+**Symptom.** A panic from a binding that has no `error` result, on the first
+call, naming the shim path or a symbol.
+
+**Why.** A generated package loads its two objects on the first call. A binding
+with an `error` result returns the failure; one without an error result has
+nowhere to put it, so it panics. That is deliberate: the program was built
+against a library that is not there.
+
+**Fix.** Read the message; it names what failed:
+
+| message names | cause | fix |
+|---|---|---|
+| the shim path | `Open` was given a path that does not exist, or `Open("")` and the shim is not on the loader's path | call `Open(".../libcppgo_<pkg>.so")`, or set `LD_LIBRARY_PATH` |
+| the user library's soname | the loader cannot find it | keep it beside the shim, or set `CPPGO_LIBRARY_PATH` / `CppgoLibraryPath` |
+| a thunk symbol, with *the shim cppgo compiled is stale; run cppgo gen again* | the `.so` beside the package is not the one the generated Go was built against | regenerate; the two are one artefact pair |
+| a symbol of your library | `-library` pointed at the wrong object, or the symbol is not exported | check `nm -D --defined-only build/libyourlib.so` |
 
 ## Wrong compilation flags
 
-**Symptom.** The assumed-flags warning, or a binding rejected for a type you
-know is different:
+**Symptom.** The assumed-flags warning, or a declaration refused that you know
+is different:
 
 ```
 cppgo: warning: the compilation flags for /src/mathx/vector.hpp are an
-assumption (assumed: -std=c++17 -I/src/mathx); a validation this misses comes
-from a parse without the header's real flags
+assumption (assumed: -std=c++17 -I/src/mathx); a parse without the project's
+real flags can misread the header
 ```
 
 **Why.** The header was parsed without the include paths, defines or standard
 the build uses. libclang then sees a partial or wrong declaration — sometimes
-none at all, which reads as "not declared in ...".
+none at all, which reads as *it names nothing this header declares*.
 
 **Fix.** Generate a `compile_commands.json` (`cmake
 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, or `bear -- make`) and pass it:
 
 ```console
-$ cppgo gen -dir ./bindings/mathx -compile-commands ./build
+$ cppgo gen -header include/mathx/vector.hpp -package mathx \
+      -library build/libmathx.so -compile-commands build -out ./mathx
 ```
 
 or put a `.clangd` next to the header:
@@ -182,36 +167,25 @@ CompileFlags:
   Add: [-DMATHX_USE_DOUBLES]
 ```
 
-Then check that the report says `abi from compile_commands.json` or
-`abi from .clangd` instead of `fallback`.
-
-## Other failures worth recognising
-
-| symptom | cause | fix |
-|---|---|---|
-| *it is a static member function, which has no this* | bound with `//cppgo:method` | use `//cppgo:function mathx::Vector::dims` |
-| *N overloads accept the Go argument types* | two C++ overloads fit the Go signature | rename the Go function to make the intent unique, or bind a differently-typed one |
-| *//cppgo:ctor result 0 must be a //cppgo:class handle type* | the constructor returns a pointer or a struct | declare the result as the class type |
-| *//cppgo:dtor returns nothing* | the destructor declares an `error` | drop it; destruction cannot fail in this mode |
-| *the receiver of a bound method must be named* | `func (Vector) Norm()` | name it: `func (v Vector) Norm()` |
-| symbol resolves to null at run time, only with clang++ | clang++ emits only `C2` for an abstract class while libclang names `C1`; g++ emits both | bind a concrete class, or use shim mode |
-| *opening libmathx: ... cannot open shared object file* | the library name is not on the loader's path | set `CppgoLibraryPath`, `LD_LIBRARY_PATH`, or use an absolute path |
-| the constructor's documented size is 0 or absurd | the probe translation unit did not see the real class (wrong defines, a different header) | fix the flags; the report's size comes from `sizeof` of what libclang saw |
+Then check that the warning is gone. The warning is the only signal that the
+parse may be missing something; a successful run without it is the normal state.
 
 ## When in doubt, ask the report
 
 The per-binding report is the tool explaining itself. Before changing code, run
 `cppgo gen` without `-q` and read:
 
-1. **which tier answered** (`compile_commands.json`, `.clangd`, `fallback`);
-2. **the mangled name** — if it is empty, the entity has no ABI name (a
-   template);
-3. **the notes** — allocation size, and whether the trailing error is always
-   nil.
+1. **the carrier** — `direct` means a trampoline calls your symbol; `thunk`
+   means the shim does, which is where an inline body, a `std::` type or an
+   exception is handled; `reentrant` means a callback was involved;
+2. **the symbol** — a mangled name of your library, or a stable
+   `cppgo_thunk_<hash>`;
+3. **the reason** — the sentence that decided the carrier.
 
-Nine times out of ten the fix follows from the tier: a `fallback` parse is a
-flags problem, not a code problem.
+If the reason is *not noexcept*, the signature has an error because the thunk
+can report a caught exception. If it is *inline body*, the thunk is the only
+carrier that can reach it. Neither is a problem; they explain the API you see.
 
-Back to the [manual]({{< ref "manual/_index.md" >}}), or read [when the
-generator refuses]({{< ref "tutorials/when-generation-refuses.md" >}}) for the
-decision procedure in narrative form.
+Back to the [manual]({{< ref "manual/_index.md" >}}), or read [when generation
+refuses]({{< ref "tutorials/when-generation-refuses.md" >}}) for the decision
+procedure in narrative form.

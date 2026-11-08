@@ -43,9 +43,11 @@ feature list. Everything here is a current limitation, not a bug report.
 | more than 6 integer / 8 XMM arguments | **rejected** | group into a pointer |
 | more than one library per Go package | **not supported** | one package per library |
 
-The rejections are deliberate: each one is a shape where a generated trampoline
-would be wrong at run time, and the generator prefers a build error. The [shim
-mode]({{< ref "manual/directives.md" >}}) is the escape hatch for all of them.
+The rejections are deliberate: each one is a shape where the generated code
+would be wrong at run time, and the generator prefers a build error. There is no
+mode to opt into: the carrier is chosen from the declaration, and the refusal is
+final until the construct is implemented ([validation]({{< ref
+"manual/validation.md" >}})).
 
 ## Runtime trade-offs
 
