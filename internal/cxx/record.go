@@ -1,6 +1,7 @@
 package cxx
 
 import (
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -216,10 +217,10 @@ type StaticField struct {
 // instantiation: the pattern cursor plus the class-level substitution that
 // turns its owner's parameters into the specialisation's arguments.
 type memberTemplate struct {
-	cursor  CXCursor
-	class   substitution
-	record  string
-	member  string
+	cursor CXCursor
+	class  substitution
+	record string
+	member string
 }
 
 // Enumerator is one value of an enum.
@@ -247,6 +248,12 @@ type Enum struct {
 	Underlying Param
 	// Constants are the enumerators in declaration order.
 	Constants []Enumerator
+	// ConstantsKnown reports whether the enumerator values are the
+	// instantiation's. libclang does not evaluate an initializer in a template
+	// pattern, so a specialisation's nested enum is re-evaluated from its
+	// source tokens; an initializer the model cannot read makes this false and
+	// the generator exposes the enum type without constants.
+	ConstantsKnown bool
 	// DeclFile and DeclLine locate the definition.
 	DeclFile string
 	DeclLine int
@@ -263,6 +270,9 @@ type recordExtractor struct {
 	byName  map[string]int
 	enums   []Enum
 	byEnum  map[string]int
+	// sources caches the files whose text is read to evaluate enum
+	// initializers, so one parse reads each file once.
+	sources map[string][]byte
 }
 
 // extractRecords fills tu.records and tu.enums. It shares the lazy extraction
@@ -510,6 +520,8 @@ func (e *recordExtractor) synthesizeSpecialization(rec *Record, pattern CXCursor
 			}
 		case cursorClassDecl, cursorStructDecl, cursorUnionDecl:
 			e.synthesizeNestedRecord(rec, child, sub)
+		case cursorEnumDecl:
+			e.synthesizeNestedEnum(rec, child, sub)
 		case cursorBaseSpecifier:
 			base := e.collectBase(pattern, child)
 			base.QualifiedName = e.specializedBaseName(base.QualifiedName, child, sub)
@@ -667,6 +679,138 @@ func (e *recordExtractor) synthesizeNestedRecord(outer *Record, cursor CXCursor,
 	e.addRecord(nested)
 }
 
+// synthesizeNestedEnum turns a nested enum of a pattern into the
+// specialisation's enum: same enumerators, name and underlying type taken from
+// the instantiation.
+func (e *recordExtractor) synthesizeNestedEnum(outer *Record, cursor CXCursor, sub substitution) {
+	if e.l.f.isCursorDefinition(cursor) == 0 {
+		return
+	}
+	enum := e.collectEnum(cursor)
+	if enum.QualifiedName == "" {
+		return
+	}
+	simple := enum.QualifiedName
+	if i := strings.LastIndex(simple, "::"); i >= 0 {
+		simple = simple[i+2:]
+	}
+	enum.QualifiedName = outer.QualifiedName + "::" + simple
+	enum.Underlying = sub.param(enum.Underlying)
+	e.evaluateNestedEnum(&enum, cursor, sub)
+	if _, exists := e.byEnum[enum.QualifiedName]; exists {
+		return
+	}
+	e.addEnum(enum)
+}
+
+// evaluateNestedEnum re-reads a nested enum's values from its source
+// tokens, because libclang evaluates an initializer in a template pattern
+// against the pattern rather than the instantiation (B = 3 reads as 0).
+func (e *recordExtractor) evaluateNestedEnum(enum *Enum, cursor CXCursor, sub substitution) {
+	if e.l == nil {
+		enum.ConstantsKnown = false
+		return
+	}
+	var constants []CXCursor
+	_ = e.l.visit(cursor, func(child, parent CXCursor) int32 {
+		if e.l.f.getCursorKind(child) == cursorEnumConstantDecl {
+			constants = append(constants, child)
+		}
+		return visitContinue
+	})
+	if len(constants) != len(enum.Constants) {
+		enum.ConstantsKnown = false
+		return
+	}
+	previous := int64(-1)
+	for i, constant := range constants {
+		value, ok := e.enumeratorValue(constant, sub, previous)
+		if !ok {
+			enum.ConstantsKnown = false
+			continue
+		}
+		enum.Constants[i].Value = value
+		enum.Constants[i].UnsignedValue = uint64(value)
+		enum.Constants[i].IsUnsigned = enum.Underlying.Unsigned
+		previous = value
+	}
+}
+
+// enumeratorValue reads one enumerator's initializer from its source text. An
+// enumerator with no initializer follows the previous one; an initializer may
+// be an integer literal or a non-type template parameter. libclang evaluates
+// an initializer in a template pattern against the pattern (B = 3 reads as 0),
+// so the source is the honest reading.
+func (e *recordExtractor) enumeratorValue(cursor CXCursor, sub substitution, previous int64) (int64, bool) {
+	text, ok := e.sourceText(cursor)
+	if !ok {
+		return 0, false
+	}
+	equals := strings.Index(text, "=")
+	if equals < 0 {
+		return previous + 1, true
+	}
+	expression := strings.TrimSpace(text[equals+1:])
+	negative := strings.HasPrefix(expression, "-")
+	expression = strings.TrimSpace(strings.TrimPrefix(expression, "-"))
+	if arg, ok := sub.names[expression]; ok && arg.Kind == TemplateArgumentIntegral {
+		value := arg.Value
+		if negative {
+			value = -value
+		}
+		return value, true
+	}
+	literal := strings.TrimRight(expression, "uUlL")
+	if value, err := strconv.ParseInt(literal, 0, 64); err == nil {
+		if negative {
+			value = -value
+		}
+		return value, true
+	}
+	if value, err := strconv.ParseUint(literal, 0, 64); err == nil {
+		return int64(value), true
+	}
+	return 0, false
+}
+
+// sourceText returns the source a cursor covers, read from the file it is in.
+func (e *recordExtractor) sourceText(cursor CXCursor) (string, bool) {
+	span := e.l.f.getCursorExtent(cursor)
+	path, start, ok := e.offsetOf(e.l.f.getRangeStart(span))
+	if !ok {
+		return "", false
+	}
+	if endPath, end, ok := e.offsetOf(e.l.f.getRangeEnd(span)); !ok || endPath != path || end < start {
+		return "", false
+	} else {
+		content, ok := e.sources[path]
+		if !ok {
+			data, err := os.ReadFile(path)
+			if err != nil || uint64(len(data)) < uint64(end) {
+				return "", false
+			}
+			if e.sources == nil {
+				e.sources = make(map[string][]byte)
+			}
+			e.sources[path] = data
+			content = data
+		}
+		return string(content[start:end]), true
+	}
+}
+
+// offsetOf turns a source location into its file and byte offset.
+func (e *recordExtractor) offsetOf(loc CXSourceLocation) (string, uint32, bool) {
+	var file uintptr
+	var line, column, offset uint32
+	e.l.f.getFileLocation(loc, &file, &line, &column, &offset)
+	path := e.l.str(e.l.f.getFileName(file))
+	if path == "" {
+		return "", 0, false
+	}
+	return path, offset, true
+}
+
 // InstantiateMember returns the concrete instantiation of a member function
 // template: the pattern's signature with both the class and the member
 // arguments substituted. libclang exposes no mangled name for the
@@ -803,7 +947,11 @@ func (e *recordExtractor) trivialType(p Param, depth int) bool {
 			return false
 		}
 		record := e.records[i]
-		return record.LayoutKnown && record.IsTrivial && (record.IsPOD || record.IsDefaultConstructible)
+		// The layout is not needed to know that a constructor exists: a
+		// trivially copyable record that is POD or default-constructible
+		// qualifies even when libclang deferred its layout. The generated
+		// shim's compile is the final check.
+		return record.IsTrivial && (record.IsPOD || record.IsDefaultConstructible)
 	default:
 		return false
 	}
@@ -1052,9 +1200,10 @@ func (e *recordExtractor) collectEnum(cursor CXCursor) Enum {
 		return Enum{}
 	}
 	enum := Enum{
-		QualifiedName: name,
-		IsScoped:      e.l.f.enumDeclIsScoped(cursor) != 0,
-		Underlying:    e.l.param(e.l.f.getEnumDeclIntegerType(cursor)),
+		QualifiedName:  name,
+		IsScoped:       e.l.f.enumDeclIsScoped(cursor) != 0,
+		Underlying:     e.l.param(e.l.f.getEnumDeclIntegerType(cursor)),
+		ConstantsKnown: true,
 	}
 	enum.DeclFile, enum.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
 	_ = e.l.visit(cursor, func(child, parent CXCursor) int32 {

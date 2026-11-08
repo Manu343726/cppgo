@@ -151,6 +151,7 @@ func fakeLibclangSource() string {
 		"clang_disposeTranslationUnit", "clang_getTranslationUnitCursor",
 		"clang_visitChildren", "clang_getCursorKind", "clang_getCursorSpelling",
 		"clang_getCursorDisplayName", "clang_getCursorType", "clang_getCursorLocation",
+		"clang_getCursorExtent", "clang_getRangeStart", "clang_getRangeEnd",
 		"clang_isCursorDefinition", "clang_Cursor_isFunctionInlined",
 		"clang_getCursorSemanticParent", "clang_getCursorDefinition",
 		"clang_Cursor_getMangling", "clang_isVirtualBase",

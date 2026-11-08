@@ -90,6 +90,15 @@ type CXSourceLocation struct {
 	IntData uint32
 }
 
+// CXSourceRange mirrors libclang's CXSourceRange:
+// { const void *ptr_data[2]; unsigned begin_int_data; unsigned end_int_data; }.
+// 24 bytes, MEMORY class.
+type CXSourceRange struct {
+	PtrData  [2]uintptr
+	BeginInt uint32
+	EndInt   uint32
+}
+
 // CXCursorKind values used by this package. They are part of libclang's stable
 // C ABI; TestKindConstants checks every one of them against
 // clang_getCursorKindSpelling at run time, so a wrong number cannot go unnoticed.
@@ -106,15 +115,15 @@ const (
 	cursorEnumConstantDecl int32 = 7
 	cursorFunctionDecl     int32 = 8
 
-	cursorCXXMethod      int32 = 21
-	cursorNamespace      int32 = 22
-	cursorVarDecl        int32 = 9
+	cursorCXXMethod          int32 = 21
+	cursorNamespace          int32 = 22
+	cursorVarDecl            int32 = 9
 	cursorConversionFunction int32 = 26
-	cursorLinkageSpec    int32 = 23
-	cursorConstructor    int32 = 24
-	cursorDestructor     int32 = 25
-	cursorNamespaceAlias int32 = 33
-	cursorBaseSpecifier  int32 = 44
+	cursorLinkageSpec        int32 = 23
+	cursorConstructor        int32 = 24
+	cursorDestructor         int32 = 25
+	cursorNamespaceAlias     int32 = 33
+	cursorBaseSpecifier      int32 = 44
 
 	// Templates. They are declarations with no layout and no symbol until they
 	// are instantiated, and both the record and the function model have to say
@@ -328,6 +337,9 @@ type libclangFuncs struct {
 	getCursorDisplayName func(CXCursor) CXString
 	getCursorType        func(CXCursor) CXType
 	getCursorLocation    func(CXCursor) CXSourceLocation
+	getCursorExtent      func(CXCursor) CXSourceRange
+	getRangeStart        func(CXSourceRange) CXSourceLocation
+	getRangeEnd          func(CXSourceRange) CXSourceLocation
 	isCursorDefinition   func(CXCursor) int32
 	isFunctionInlined    func(CXCursor) int32
 	getSemanticParent    func(CXCursor) CXCursor
@@ -421,6 +433,9 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_getCursorDisplayName", &f.getCursorDisplayName},
 		{"clang_getCursorType", &f.getCursorType},
 		{"clang_getCursorLocation", &f.getCursorLocation},
+		{"clang_getCursorExtent", &f.getCursorExtent},
+		{"clang_getRangeStart", &f.getRangeStart},
+		{"clang_getRangeEnd", &f.getRangeEnd},
 		{"clang_isCursorDefinition", &f.isCursorDefinition},
 		{"clang_Cursor_isFunctionInlined", &f.isFunctionInlined},
 		{"clang_getCursorSemanticParent", &f.getSemanticParent},
@@ -808,22 +823,22 @@ func (l *Libclang) visit(parent CXCursor, fn visitorFunc) error {
 
 // TU is a parsed translation unit. It must be closed.
 type TU struct {
-	l             *Libclang
-	index         uintptr
-	tu            uintptr
-	File          string   // the main file, as given
-	Args          []string // the flags the unit was parsed with
-	once          sync.Once
-	symbols       []Symbol
-	byName        map[string][]int
-	byNameMangled map[string]int
+	l               *Libclang
+	index           uintptr
+	tu              uintptr
+	File            string   // the main file, as given
+	Args            []string // the flags the unit was parsed with
+	once            sync.Once
+	symbols         []Symbol
+	byName          map[string][]int
+	byNameMangled   map[string]int
 	memberTemplates map[string]memberTemplate
-	records       []Record
-	byRecord      map[string]int
-	enums         []Enum
-	byEnum        map[string]int
-	closed        bool
-	mu            sync.Mutex
+	records         []Record
+	byRecord        map[string]int
+	enums           []Enum
+	byEnum          map[string]int
+	closed          bool
+	mu              sync.Mutex
 }
 
 // ParseTranslationUnit parses file with the given command-line flags. The flags

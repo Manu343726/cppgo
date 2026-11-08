@@ -115,6 +115,47 @@ type Param struct {
 	ArraySize int64
 }
 
+// IsStream reports whether the value is a canonical C++ stream reference or
+// value: std::basic_ostream<C,T> or std::basic_istream<C,T>, which is what the
+// std::ostream/istream aliases resolve to. The operator naming rule uses it.
+func (p Param) IsStream() bool {
+	if p.Ptr && p.Pointee != nil {
+		return p.Pointee.stream()
+	}
+	return p.stream()
+}
+
+// stream checks the declaration spelling and the canonical record name. The
+// spelling is the reliable half: libclang's canonical form of a reference to
+// the std::ostream alias can be wrong (it resolves to int), so an alias is
+// recognised by how it is written.
+func (p Param) stream() bool {
+	if strings.HasPrefix(p.RecordName, "std::basic_ostream<") ||
+		strings.HasPrefix(p.RecordName, "std::basic_istream<") {
+		return true
+	}
+	spelling := strings.TrimSpace(p.Spelling)
+	for {
+		switch {
+		case strings.HasPrefix(spelling, "const "):
+			spelling = strings.TrimSpace(spelling[len("const "):])
+		case strings.HasPrefix(spelling, "volatile "):
+			spelling = strings.TrimSpace(spelling[len("volatile "):])
+		default:
+			goto trimmed
+		}
+	}
+trimmed:
+	spelling = strings.TrimSuffix(spelling, "&")
+	spelling = strings.TrimSpace(spelling)
+	switch spelling {
+	case "std::ostream", "std::istream", "std::wostream", "std::wistream":
+		return true
+	}
+	return strings.HasPrefix(spelling, "std::basic_ostream<") ||
+		strings.HasPrefix(spelling, "std::basic_istream<")
+}
+
 // Symbol is one bindable C++ function.
 //
 // The field that matters most is HasOutOfLineBody: a member defined inside its
@@ -717,7 +758,10 @@ func (l *Libclang) param(t CXType) Param {
 		p.Kind = TypeOther
 	}
 	if p.Ptr {
-		p.Pointee = l.pointee(canonical)
+		// The pointee is read from the surface type: libclang's canonical form
+		// of a reference to a typedef of a class template specialisation can
+		// be wrong (std::ostream & canonically becomes int &).
+		p.Pointee = l.pointee(t)
 	}
 	return p
 }
@@ -741,13 +785,13 @@ func (l *Libclang) declarationName(t CXType) string {
 // pointee describes what a pointer or reference points at, or nil when the
 // type is not one. It is what lets the type mapper collapse a (pointer, length)
 // pair into a Go slice without re-parsing a spelling.
-func (l *Libclang) pointee(canonical CXType) *Param {
+func (l *Libclang) pointee(surface CXType) *Param {
 	var inner CXType
-	switch canonical.Kind {
+	switch l.f.getCanonicalType(surface).Kind {
 	case typePointer, typeBlockPointer:
-		inner = l.f.getPointeeType(canonical)
+		inner = l.f.getPointeeType(surface)
 	case typeLValueReference, typeRValueReference:
-		inner = l.f.getNonReferenceType(canonical)
+		inner = l.f.getNonReferenceType(surface)
 	default:
 		return nil
 	}

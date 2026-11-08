@@ -182,7 +182,11 @@ struct Box {
     operator T() const { return value; }
     static T shared;
     struct Inner { T inner; };
+    enum class Kind : int { A, B = 3 };
 };
+// The holder before the explicit instantiation makes the specialisation
+// reachable twice: once through the field, once through the instantiation.
+struct BoxIntHolder { Box<int> value; };
 template struct Box<int>;
 
 struct BoxHolder {
@@ -221,6 +225,33 @@ struct Pack {
 };
 template struct Pack<int, double>;
 
+// Nested enum initializers of a specialisation: literal, negative, hex, a
+// non-type parameter, and one the model cannot read.
+template <typename T, int N>
+struct EnumBox {
+    enum class Kind : int { A, B = 3, C = -2, D = 0x10, E = N, F = 1 + 2 };
+};
+struct EnumBoxHolder { EnumBox<int, 7> value; };
+template struct EnumBox<int, 7>;
+
+template <typename T>
+struct BigEnum {
+    enum class Big : unsigned long long { Max = 0xFFFFFFFFFFFFFFFF };
+};
+template struct BigEnum<int>;
+
+// Nested declarations the model has to skip or name: an unnamed struct and
+// enum, a forward-declared struct, and an opaque enum declaration.
+template <typename T>
+struct NestedOdd {
+    struct { int x; } anonymous;
+    struct Fwd;
+    Fwd *pointer;
+    enum { Anonymous = 1 };
+    enum class FwdEnum : int;
+};
+template struct NestedOdd<int>;
+
 // The member kinds the contract names: operators, a conversion operator,
 // static data (mutable and const), and a nested type.
 struct Operators {
@@ -232,6 +263,7 @@ struct Operators {
     static int counter;
     static const int limit = 3;
     struct Entry { int index; };
+    enum class Level : unsigned { Low, High = 5 };
 };
 
 // A derived specialization: the base name is substituted, and the thunk has to

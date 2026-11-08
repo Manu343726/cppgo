@@ -1,6 +1,7 @@
 package cxx
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -215,5 +216,161 @@ func TestSubstitutionArgumentFor(t *testing.T) {
 	_, ok = sub.argumentFor("type-parameter-1-0")
 	assert.False(t, ok, "a member's own parameter depth is not the class's")
 	_, ok = sub.argumentFor("unknown")
+	assert.False(t, ok)
+}
+
+func TestConstructibilityThroughSpecializationFields(t *testing.T) {
+	records := recordByName(t)
+
+	boxHolder, ok := records["mathx::BoxHolder"]
+	require.True(t, ok)
+	boxDouble, ok := records["mathx::Box<double>"]
+	require.True(t, ok)
+	assert.False(t, boxDouble.LayoutKnown, "the fixture defers the instantiated layout")
+	assert.True(t, boxDouble.IsTrivial)
+	assert.True(t, boxDouble.IsDefaultConstructible)
+	assert.True(t, boxHolder.IsDefaultConstructible, "a deferred-layout field that the model classifies as constructible qualifies")
+	assert.True(t, boxHolder.IsCopyConstructible)
+
+	fixedHolder, ok := records["mathx::FixedHolder"]
+	require.True(t, ok)
+	assert.True(t, fixedHolder.IsDefaultConstructible)
+	assert.True(t, fixedHolder.IsCopyConstructible)
+}
+
+func TestNestedEnums(t *testing.T) {
+	tu := recordFixture(t)
+
+	kind, ok := tu.Enum("mathx::Box<int>::Kind")
+	require.True(t, ok, "a nested enum of a specialisation is synthesised from the pattern")
+	assert.True(t, kind.IsScoped)
+	assert.Equal(t, TypeInteger, kind.Underlying.Kind)
+	assert.Equal(t, int64(4), kind.Underlying.SizeBytes)
+	assert.True(t, kind.ConstantsKnown)
+	require.Len(t, kind.Constants, 2)
+	assert.Equal(t, "A", kind.Constants[0].Name)
+	assert.Equal(t, int64(0), kind.Constants[0].Value)
+	assert.Equal(t, "B", kind.Constants[1].Name)
+	assert.Equal(t, int64(3), kind.Constants[1].Value, "the initializer is read from the pattern's tokens")
+
+	level, ok := tu.Enum("mathx::Operators::Level")
+	require.True(t, ok, "a nested enum of a plain record is a record of its own")
+	assert.Equal(t, int64(5), level.Constants[1].Value)
+	assert.True(t, level.Constants[1].IsUnsigned)
+}
+
+func TestStreamOperators(t *testing.T) {
+	library := skipWithoutLibclang(t)
+	header := fixturePath(t, "streams", "streams.hpp")
+	tu, err := library.ParseTranslationUnit(header,
+		[]string{"-std=c++17", "-I" + filepath.Dir(header), "-x", "c++-header"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tu.Close() })
+	symbols := make(map[string]Symbol)
+	for _, symbol := range tu.Symbols() {
+		symbols[symbol.QualifiedName] = symbol
+	}
+
+	write := symbols["streams::operator<<"]
+	require.NotEmpty(t, write.QualifiedName)
+	assert.True(t, write.IsOperator)
+	assert.Equal(t, "<<", write.Operator)
+	require.Len(t, write.Params, 2)
+	assert.True(t, write.Params[0].IsStream(), "std::ostream resolves by its declaration spelling")
+	assert.False(t, write.Params[1].IsStream())
+	assert.True(t, write.Result.IsStream(), "the operator returns the stream by reference")
+
+	read := symbols["streams::operator>>"]
+	assert.True(t, read.Params[0].IsStream())
+	assert.Equal(t, ">>", read.Operator)
+
+	shift := symbols["streams::Shifter::operator<<"]
+	assert.False(t, shift.Params[0].IsStream(), "an int shift is not a stream")
+	assert.Equal(t, "<<", shift.Operator)
+}
+
+func TestNestedEnumInitializers(t *testing.T) {
+	tu := recordFixture(t)
+
+	kind, ok := tu.Enum("mathx::EnumBox<int,7>::Kind")
+	require.True(t, ok)
+	values := make(map[string]int64)
+	for _, constant := range kind.Constants {
+		values[constant.Name] = constant.Value
+	}
+	assert.Equal(t, int64(0), values["A"])
+	assert.Equal(t, int64(3), values["B"])
+	assert.Equal(t, int64(-2), values["C"])
+	assert.Equal(t, int64(16), values["D"])
+	assert.Equal(t, int64(7), values["E"], "a non-type template parameter is substituted")
+	assert.False(t, kind.ConstantsKnown, "1 + 2 is neither a literal nor a parameter, so the model does not vouch")
+}
+
+func TestStreamClassification(t *testing.T) {
+	for _, tc := range []struct {
+		param Param
+		want  bool
+	}{
+		{Param{Spelling: "std::ostream"}, true},
+		{Param{Spelling: "std::ostream &"}, true},
+		{Param{Spelling: "const std::ostream &"}, true},
+		{Param{Spelling: "volatile std::istream &"}, true},
+		{Param{Spelling: "std::wostream &"}, true},
+		{Param{Spelling: "std::wistream &"}, true},
+		{Param{RecordName: "std::basic_ostream<char,char_traits<char>>"}, true},
+		{Param{RecordName: "std::basic_istream<char,char_traits<char>>"}, true},
+		{Param{Spelling: "std::string"}, false},
+		{Param{Spelling: "int"}, false},
+		{Param{Ptr: true, Pointee: &Param{Spelling: "std::ostream"}}, true},
+		{Param{Ptr: true, Pointee: &Param{Spelling: "int"}}, false},
+	} {
+		assert.Equal(t, tc.want, tc.param.IsStream(), tc.param.Spelling+"|"+tc.param.RecordName)
+	}
+}
+
+func TestOffsetOfInvalidLocation(t *testing.T) {
+	library := skipWithoutLibclang(t)
+	e := &recordExtractor{l: library}
+	path, offset, ok := e.offsetOf(CXSourceLocation{})
+	assert.False(t, ok)
+	assert.Empty(t, path)
+	assert.Zero(t, offset)
+}
+
+func TestNestedOddDeclarations(t *testing.T) {
+	tu := recordFixture(t)
+
+	odd, ok := tu.Record("mathx::NestedOdd<int>")
+	require.True(t, ok)
+	require.Len(t, odd.Fields, 2)
+	assert.Equal(t, "anonymous", odd.Fields[0].Name)
+	assert.Equal(t, "pointer", odd.Fields[1].Name)
+
+	// Unnamed nested records/enums have no name to bind and are dropped; the
+	// forward declarations are not records yet.
+	for _, record := range tu.Records() {
+		assert.NotContains(t, record.QualifiedName, "unnamed")
+	}
+	_, ok = tu.Enum("mathx::NestedOdd<int>::FwdEnum")
+	assert.False(t, ok, "an opaque enum declaration has no values to expose")
+}
+
+func TestBigEnumerationValues(t *testing.T) {
+	tu := recordFixture(t)
+
+	big, ok := tu.Enum("mathx::BigEnum<int>::Big")
+	require.True(t, ok)
+	assert.True(t, big.ConstantsKnown)
+	require.Len(t, big.Constants, 1)
+	assert.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), big.Constants[0].UnsignedValue)
+	assert.Equal(t, int64(-1), big.Constants[0].Value, "the same bits read signed")
+}
+
+func TestSourceTextFailure(t *testing.T) {
+	library := skipWithoutLibclang(t)
+	e := &recordExtractor{l: library, sources: make(map[string][]byte)}
+	_, ok := e.sourceText(CXCursor{})
+	assert.False(t, ok)
+	_, ok = e.enumeratorValue(CXCursor{}, substitution{}, 0)
 	assert.False(t, ok)
 }
