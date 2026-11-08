@@ -116,7 +116,7 @@ machine, and say so where they present the numbers.
 
 The table is the evidence; this section is what the rows mean, and where they
 contradict a claim the project makes elsewhere. Every statement here can be
-re-derived from the table above, the code it names, or the commands below.
+re-derived from the table, the code it names, or the commands above.
 
 **The direct carrier is the cheapest way to call C++ from Go.** `BenchmarkCall`
 is the crossing alone on `bench::add`, and `cppgo_direct` is more than twice as
@@ -124,13 +124,13 @@ fast as `cgo` on it. That is the project's reason to exist, measured on
 identical work rather than asserted.
 
 **Most of the direct call is not the trampoline.** `DESIGN.md` prices the bare
-trampoline at 15.9 ns/op at 964 MHz, which is the condition this run was made
-in (see the environment block). `cppgo_direct` is several times that, and the
-generated entry point is why: `cppgoOpen` takes a process mutex and `ProbeStack`
-runs, on every call, before the trampoline. Measured separately on this machine
-the lock and the probe together cost more than the `asm.Call` they guard. This
-challenges *"the Go-side cost is the same trampoline"*: the trampoline is the
-cheap part; the generated wrapper around it is not.
+trampoline at 15.9 ns/op at 964 MHz — the frequency this run was made at (see
+the environment block). The `cppgo_direct` row is more than twice that figure,
+and the generated entry point is why: every call runs `cppgoOpen`, which takes a
+process mutex, and then `ProbeStack`, before it reaches the trampoline. Measured
+separately on this machine, the lock and the probe together cost about as much
+as the `asm.Call` they guard. This challenges *"the Go-side cost is the same
+trampoline"*: the trampoline is the cheap part, and the wrapper around it is not.
 
 **A thunk costs about what cgo costs.** `cppgo_thunk` is `cppgo_direct`'s
 arithmetic with `noexcept` removed, and it lands at cgo's price rather than the
@@ -143,8 +143,10 @@ show the generated binding at three allocations per call against cgo's one. The
 generated code takes the address of every by-value parameter to hand it to the
 trampoline, and then passes the same parameters to `KeepAlive`; `go build
 -gcflags=-m` on the generated package reports `moved to heap: a`, `moved to
-heap: b` and `moved to heap: cppgoResult` for `Midpoint`. Three small
-allocations per call is the largest single cost in that row.
+heap: b` and `moved to heap: cppgoResult` for `Midpoint`. The allocation is
+small and the row's time does not show it, but it is garbage produced per call
+that cgo's crossing does not produce — on a path a caller may be running in a
+loop.
 
 **The failure paths are dominated by a symbol lookup.** `BenchmarkStatusFailure`
 is `BenchmarkStatusOK` with a non-zero status and nothing else changed, and it
@@ -153,8 +155,7 @@ C++ exception. The error is built by `cppgo.LastError`, which asks
 `Library.Symbol` for `cppgo_last_error` on every failure, and `Library.Symbol`
 calls `dlsym` with no cache. The same lookup is why `BenchmarkObjectNewClose` is
 far slower than the cgo arm: the generated `Close` always calls
-`cppgoCloseError`, which always calls `LastError`, even when the destructor
-failed at nothing.
+`cppgoCloseError`, which always calls `LastError`, even when nothing failed.
 
 **The reentrant binding registers a callback per call.** `BenchmarkReentrant`
 shows the generated binding at several allocations and more than a kilobyte per
