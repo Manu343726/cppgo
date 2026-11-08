@@ -255,3 +255,61 @@ func TestMergeIntoExceptionSpec(t *testing.T) {
 	assert.Equal(t, ExceptionNoexcept, into.ExceptionSpec)
 	assert.True(t, into.IsNoExcept)
 }
+
+// TestTemplateParameters reads the parameter lists the generic API is declared
+// from: a class template's type and non-type parameters, and a free function
+// template's own list.
+func TestTemplateParameters(t *testing.T) {
+	library := skipWithoutLibclang(t)
+	dir := fixturePath(t, "tmplparams")
+	tu, err := library.ParseTranslationUnit(filepath.Join(dir, "params.hpp"),
+		[]string{"-std=c++17", "-I" + dir, "-x", "c++-header"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tu.Close() })
+
+	records := make(map[string]Record)
+	for _, record := range tu.Records() {
+		records[record.QualifiedName] = record
+	}
+	fixed := records["params::Fixed"]
+	require.Len(t, fixed.TemplateParameters, 2)
+	assert.Equal(t, TemplateParameter{Name: "T", Kind: TemplateParameterType}, fixed.TemplateParameters[0])
+	assert.Equal(t, "N", fixed.TemplateParameters[1].Name)
+	assert.Equal(t, TemplateParameterNonType, fixed.TemplateParameters[1].Kind)
+	assert.Equal(t, TypeInteger, fixed.TemplateParameters[1].Type.Kind)
+	require.Len(t, fixed.Fields, 1, "the pattern's public field is visible to the generic API")
+
+	wrap := records["params::Wrap"]
+	require.Len(t, wrap.TemplateParameters, 2)
+	assert.Equal(t, TemplateParameterTemplate, wrap.TemplateParameters[0].Kind)
+	assert.Equal(t, TemplateParameterType, wrap.TemplateParameters[1].Kind)
+
+	var twice Symbol
+	for _, sym := range tu.Symbols() {
+		if sym.QualifiedName == "params::twice" {
+			twice = sym
+		}
+	}
+	require.Equal(t, "params::twice", twice.QualifiedName)
+	assert.True(t, twice.IsTemplate)
+	require.Len(t, twice.TemplateParameters, 1)
+	assert.Equal(t, TemplateParameter{Name: "T", Kind: TemplateParameterType}, twice.TemplateParameters[0])
+	assert.Equal(t, "T", twice.Result.Spelling)
+}
+
+// TestTemplateParameterKindStrings covers the diagnostic spelling of every
+// parameter kind, including one libclang does not classify.
+func TestTemplateParameterKindStrings(t *testing.T) {
+	for _, tc := range []struct {
+		kind TemplateParameterKind
+		want string
+	}{
+		{TemplateParameterType, "type"},
+		{TemplateParameterNonType, "non-type"},
+		{TemplateParameterTemplate, "template"},
+		{TemplateParameterUnknown, "unknown"},
+		{TemplateParameterKind(99), "unknown"},
+	} {
+		assert.Equal(t, tc.want, tc.kind.String())
+	}
+}

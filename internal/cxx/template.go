@@ -138,6 +138,76 @@ func specializationName(templateName string, args []TemplateArgument) string {
 	return templateName + "<" + strings.Join(parts, ",") + ">"
 }
 
+// TemplateParameterKind is what one parameter of a template pattern is: a type
+// (`typename T`), a non-type value (`int N`), or a template (`template<class>
+// class C`).
+type TemplateParameterKind uint8
+
+const (
+	// TemplateParameterUnknown is a parameter libclang did not classify.
+	TemplateParameterUnknown TemplateParameterKind = iota
+	// TemplateParameterType is a type parameter: `typename T`.
+	TemplateParameterType
+	// TemplateParameterNonType is a value parameter: `int N`.
+	TemplateParameterNonType
+	// TemplateParameterTemplate is a template parameter: `template<class> class C`.
+	TemplateParameterTemplate
+)
+
+// String implements fmt.Stringer.
+func (k TemplateParameterKind) String() string {
+	switch k {
+	case TemplateParameterType:
+		return "type"
+	case TemplateParameterNonType:
+		return "non-type"
+	case TemplateParameterTemplate:
+		return "template"
+	default:
+		return "unknown"
+	}
+}
+
+// TemplateParameter is one parameter of a template pattern, in declaration
+// order. It is what lets the generator emit a generic Go declaration whose
+// type parameters correspond to the C++ ones; a specialization's arguments are
+// the values substituted for these.
+type TemplateParameter struct {
+	// Name is the parameter as written, e.g. "T" or "N".
+	Name string
+	// Kind is what the parameter is.
+	Kind TemplateParameterKind
+	// Type is the classified type of a non-type parameter (`int` for `int N`).
+	// It is the zero Param for the other kinds.
+	Type Param
+}
+
+// templateParameters reads a template pattern's parameter list, in declaration
+// order.
+func (l *Libclang) templateParameters(cursor CXCursor) []TemplateParameter {
+	var params []TemplateParameter
+	_ = l.visit(cursor, func(child, parent CXCursor) int32 {
+		var kind TemplateParameterKind
+		switch l.f.getCursorKind(child) {
+		case cursorTemplateTypeParameter:
+			kind = TemplateParameterType
+		case cursorNonTypeTemplateParameter:
+			kind = TemplateParameterNonType
+		case cursorTemplateTemplateParameter:
+			kind = TemplateParameterTemplate
+		default:
+			return visitContinue
+		}
+		param := TemplateParameter{Name: l.str(l.f.getCursorSpelling(child)), Kind: kind}
+		if kind == TemplateParameterNonType {
+			param.Type = l.param(l.f.getCursorType(child))
+		}
+		params = append(params, param)
+		return visitContinue
+	})
+	return params
+}
+
 // TemplateArgument is one concrete argument of a template specialization. The
 // generator names the Go type from these: `Box<int>` is `BoxInt`, and an
 // argument it cannot name is reported with the manifest entry that resolves it.

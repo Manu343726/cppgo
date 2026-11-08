@@ -208,7 +208,11 @@ func TestRecordTemplates(t *testing.T) {
 	assert.Equal(t, Struct, box.Kind, "clang_getTemplateCursorKind says how the template was declared")
 	assert.Equal(t, int64(-1), box.SizeBytes, "a template has no layout")
 	assert.Equal(t, int64(-1), box.AlignBytes)
-	assert.Empty(t, box.Fields, "the pattern's fields depend on the parameter")
+	require.Len(t, box.TemplateParameters, 1)
+	assert.Equal(t, TemplateParameter{Name: "T", Kind: TemplateParameterType}, box.TemplateParameters[0])
+	require.Len(t, box.Fields, 1, "the pattern's fields are visible even though its layout is not")
+	assert.Equal(t, "value", box.Fields[0].Name)
+	assert.Equal(t, int64(-1), box.Fields[0].OffsetBytes)
 }
 
 func TestRecordLookups(t *testing.T) {
