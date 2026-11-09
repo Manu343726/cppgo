@@ -5,10 +5,16 @@ weight: 20
 ---
 
 This lesson assembles the whole path in one project: an ordinary C++ library
-built by CMake, the Go package `cppgo` generates from its header, a Go program
-that calls it, and the tests that prove the calls work. The library is
-deliberately small — one declaration of each kind the generator supports — so
-the whole mapping from C++ to Go is visible in one place.
+built by CMake, the Go package `cppgo` generates from its header — the file
+that declares what the library offers — a Go program that calls it, and the
+tests that prove the calls work. The library is deliberately small — one
+declaration of each kind the generator supports — so the whole mapping from C++
+to Go is visible in one place.
+
+A *binding* is the Go code that calls into a library written in another
+language: Go functions that forward each call to the compiled C++. You do not
+write one by hand here either; this lesson is about reading what the generator
+wrote and knowing why every line of it has the shape it has.
 
 ## What you will build
 
@@ -19,8 +25,10 @@ that prints one line per construct, and run the suite twice.
 
 The project is in the repository, at
 [`examples/full`](https://github.com/Manu343726/cppgo/tree/main/examples/full),
-and every command below is a target of its `Makefile`, so you can run the lesson
-while you read it. The library it binds is called `metrics`, and the program in
+and every command below that builds or tests the project is a target of its
+[`Makefile`](https://github.com/Manu343726/cppgo/blob/main/examples/full/Makefile),
+so you can run the lesson while you read it. The library it binds is called
+`metrics`, and the program in
 [`cmd/app`](https://github.com/Manu343726/cppgo/tree/main/examples/full/cmd/app)
 calls every declaration in it.
 
@@ -30,19 +38,26 @@ calls every declaration in it.
 |---|---|---|
 | Go | builds the program and runs the tests | 1.25 or newer |
 | A C++ compiler | CMake picks one and builds the library with it | C++17 |
-| CMake | the library's own build, and the compilation database | 3.16 or newer |
+| CMake | the library's own build, and the record of how it compiles each source | 3.16 or newer |
 | libclang | `cppgo gen` reads the header with it | 20 or newer |
 | `make` | drives the project's flow | any |
 
-libclang is needed while generating only. The program you ship does not link it
-and does not need it installed.
+libclang is the library form of the Clang compiler's front end: it parses C++
+and hands back the declarations it found. It is needed while generating only.
+The program you ship does not link it and does not need it installed.
 
 ## Step 1 — The C++ library
 
-`metrics` is one header and one translation unit. The header is the input of the
-whole lesson:
+`metrics` is one header and one translation unit. A *header* declares what the
+library offers — its types and the signatures of its functions. A *translation
+unit* is one source file after the preprocessor — the pass that expands
+`#include` and macro definitions before the compiler sees the file — has pulled
+in everything it includes, which the compiler then turns into its own object
+file. The header is the input of the whole lesson:
 [`examples/full/include/metrics/metrics.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/full/include/metrics/metrics.hpp).
-These are its declarations:
+These are its declarations — a *declaration* says that a function exists and
+gives its signature, and the *definition*, the body, is in the source file that
+Step 2 compiles:
 
 ```cpp
 namespace metrics {
@@ -111,19 +126,70 @@ T twice(T value) {
 } // namespace metrics
 ```
 
-Nothing in it knows that `cppgo` exists: no annotations, no `extern "C"` block,
-no binding declarations. Each declaration is here to show one thing you will
-call from Go:
+The block is worth reading once for its syntax, because it is not Go's:
+
+- `namespace metrics { … }` groups the names; they are written
+  `metrics::Histogram`, the way Go writes `metrics.Histogram` for another
+  package.
+- `struct Point` and `class Histogram` both declare a record. A `class` starts
+  with its members private and a `struct` with them public, and `public:` and
+  `private:` label the section that follows.
+- `std::string`, `std::vector` and `std::int32_t` are the C++ standard library's
+  string, growable array and 32-bit integer. A `std::string` and a `std::vector`
+  own a heap allocation, unlike a Go `string` or slice, which is why they cannot
+  simply be copied across the boundary.
+- `Histogram(std::string name, std::size_t buckets)` is a *constructor*, the
+  member that builds an object. `Histogram(const Histogram &other)` is the *copy
+  constructor*, which builds a new object from an existing one; `const
+  Histogram &` is a *reference*, a parameter that names the caller's object
+  instead of copying it. `~Histogram()` is the *destructor*, the member that
+  releases what the object owns.
+- `std::size_t buckets() const noexcept` carries two promises: the `const`
+  after the parameter list means the method does not modify the object, and
+  `noexcept` means it does not throw. Neither is visible to Go as a word, and
+  both decide the Go signature.
+- `void observe(double value)` — `void` is the return type of a function that
+  returns nothing.
+- `static std::int32_t version()` — a `static` member belongs to the class
+  rather than to one object, so calling it needs no object.
+- `struct Impl; Impl *impl_;` is the *pimpl* idiom, "pointer to implementation":
+  the header declares that the state exists and the source file defines it, so
+  changing the state does not recompile the callers. The line with no body is a
+  *forward declaration*.
+- `template <typename T>` makes `Accumulator` and `twice` *templates*: code
+  written with a placeholder type that the compiler fills in at each use.
+  `explicit` on a constructor forbids the implicit conversion that would
+  otherwise let a bare `T` become an `Accumulator<T>`, and `: total_(start)` is
+  a *member initialiser list*, which initialises fields before the constructor
+  body runs. A member with its body in the class, like `T total() const`, is
+  defined there; one without a body, like `name()`, is defined in the source
+  file.
+
+The declarations outside the class are *free functions*: functions in the
+namespace that belong to no class, the counterpart of package-level functions
+in Go.
+
+Nothing in it knows that `cppgo` exists: no marker, no declaration that exists
+only to be bound, and no `extern "C"` block — the marker a C++ function needs
+before it can be found by a plain C name. Each declaration is here to show one
+thing you will call from Go:
 
 - `Histogram` is an **opaque class**: its state is private and its size stays on
   the C++ side, so Go holds a pointer to an object C++ constructed.
-- `Point` is a **POD passed by value**, in and out.
+- `Point` is a **POD** — plain old data: a record with no constructors, no
+  virtual functions (the C++ mechanism for overriding a method in a derived
+  class) and a fixed layout, so Go can mirror its bytes. It is **passed by
+  value**, in and out.
 - `name`, `bounds`, `counts`, `describe` and `scaled` move **`std::string` and
   `std::vector`** across the boundary.
-- `ratio` **throws** on a zero denominator.
-- `validate_name` reports failure as a **status code** instead.
-- `apply` takes a **C++ function pointer**, which lets Go hand over a Go
-  function.
+- `ratio` **throws** on a zero denominator. Throwing is how C++ reports a
+  failure: an exception unwinds the call stack to whatever catches it, there is
+  no Go equivalent, and the generated call returns an error instead.
+- `validate_name` reports failure as a **status code** instead: it returns an
+  integer, and a convention you state with `-status` says which values are
+  failures.
+- `apply` takes a **C++ function pointer** — a value that names a function and
+  can be called later — which lets Go hand over a Go function.
 - `Accumulator` and `twice` are **templates**, so they need a second phase
   before the program can call them.
 
@@ -158,17 +224,30 @@ set_target_properties(metrics PROPERTIES VERSION 1.0.0 SOVERSION 1)
 ```
 
 `cppgo` is not part of that file, and no generated file is compiled into
-`libmetrics.so`. Two lines matter for what comes next:
+`libmetrics.so`. The directives are the ordinary ones: `project(... LANGUAGES
+CXX)` names the project and says it is C++, the three `CMAKE_CXX_*` lines select
+C++17 with no compiler extensions, and `add_library(metrics SHARED
+src/metrics.cpp)` builds that one source file into a *shared library*: a
+compiled library kept in its own file that a program loads at run time, `.so` on
+Linux. `target_include_directories` puts `include/` on the include path of
+anything that uses the library, `target_compile_options` adds warning flags, and
+`set_target_properties` gives the library a version and a soname.
+
+Two lines matter for what comes next:
 
 - `CMAKE_EXPORT_COMPILE_COMMANDS ON` makes CMake write
-  `build/compile_commands.json`. `cppgo` reads your header with those exact
-  flags, and compiles the C++ side it generates with them too, so the header and
-  the binding agree on the language standard and the standard library. There is
-  no second flags file to keep in step.
-- `VERSION` and `SOVERSION` give the library a soname, `libmetrics.so.1`. The
-  C++ side `cppgo` builds records that soname, so at run time the loader finds
-  the copy of the library that is already open rather than a path from a build
-  tree.
+  `build/compile_commands.json`, a *compilation database*: for every source
+  file, the exact compiler command that builds it. `cppgo` reads your header
+  with those exact flags, and compiles the C++ side it generates with them too,
+  so the header and the binding agree on the language standard and the standard
+  library. There is no second flags file to keep in step.
+- `VERSION` and `SOVERSION` give the library a soname, `libmetrics.so.1` — the
+  name recorded inside a shared object that anything linking against it records
+  as its dependency, and the name the dynamic loader — the part of the system
+  that opens a shared object when a program starts or asks for one — later looks
+  up. The library `cppgo` generates records that name, so at run time the loader
+  finds the copy of the library that is already open rather than a path from a
+  build tree.
 
 The library is built the way it always was:
 
@@ -183,17 +262,28 @@ You will not type those two commands again; the next step wraps them.
 
 The example's
 [`Makefile`](https://github.com/Manu343726/cppgo/blob/main/examples/full/Makefile)
-runs the five phases in order and names each one after what it produces:
+runs the flow in phases, each named after what it produces:
 
 | Command | What it produces |
 |---|---|
 | `make lib` | `build/libmetrics.so` and `build/compile_commands.json`, by CMake |
 | `make gen` | the generic Go API, one assembly trampoline per direct call, the C++ thunk sources, and `gen/libcppgo_metrics.so` |
-| `make scan` | the template specializations the program uses, added to the C++ side, which is then rebuilt |
+| `make scan` | the template types the program uses, added to the C++ side, which is then rebuilt |
 | `make app` | `build/app`, the Go program |
 | `make test` | the suite, twice |
 | `make run` | builds the program and starts it |
 | `make check` | proves the committed generated sources are current |
+
+A few of those names need defining once. An *assembly trampoline* is a tiny
+function whose only job is to move arguments into the registers the C ABI
+expects and jump to an address; Go passes its arguments its own way, so one
+trampoline is generated per call that reaches the library's own symbol. The *C
+ABI* is the platform's convention for a C call: which registers and which memory
+carry the arguments and the result. A *thunk* is a generated C++ function that
+carries a call the raw symbol cannot — a constructor, a `std::string`, a
+function that may throw — and the shim is the shared object `cppgo` compiles
+from those thunks and links against your library. `extern "C"` gives a thunk a
+plain C name rather than a C++ one, so the loader can find it.
 
 `make` runs `app`, then `test`, then `vet`.
 
@@ -238,15 +328,21 @@ metrics::twice<T>                            tmpl   -                           
 cppgo: built gen/libcppgo_metrics.so with /usr/bin/g++
 ```
 
-The report has one line per declaration. Read it as three columns:
+The report has one line per declaration. Read it as four columns:
 
 - **The declaration**, exactly as the header states it.
-- **The carrier** — which mechanism carries the call — under a name you will
-  meet again in the generated Go. `direct` means the call reaches the symbol the
-  library already exports, through a generated assembly trampoline; `thunk`
-  means a generated C++ wrapper carries the call; `reentrant` means C++ may call
-  back into Go while the call is running; `tmpl` means a template, which needs
-  the second phase in Step 5.
+- **The carrier** — the mechanism that carries this call across the boundary —
+  under a name you will meet again in the generated Go. `direct` means the call
+  reaches the symbol the library already exports, through one of the assembly
+  trampolines from Step 3; `thunk` means the C++ wrapper from Step 3 carries the
+  call; `reentrant` means C++ may call back into Go while the call is running,
+  which the runtime only allows on a thread it already knows is inside a foreign
+  call — `runtime.cgocall` is that entry, the one cgo-generated code uses too;
+  `tmpl` means a template, which needs the second phase in Step 5.
+- **The symbol**, either the thunk's name or the library's *mangled name*. C++
+  encodes the namespace, the class and the parameter types into one linker name,
+  so `metrics::Histogram::buckets()` is `_ZNK7metrics9Histogram7bucketsEv`; that
+  string is what the loader is asked for.
 - **Why that carrier**, in the generator's words.
 
 [Carriers and the construct table]({{< ref "explanation/carriers.md" >}}) is where
@@ -263,7 +359,7 @@ know the two sides were built with the same toolchain.
 
 ## Step 5 — Phase two: the program's template instantiations
 
-Generation wrote four files, in
+The generated package is these files and directories, in
 [`examples/full/gen`](https://github.com/Manu343726/cppgo/tree/main/examples/full/gen):
 
 | File | Contents |
@@ -273,10 +369,11 @@ Generation wrote four files, in
 | [`cppgo_shim/`](https://github.com/Manu343726/cppgo/tree/main/examples/full/gen/cppgo_shim) | the `extern "C"` thunks, compiled into `libcppgo_metrics.so` |
 | [`doc.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/doc.go) | the package comment, which you write |
 
-A template has no Go equivalent until a type argument is chosen. `cppgo gen`
-writes the generic API, which compiles with no concrete argument at all; which
-specializations the program uses is a question only the program can answer. That
-is the second phase:
+A template has no Go equivalent until a type argument is chosen. Choosing it is
+*instantiating* the template, and the code the compiler emits for that choice is
+the *specialization*. `cppgo gen` writes the generic API, which compiles with no
+concrete argument at all; which specializations the program uses is a question
+only the program can answer. That is the second phase:
 
 ```console
 $ make scan
@@ -288,9 +385,13 @@ metrics::Accumulator<std::int32_t>           tmpl   int32                       
 metrics::twice<std::int64_t>                 tmpl   int64                        template class ::metrics::twice<std::int64_t>;
 ```
 
-`cppgo build` loads the program, collects every instantiation it type-checks,
-writes one explicit instantiation and one thunk per member into the shim, and
-recompiles it. The consequence in your own project: the day you write
+`cppgo build` reads the program's Go packages, type-checks them, and records
+every `Accumulator[...]` and `Twice[...]` it finds. For each one it writes an
+*explicit instantiation* into the shim — the C++ line `template class
+::metrics::Accumulator<double>;`, which tells the compiler to emit that
+specialization even though nothing in the shim calls it directly — plus one
+thunk per member, and then recompiles the shim. The consequence in your own
+project: the day you write
 `Accumulator[float32]`, the Go package needs no regeneration — the specialization
 goes into the C++ side, so re-run the scan.
 
@@ -328,8 +429,10 @@ Two shared objects load as a pair: the shim, and the library it was linked
 against. The shim names the library by its soname, so the package looks for it
 beside the shim by default. This example keeps the two in different directories,
 so its program sets `CppgoLibraryPath` before the first `Open`, and
-`CPPGO_LIBRARY_PATH` in the environment overrides it. A deployment that copies
-`libmetrics.so.1` beside the shim needs neither.
+`CPPGO_LIBRARY_PATH` in the environment overrides it. `LD_LIBRARY_PATH`, named in
+the comment above, is the environment variable the dynamic loader adds to its
+search path. A deployment that copies `libmetrics.so.1` beside the shim needs
+neither.
 
 A POD's Go struct is proven against the C++ layout at compile time:
 
@@ -347,6 +450,13 @@ var _ [8]byte = [unsafe.Alignof(Point{})]byte{}
 var _ [0]byte = [unsafe.Offsetof(Point{}.X)]byte{}
 var _ [8]byte = [unsafe.Offsetof(Point{}.Y)]byte{}
 ```
+
+Each `var _ [N]byte` line assigns one array to another: the length on the left is
+the number the C++ side computes, and the length on the right is what Go
+measures with `unsafe.Sizeof`, `unsafe.Alignof` or `unsafe.Offsetof`. Go requires
+the two array types to be identical, so if the C++ layout ever changed, that line
+would stop compiling — a check that costs nothing at run time and cannot be
+forgotten.
 
 And every binding carries the declaration it came from, plus the carrier that was
 chosen, in its doc comment. From the same file:
@@ -393,6 +503,12 @@ func NewHistogram(name string, buckets uint64) (*Histogram, error)
 // C++: metrics::Histogram::~Histogram(), _ZN7metrics9HistogramD1Ev (thunk cppgo_thunk_426ec686bd07, not noexcept: an exception would unwind into Go), verified against libmetrics.so
 func (h *Histogram) Close() error
 ```
+
+`cppgo.Object` is the handle that owns the object on the Go side: a block of Go
+memory whose address C++ uses, released by `Close`.
+[The Go runtime and a native call]({{< ref "explanation/go-runtime.md" >}})
+explains why that block must be pinned in place, and why the C++ object cannot
+live in a Go local variable.
 
 The program creates one and hands its lifetime to `defer`, from
 [`cmd/app/main.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/cmd/app/main.go):
@@ -482,7 +598,13 @@ if err != nil {
 	return err
 }
 fmt.Printf("histogram %q: %d buckets, %v samples\n", name, h.Buckets(), h.Total())
+fmt.Printf("  bounds: %v\n", bounds)
+fmt.Printf("  counts: %v\n", counts)
+fmt.Printf("  mean:   %v\n", mean)
 ```
+
+`name`, `bounds` and `counts` there are the values the three value-returning
+methods returned; their calls are in Step 10.
 
 The rule the Go signatures state is the rule the C++ header states: **a call that
 cannot fail has no error result, and a call that can fail has one.** `Buckets` and
@@ -551,8 +673,8 @@ std::vector<double> scaled(const std::vector<double> &values, double factor);
 ```
 
 Five declarations, and three Go types between them: `string`, `[]float64` and
-`[]uint64`. Four of them are members and free functions that return a value;
-`describe` takes one and is in the next step.
+`[]uint64`. All five return a value; `describe` also takes a string and a
+`Point`, which is why it is shown in the next step.
 
 ```go
 // Name calls metrics::Histogram::name.
@@ -867,6 +989,22 @@ fmt.Printf("Accumulator[int32](10) + 5 = %v\n", sum)
 ```
 
 ```go
+d, err := metrics.NewAccumulator[float64](1.5)
+if err != nil {
+	return err
+}
+defer d.Close()
+if err := d.Add(0.25); err != nil {
+	return err
+}
+sumF, err := d.Total()
+if err != nil {
+	return err
+}
+fmt.Printf("Accumulator[float64](1.5) + 0.25 = %v\n", sumF)
+```
+
+```go
 twice, err := metrics.Twice[int64](21)
 if err != nil {
 	return err
@@ -914,9 +1052,11 @@ exit status if a call that must succeed does not.
 
 ## Step 16 — Test it
 
+`make test` regenerates the binding and rescans the program first; these are
+the two test passes it runs:
+
 ```console
-$ make test
-CGO_ENABLED=0 go test -count=1 -v ./...
+$ CGO_ENABLED=0 go test -count=1 -v ./...
 === RUN   TestHistogramValues
 --- PASS: TestHistogramValues (0.00s)
 === RUN   TestCloneIsIndependent
@@ -937,12 +1077,11 @@ CGO_ENABLED=0 go test -count=1 -v ./...
 ...
 --- PASS: TestRun (0.00s)
 PASS
-ok  	github.com/Manu343726/cppgo/examples/full/cmd/app	0.037s
+ok  	github.com/Manu343726/cppgo/examples/full/cmd/app	0.017s
 ?   	github.com/Manu343726/cppgo/examples/full/gen	[no test files]
-CGO_ENABLED=1 go test -race -count=1 ./...
-ok  	github.com/Manu343726/cppgo/examples/full/cmd/app	1.049s
+$ CGO_ENABLED=1 go test -race -count=1 ./...
+ok  	github.com/Manu343726/cppgo/examples/full/cmd/app	1.043s
 ?   	github.com/Manu343726/cppgo/examples/full/gen	[no test files]
-CGO_ENABLED=0 go vet ./...
 ```
 
 One test per construct, in
@@ -960,9 +1099,10 @@ One test per construct, in
 | `TestGenericInstantiations` | the two `Accumulator` specializations, its default constructor and static member, and `Twice[int64]` |
 
 The suite runs twice, and the two passes measure different things. The first sets
-`CGO_ENABLED=0`: the generated package, the program and these tests build and run
-with cgo switched off. The second adds the race detector, which is built on cgo
-and needs it enabled. One command cannot measure both properties.
+`CGO_ENABLED=0`: *cgo*, Go's built-in way to call C, needs a C compiler at build
+time, and the generated package, the program and these tests build and run with
+it switched off. The second adds the race detector, which is built on cgo and
+needs it enabled. One command cannot measure both properties.
 
 ## What you just did
 
