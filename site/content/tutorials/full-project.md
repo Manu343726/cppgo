@@ -166,12 +166,12 @@ The block is worth reading once for its syntax, because it is not Go's:
   is a standard-library type or a plain number. `private:` means no code outside
   the class may read or write them, so the Go side never sees the members: it
   asks the class for copies through `name()`, `bounds()`, `counts()`, `total()`
-  and `mean()`, which the generator binds as the Go methods `Name`, `Bounds`,
-  `Counts`, `Total` and `Mean`. The three that return a string or a vector copy
-  the whole container out, so their Go signatures carry an error beside the
-  value; `total()` returns a `double` and cannot fail. The trailing underscore in
-  the member names is a convention, not syntax: it marks a member of the class,
-  so a local variable named `name` is visibly a different thing.
+  and `mean()`, which `cppgo gen` binds as Go methods. The three that return a
+  string or a vector copy the whole container out, so their Go signatures carry
+  an error beside the value; `total()` returns a `double` and cannot fail. The
+  trailing underscore in the member names is a convention, not syntax: it marks
+  a member of the class, so a local variable named `name` is visibly a different
+  thing.
 - `template <typename T>` makes `Accumulator` and `twice` *templates*: code
   written with a placeholder type that the compiler fills in at each use.
   `explicit` on a constructor forbids the implicit conversion that would
