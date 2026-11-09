@@ -64,8 +64,10 @@ func main() {
 	}
 	defer lib.Close()
 
-	add, err := lib.Symbol("mylib_add")
-	// ... use the library like any other cppgo.Library
+	// Resolve the symbol you need, then call it through the runtime.
+	if _, err := lib.Symbol("mylib_add"); err != nil {
+		panic(err)
+	}
 }
 ```
 
@@ -121,7 +123,8 @@ The layout, the digest and the permission rules are in
 | `cppgo.CacheDir()` | names the cache directory |
 | `cppgo.CleanCache()` | removes everything `OpenFS` has unpacked. Clearing the cache costs one extraction, never correctness |
 
-When `CPPGO_LIBRARY_PATH` names the object, no `ExtractError` and no
+When `CPPGO_LIBRARY_PATH` resolves — to the object itself, or to a directory that
+holds it — no extraction happens, so no `ExtractError` and no
 `ErrInsecureCache` can happen: the function returns what `cppgo.Open` returns,
 which is `*cppgo.OpenError` when the loader cannot open it.
 

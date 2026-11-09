@@ -93,6 +93,12 @@ $ make run
 ratio(1, 0) failed as expected: cppgo: metrics::ratio: division by zero
 ```
 
+That `division by zero` is the exception's own message. `std::exception` is the
+base type of the standard C++ exception types, and each one carries a message
+its `what()` method returns; the thunk catches `std::exception` at the boundary
+and copies `what()` into the error channel. An exception that does not derive
+from `std::exception` is stored as `unknown C++ exception` instead.
+
 `CallError` has `Unwrap`, returning the native error, so one `errors.As` walks
 from the outer error to either layer:
 

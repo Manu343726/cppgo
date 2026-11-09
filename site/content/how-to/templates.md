@@ -19,7 +19,7 @@ loader, collects the type arguments it passes to that API, and adds the matching
 C++ code before it compiles the shim — the C++ library that cppgo builds for the
 package and the generated Go loads at run time. The reason for the split is
 [in Architecture]({{< ref "explanation/architecture.md" >}}#templates-why-two-phases);
-this lesson runs both commands on a real library.
+this guide runs both commands on a real library.
 
 ## What you will build
 
@@ -105,7 +105,8 @@ and every term in them is defined here or below.
   `Accumulator` implicitly, so a call site has to say `Accumulator(...)`. The Go
   API gets one constructor per C++ constructor.
 - `~Accumulator() {}` is the *destructor*, the function C++ runs when the object
-  is destroyed; it is empty because the class holds nothing to release.
+  is destroyed; the body is empty because there is nothing for it to do — the
+  field's own destructor runs after it.
 - `T total() const { return total_; }` is a method with the return type in front.
   `const` after the parameter list promises it does not modify the object, and
   `total_` is the private field.
@@ -394,7 +395,7 @@ twice[int64](21) = 42
 ```
 
 Each line is one instantiation. `NewAccumulator[int32]` reached the C++
-constructor through the thunk the scan wrote for `Accumulator<std::int32_t>`;
+constructor through the thunk phase two wrote for `Accumulator<std::int32_t>`;
 `NewAccumulator[float64]` used the other one; `Twice[int64]` used the free
 function's. Without phase two the program would still have compiled, and then
 failed at run time: the C++ code behind those three lines did not exist.

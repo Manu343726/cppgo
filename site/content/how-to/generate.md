@@ -10,10 +10,10 @@ compiled, and run one command. This guide is those three steps, what the command
 reports back, and what it refuses.
 
 A C++ *header* is the file that declares a library's types and functions — the
-C++ counterpart of a Go package's exported declarations, except that it is a file
-textually included by whoever uses the library, so its text is all the compiler is
-told. A *binding* is the Go package cppgo generates from it; *generating* means
-running the command that writes that package.
+C++ counterpart of a Go package's exported declarations, except that it is
+included textually: the compiler reads its text in every source file that uses
+the library. A *binding* is the Go package cppgo generates from it; *generating*
+means running the command that writes that package.
 
 Use it when you are binding your own library. If you have not bound anything
 yet, [Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}}) is the
@@ -65,9 +65,10 @@ private:
 } // namespace mathx
 ```
 
-Nothing in it knows that cppgo exists, and nothing cppgo writes is compiled into
-it. Every line is nevertheless something the generator has a rule for, so here is
-the C++ it uses, in the order the file uses it:
+Nothing in that excerpt is written for cppgo: no annotations, no `extern "C"`
+block, no binding declarations, and nothing cppgo writes is compiled into the
+library. Every line is nevertheless something the generator has a rule for, so
+here is the C++ it uses, in the order the file uses it:
 
 - `namespace mathx { … }` wraps every name in `mathx`, the way a Go package
   qualifies a type: outside the block the class is `mathx::Vector`.
@@ -102,7 +103,7 @@ the C++ it uses, in the order the file uses it:
 `cppgo gen` needs the include paths and the language standard your project uses.
 There are two ways to supply them, and cppgo uses whichever it finds first:
 
-- **A compilation database.** CMake, Meson and most large projects produce
+- **A compilation database.** CMake and Meson can produce
   `compile_commands.json`, a file that records the exact compiler command line of
   every source file. Point at it and cppgo takes the entry that covers each
   header:
@@ -292,9 +293,9 @@ v.Scale(2)                 // no error to check: this call cannot fail
 ```
 
 `defer v.Close()` runs the C++ destructor when the function returns, which is the
-counterpart of the constructor `NewVector` ran. Nothing is loaded yet at
-`NewVector`: the first call loads the shim and your library, and a failed load is
-the error that call returns.
+counterpart of the constructor `NewVector` ran. Nothing is loaded before the
+first generated call: that call loads the shim and your library, and a failed
+load is the error it returns.
 
 ## 7. Commit the sources and check them
 
@@ -332,7 +333,7 @@ a scratch directory first. These are the ones you are most likely to meet:
 | `enums are not emitted by this build yet` | the header declares an enum | pass the value as its underlying integer at the C++ boundary |
 | `inherited members and base views are not emitted by this build yet` | a class has base classes | bind the base directly, or expose the derived members through a wrapper |
 | `the call needs N INTEGER and M SSE argument registers` | more arguments than the call can carry | take a pointer to a struct |
-| `no Go value type` | `long double`, `__int128` or `nullptr_t` in a signature | wrap it at the C++ boundary |
+| `no Go value type` | `long double`, `__int128`, or an integer width the type map does not carry, in a signature | widen or narrow it at the C++ boundary, or wrap it |
 | `and a status is a 32-bit integer` | a `-status` entry names a declaration that does not return a 32-bit integer | drop the flag, or bind the declaration without it |
 | `the generated shim does not compile` | the generated C++ failed to compile with your flags | the error carries the compiler's diagnostic |
 

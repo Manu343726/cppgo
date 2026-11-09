@@ -115,8 +115,8 @@ The page on the two phases is
 
 The generated package and the runtime must build and run with cgo disabled. The
 race detector — `-race`, which instruments memory accesses and reports the ones
-that are not synchronized — needs cgo, because the runtime's race support is
-compiled from C, and the toolchain rejects `-race` with cgo off:
+that are not synchronized — needs cgo, because its runtime is written in C and
+C++, and the toolchain rejects `-race` with cgo off:
 
 ```console
 $ CGO_ENABLED=0 go test -count=1 ./...
@@ -133,7 +133,8 @@ own — the tests have to name them, exactly like a deployment.
 
 Your tests need the two C++ files at run time, and `go test` runs each package
 with its own directory as the working directory, so a relative path from the
-repository root is wrong. The example's test handles both facts in `TestMain`:
+repository root is wrong. The example's test — where `metrics` is the generated
+package — handles both facts in `TestMain`:
 
 ```go
 // testPath names one of the two objects relative to the example root. A test
