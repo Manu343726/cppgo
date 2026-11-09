@@ -190,12 +190,12 @@ has no plain-Go call arm to compare against.
 - Go: go version go1.27.0-X:nodwarf5 linux/amd64
 - C++ compiler: g++ (GCC) 16.2.1 20260810
 - cgo: gobase and cppgo run with CGO_ENABLED=0, cgo runs with CGO_ENABLED=1
-- Frequency: governor powersave; cpu0 at 964791 kHz (cpuinfo max 3201000 kHz) when the run started
+- Frequency: governor powersave; cpu0 at 964830 kHz (cpuinfo max 3201000 kHz) when the run started
 - Tuning: none — no pinning, no governor change, no boost change, default GOMAXPROCS
 - Runs: 6 per arm; each cell is the median of those runs, the range is their min–max
 - Command: go test -run '^$' -bench . -benchmem -count=6 -timeout=30m
-- Tree: 71fa902 (dirty)
-- Date: 2026-11-09T00:01:01Z
+- Tree: 5171d1b
+- Date: 2026-11-09T00:13:39Z
 
 <!-- END ENVIRONMENT -->
 
@@ -207,12 +207,12 @@ the crossing floor: `bench::add(int64,int64)` and `bench::add_thunk`, the same a
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 6.58 | 6.51–6.61 | 0 | 0 | 1.00× |
-| `go_indirect` | 6.45 | 6.40–6.62 | 0 | 0 | 0.98× |
-| `cgo` | 115.9 | 110.3–129.2 | 0 | 0 | 17.61× |
-| `cgo_thunk` | 164.1 | 160.8–184.8 | 8 | 1 | 24.93× |
-| `cppgo_direct` | 41.4 | 40.8–44.0 | 0 | 0 | 6.29× |
-| `cppgo_thunk` | 101.2 | 95.7–103.1 | 8 | 1 | 15.38× |
+| `go_direct` | 6.33 | 6.26–6.52 | 0 | 0 | 1.00× |
+| `go_indirect` | 6.29 | 6.26–6.43 | 0 | 0 | 0.99× |
+| `cgo` | 107.8 | 107.0–108.7 | 0 | 0 | 17.02× |
+| `cgo_thunk` | 157.9 | 155.8–163.1 | 8 | 1 | 24.95× |
+| `cppgo_direct` | 40.9 | 39.9–42.2 | 0 | 0 | 6.46× |
+| `cppgo_thunk` | 94.2 | 91.7–99.4 | 8 | 1 | 14.89× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -222,9 +222,9 @@ a 16-byte POD by value in and out: `bench::midpoint(Point,Point)`
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 6.70 | 6.50–6.88 | 0 | 0 | 1.00× |
-| `cgo` | 177.9 | 167.4–191.2 | 16 | 1 | 26.56× |
-| `cppgo` | 199.6 | 192.6–205.7 | 48 | 3 | 29.80× |
+| `go_direct` | 6.45 | 6.35–6.53 | 0 | 0 | 1.00× |
+| `cgo` | 163.6 | 161.1–167.2 | 16 | 1 | 25.36× |
+| `cppgo` | 190.0 | 187.9–196.3 | 48 | 3 | 29.46× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -234,9 +234,9 @@ a 24-byte POD by value with a result above the register class: `bench::blend(Sam
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 7.55 | 7.47–7.64 | 0 | 0 | 1.00× |
-| `cgo` | 201.6 | 194.0–230.5 | 24 | 1 | 26.69× |
-| `cppgo` | 224.5 | 208.8–249.0 | 72 | 3 | 29.72× |
+| `go_direct` | 7.33 | 7.31–7.53 | 0 | 0 | 1.00× |
+| `cgo` | 199.6 | 184.5–222.5 | 24 | 1 | 27.22× |
+| `cppgo` | 211.7 | 197.3–300.9 | 72 | 3 | 28.88× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -246,9 +246,9 @@ a 24-byte POD by value with a result above the register class: `bench::blend(Sam
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 351.1 | 317.1–399.3 | 24 | 2 | 1.00× |
-| `cgo` | 1249 | 1157–1337 | 32 | 3 | 3.56× |
-| `cppgo` | 843.7 | 793.0–1065 | 32 | 3 | 2.40× |
+| `go_direct` | 309.4 | 304.5–328.4 | 24 | 2 | 1.00× |
+| `cgo` | 1190 | 1136–1267 | 32 | 3 | 3.85× |
+| `cppgo` | 795.2 | 782.4–838.7 | 32 | 3 | 2.57× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -258,9 +258,9 @@ a 24-byte POD by value with a result above the register class: `bench::blend(Sam
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 103.9 | 98.2–121.4 | 64 | 1 | 1.00× |
-| `cgo` | 882.9 | 735.9–959.9 | 80 | 3 | 8.50× |
-| `cppgo` | 484.7 | 425.2–635.9 | 80 | 3 | 4.66× |
+| `go_direct` | 104.3 | 88.4–113.0 | 64 | 1 | 1.00× |
+| `cgo` | 786.2 | 722.5–1187 | 80 | 3 | 7.53× |
+| `cppgo` | 430.1 | 413.8–443.0 | 80 | 3 | 4.12× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -270,9 +270,9 @@ a 24-byte POD by value with a result above the register class: `bench::blend(Sam
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 6178 | 5479–11176 | 8192 | 1 | 1.00× |
-| `cgo` | 10500 | 9438–14343 | 8208 | 3 | 1.70× |
-| `cppgo` | 9212 | 8867–10495 | 8208 | 3 | 1.49× |
+| `go_direct` | 5198 | 5049–6362 | 8192 | 1 | 1.00× |
+| `cgo` | 8728 | 8680–9234 | 8208 | 3 | 1.68× |
+| `cppgo` | 9510 | 9014–11134 | 8208 | 3 | 1.83× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -282,9 +282,9 @@ the throwing failure path: `bench::ratio(a, 0)` throws `std::domain_error`
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 76.8 | 74.4–82.0 | 16 | 1 | 1.00× |
-| `cgo` | 7196 | 5687–9386 | 124 | 6 | 93.71× |
-| `cppgo` | 7478 | 7351–9529 | 176 | 9 | 97.38× |
+| `go_direct` | 75.9 | 74.2–107.2 | 16 | 1 | 1.00× |
+| `cgo` | 5522 | 5440–5933 | 124 | 6 | 72.75× |
+| `cppgo` | 7405 | 7345–7448 | 176 | 9 | 97.54× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -294,9 +294,9 @@ the `-status` convention's success path: `bench::parse("bench")` returns 0
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 10.5 | 9.86–12.3 | 0 | 0 | 1.00× |
-| `cgo` | 189.7 | 144.1–275.1 | 0 | 0 | 18.04× |
-| `cppgo` | 72.9 | 71.5–101.2 | 0 | 0 | 6.94× |
+| `go_direct` | 9.51 | 9.39–9.89 | 0 | 0 | 1.00× |
+| `cgo` | 134.7 | 134.2–136.3 | 0 | 0 | 14.16× |
+| `cppgo` | 71.8 | 71.0–72.7 | 0 | 0 | 7.55× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -306,9 +306,9 @@ the `-status` convention's failure path: `bench::parse("!bench")` returns 3
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 149.3 | 146.3–153.4 | 16 | 1 | 1.00× |
-| `cgo` | 1528 | 1175–1635 | 104 | 4 | 10.23× |
-| `cppgo` | 2594 | 2575–2688 | 176 | 9 | 17.37× |
+| `go_direct` | 143.8 | 143.0–146.7 | 16 | 1 | 1.00× |
+| `cgo` | 912.4 | 905.2–933.6 | 104 | 4 | 6.34× |
+| `cppgo` | 2518 | 2486–2590 | 176 | 9 | 17.51× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -318,9 +318,9 @@ the C++ → Go round trip: `bench::fold(fn, 3, 4)` calls the Go function once
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_indirect` | 11.6 | 11.6–16.8 | 0 | 0 | — |
-| `cgo` | 402.0 | 386.6–598.1 | 4 | 1 | — |
-| `cppgo` | 1806 | 1776–2560 | 1200 | 6 | — |
+| `go_indirect` | 11.6 | 11.5–12.2 | 0 | 0 | — |
+| `cgo` | 356.3 | 347.3–416.9 | 4 | 1 | — |
+| `cppgo` | 1776 | 1740–1823 | 1200 | 6 | — |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -330,9 +330,9 @@ the object lifecycle: construct an opaque `bench::Counter`, then destroy it
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 48.3 | 41.6–54.9 | 8 | 1 | 1.00× |
-| `cgo` | 505.6 | 496.6–546.3 | 8 | 1 | 10.47× |
-| `cppgo` | 3066 | 2972–3955 | 240 | 12 | 63.50× |
+| `go_direct` | 32.3 | 32.0–34.0 | 8 | 1 | 1.00× |
+| `cgo` | 466.9 | 465.6–487.0 | 8 | 1 | 14.47× |
+| `cppgo` | 2974 | 2958–3035 | 240 | 12 | 92.16× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 
@@ -342,9 +342,9 @@ one method call on a live object: `bench::Counter::get() const noexcept`
 
 | arm | median ns/op | min–max ns/op | B/op | allocs/op | vs `go_direct` |
 |---|---:|---:|---:|---:|---:|
-| `go_direct` | 6.60 | 6.41–6.80 | 0 | 0 | 1.00× |
-| `cgo` | 155.0 | 148.9–165.7 | 0 | 0 | 23.48× |
-| `cppgo` | 45.1 | 44.0–45.9 | 0 | 0 | 6.83× |
+| `go_direct` | 6.35 | 6.29–6.60 | 0 | 0 | 1.00× |
+| `cgo` | 153.0 | 149.0–182.2 | 0 | 0 | 24.08× |
+| `cppgo` | 43.3 | 42.9–43.9 | 0 | 0 | 6.82× |
 
 6 run(s) per arm; medians, and the spread of the same runs.
 

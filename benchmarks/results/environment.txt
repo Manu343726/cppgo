@@ -3,9 +3,9 @@ Kernel: Linux 6.12.108-1-MANJARO x86_64
 Go: go version go1.27.0-X:nodwarf5 linux/amd64
 C++ compiler: g++ (GCC) 16.2.1 20260810
 cgo: gobase and cppgo run with CGO_ENABLED=0, cgo runs with CGO_ENABLED=1
-Frequency: governor powersave; cpu0 at 964840 kHz (cpuinfo max 3201000 kHz) when the run started
+Frequency: governor powersave; cpu0 at 964830 kHz (cpuinfo max 3201000 kHz) when the run started
 Tuning: none — no pinning, no governor change, no boost change, default GOMAXPROCS
 Runs: 6 per arm; each cell is the median of those runs, the range is their min–max
 Command: go test -run '^$' -bench . -benchmem -count=6 -timeout=30m
-Tree: 499a4ff
-Date: 2026-11-08T23:36:45Z
+Tree: 5171d1b
+Date: 2026-11-09T00:13:39Z
