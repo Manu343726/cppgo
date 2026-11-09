@@ -201,13 +201,14 @@ of them:
 - `std::variant<T, E>` holds exactly one value of the listed types.
 
 Only the first two rows project a failure into that Go `error` today; the rest
-either bind the C++ value as it is or are refused at generation time.
+either bind the C++ value as it is or are left out of the package with a warning
+naming the declaration.
 
 | C++ convention | Go result today | Go result, designed |
 |---|---|---|
 | exceptions (`std::exception`, `std::system_error`, …) | `(T, error)`, `*cppgo.CallError` wrapping `*cppgo.NativeError` text | same, with the system error's code and category when it has them |
 | `-status` on a 32-bit return | `(T, error)` / `error`, non-zero is failure | same |
-| `std::error_code` | **generation error**: `"std::error_code" is a standard-library type outside the emitted table` | `(T, error)` with a code, a category and a message |
+| `std::error_code` | **not bound**: `"std::error_code" is a standard-library type outside the emitted table` | `(T, error)` with a code, a category and a message |
 | `std::expected<T,E>`, `tl::expected` | not classified as an error | `(T, error)`; `E` projected |
 | `std::optional<T>` as a result | `(*T, error)`; nil means absent, and absent is **not** an error | unchanged, or `(T, error)` when a package config names the message for absence |
 | `errno` | not read | `(T, error)` with category `errno` |
@@ -216,9 +217,10 @@ either bind the C++ value as it is or are refused at generation time.
 | `std::variant<T,E>` with a known error alternative | not inferred | `(T, error)`; the config names the alternative, never guessed |
 
 The last column is the design; the "today" column is what this build does. A
-library that returns `std::error_code` is refused at generation time, and the
-message says what to do: cross the failure as a scalar or a wrapper with a
-supported signature, or use `-status` when the convention is an integer.
+declaration that returns `std::error_code` is left out of the package with a
+warning, and the message says what to do: cross the failure as a scalar or a
+wrapper with a supported signature, or use `-status` when the convention is an
+integer.
 
 ## When your C++ cannot be bound safely
 
