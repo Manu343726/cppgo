@@ -177,8 +177,9 @@ this library.
 ## Step 3 — Tell cppgo how your header compiles
 
 `cppgo gen` needs the include paths and the language standard your compiler
-uses. The example states them in a `.clangd` file, a small configuration that
-clang tools read:
+uses. The example states them in
+[`examples/mathx/.clangd`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/.clangd),
+a small configuration that clang tools read:
 
 ```yaml
 # examples/mathx/.clangd
