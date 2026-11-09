@@ -110,7 +110,8 @@ The `*cppgo.ExtractError` a failed unpack returns has a `Name` (the object), a
 `Dir` (the cache directory, empty when none was written) and an `Err` (the file
 system's own failure). `*cppgo.DependencyError` is the one to know about when a
 set is incomplete: it names the object and the missing dependency, and says that
-neither the embedded set nor the loader's search provides it.
+neither the embedded set nor the loader's search provides it
+([Runtime]({{< ref "reference/runtime.md" >}}#errors) has the fields).
 
 The layout, the digest and the permission rules are in
 [Architecture]({{< ref "explanation/architecture.md" >}}#embedded-objects).
