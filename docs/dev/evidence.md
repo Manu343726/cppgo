@@ -74,8 +74,17 @@ C++ enter Go again for a callback.
 | a POD and a MEMORY-class record cross by value | [`TestByValueRecordShape`](../../internal/gen/byvalue_test.go), [`TestByValueRecordShimCompiles`](../../internal/gen/byvalue_test.go) | `internal/gen` | the generated Go and shim have the expected shape for both record classes, and the shim compiles with `g++` |
 | the two-phase template flow works, and a missing instantiation names the line to add | [`TestTwoPhaseGenerics`](../../internal/gen/template_e2e_test.go), [`TestMissing`](../../internal/gen/template_e2e_test.go) | `internal/gen` | the end-to-end fixture generates, scans a Go program, compiles the specialisations and calls them; a type with no C++ counterpart fails with the exact `template struct ::box::Box<std::int64_t>;` line |
 | a non-POD record crosses by value, Go owns the copy, and the target libraries' main types cross that way | [`TestNonPODByValueRecordShape`](../../internal/gen/byvalue_test.go), [`TestNonPODByValueRoundTrip`](../../internal/gen/byvalue_test.go), [`TestTargetsByValueRoundTrip`](../../internal/gen/targets_smoke_test.go) | `internal/gen` | the fixture's copy constructor adds 1000 and `Close` runs its destructor once; with `-tags cppgo_targets` against the installed libraries, `MakeMat(2, 3)` totals 6, `MakeArray(2.5)` sums to 7.5, and `NewIOFormat(3, ...)` reads its fields back |
-| an enum, operator, smart pointer, argument block and the other refusals are generation errors | [`TestGenerationErrors`](../../internal/gen/errors_test.go) | `internal/gen` | each header under [`testdata/errors`](../../internal/gen/testdata/errors) is refused with the message that names the declaration and the fix |
-| the enum refusal names the declaration | [`TestEnumDiagnostic`](../../internal/gen/errors_test.go) | `internal/gen` | the message contains `err::Color: enums are not emitted` |
+| a template pattern the generic API cannot model stops the header | [`TestGenerationErrors`](../../internal/gen/errors_test.go) | `internal/gen` | two class templates with a public field (one of them with a non-type parameter) and a function template whose result is `std::vector<T>` are each refused with the message that names the declaration and the fix |
+| a declaration the build cannot carry is a warning, not an error | [`TestDeclarationsTheBuildCannotCarryAreWarnings`](../../internal/gen/errors_test.go) | `internal/gen` | each header binds and the line on stderr names the declaration; [`TestUnimplementedWarningShape`](../../internal/gen/errors_test.go) pins the shape `<signature> is not bound: <what is wrong>; <fix>` |
+| an enum is a named Go integer type, and its refusal is gone | [`TestEnumModelIsANamedIntegerType`](../../internal/gen/enum_test.go), [`TestEnumRefusalIsGone`](../../internal/gen/enum_test.go), [`TestEnumBindingsRunAgainstTheLibrary`](../../internal/gen/enum_e2e_test.go) | `internal/gen` | the generated type has the underlying width and one constant per enumerator, no `enums are not emitted` text remains, and a real program round-trips an enum |
+| operators and conversion operators take the naming table's Go names | [`TestOperatorGoNames`](../../internal/gen/operator_test.go), [`TestOperatorBindingsRunAgainstTheLibrary`](../../internal/gen/operator_e2e_test.go) | `internal/gen` | `operator+` is `Add`, `operator[]` is `At`, `operator double` is `Float64`, and a real program calls them |
+| base classes, inherited members and base views bind | [`TestInheritedMethodsAndBaseViews`](../../internal/gen/inheritance_test.go), [`TestInheritanceRefusalIsGone`](../../internal/gen/inheritance_test.go), [`TestInheritanceRunsAgainstTheLibrary`](../../internal/gen/inheritance_test.go) | `internal/gen` | the derived Go type carries the base's methods, `As<Base>()` adjusts `this`, and a real object reads the same state through both views |
+| a type nested inside a record is prefixed with the outer Go type | [`TestNestedTypesTakeTheirOuterName`](../../internal/gen/nested_test.go), [`TestNestedTypeRefusalIsGone`](../../internal/gen/nested_test.go), [`TestNestedBindingsRunAgainstTheLibrary`](../../internal/gen/nested_test.go) | `internal/gen` | `Circle::Kind` is `CircleKind`, no nested-type refusal remains, and a real program returns the typed values |
+| a static data member is a package function, with a setter when it is not const | [`TestStaticDataMembersArePackageFunctions`](../../internal/gen/staticfield_test.go), [`TestStaticDataMembersRunAgainstTheLibrary`](../../internal/gen/staticfield_test.go) | `internal/gen` | the getter and setter are generated, a const member has only the getter, and a real program observes the value it wrote |
+| every public field of an opaque record is a getter and, where assignable, a setter | [`TestOpaqueRecordFieldsAreAccessors`](../../internal/gen/fieldaccessor_test.go), [`TestOpaqueFieldRefusalIsGone`](../../internal/gen/fieldaccessor_test.go), [`TestFieldAccessorsRunAgainstTheLibrary`](../../internal/gen/fieldaccessor_test.go) | `internal/gen` | no `is not emitted by this build yet` text remains, and a real program reads back what it wrote, including through a view of an opaque field |
+| a call past the register file crosses through an argument block | [`TestArgumentBlockShape`](../../internal/gen/block_test.go), [`TestArgumentBlockRoundTrip`](../../internal/gen/block_test.go), [`TestBuildArgumentBlockRefusals`](../../internal/gen/block_test.go) | `internal/gen` | the Go block and the shim's block assert the same size and offsets, a real program reads every argument from its own slot, and the two shapes the block cannot carry are named |
+| a `const char *` crosses as a Go `string` in both directions | [`TestCStringShape`](../../internal/gen/cstring_test.go), [`TestCStringRoundTrip`](../../internal/gen/cstring_test.go) | `internal/gen` | the generated signatures are `func Length(text string) int32` and `func NameOf(which int32) string`, a non-const `char *` is the warning, and a real program round-trips both directions |
+| two declarations that map to one Go name are a generation error | [`TestTemplateDuplicateGoName`](../../internal/gen/template_test.go), [`TestDuplicateRecordNames`](../../internal/gen/model_test.go), [`TestOperatorCollisionAsksForRename`](../../internal/gen/operator_test.go) | `internal/gen` | the error names both declarations and the `-rename` that separates them |
 | `-status` drops the integer, returns the callee's code and fails on non-zero | [`TestStatusConventionShape`](../../internal/gen/status_test.go), [`TestStatusEndToEnd`](../../internal/gen/status_test.go) | `internal/gen` | the Go signature is `func Parse(text string) error`, the wrapper tests the integer it got, and a real program observes both outcomes |
 | a compilation database's relative include paths are rebased | [`TestRebaseArgs`](../../internal/cxx/flags_rebase_test.go) | `internal/cxx` | `-Iinclude` and `-I include` become `-I/build/tree/include`; the other flag forms in the table are rebased or left alone |
 | the runtime never imports the generator | [`TestRuntimeHasNoGeneratorDependency`](../../deps_test.go) | repository root | `go list -deps .` contains none of `internal/cxx`, `cmd/cppgo` or `internal/gen` |
@@ -113,7 +122,7 @@ exit status and the message.
 
 | Path | What it holds |
 |---|---|
-| [`internal/gen/testdata/errors/`](../../internal/gen/testdata/errors) | one header per refused construct; the table is `TestGenerationErrors` |
+| [`internal/gen/testdata/errors/`](../../internal/gen/testdata/errors) | one header per refusal and per warning; the header-level ones are `TestGenerationErrors`, the per-declaration ones `TestDeclarationsTheBuildCannotCarryAreWarnings`, and the generic-API omissions `TestOmittedMembersAreReported` |
 | [`internal/gen/testdata/golden/`](../../internal/gen/testdata/golden) | the golden output for the `box`, `mathx`, `overloads`, `std` and `types` fixtures |
 | [`internal/gen/testdata/mathx/`](../../internal/gen/testdata/mathx), [`status/`](../../internal/gen/testdata/status), [`std/`](../../internal/gen/testdata/std), [`types/`](../../internal/gen/testdata/types), [`tmpl/`](../../internal/gen/testdata/tmpl), [`project/`](../../internal/gen/testdata/project), [`box/`](../../internal/gen/testdata/box), [`duplicate/`](../../internal/gen/testdata/duplicate), [`badshim/`](../../internal/gen/testdata/badshim) | the end-to-end fixtures |
 | [`internal/shim/testdata/`](../../internal/shim/testdata) | the user library and the shim, built as two objects by the tests |
@@ -144,7 +153,7 @@ all three headers.
 
 ## A document and the code disagree, as measured
 
-### `char *` binds, but not as the type map says
+### `char *` with a length binds as `[]int8`, not as the type map says
 
 `DESIGN.md`'s type map says a `(char *p, size_t n)` parameter becomes a Go
 `string`. It does not. Measured on 2026-11-09 with a header
@@ -176,9 +185,12 @@ So the older claim that these parameters "do not bind" is no longer true: they
 bind as borrowed bytes — a Go `[]int8` whose memory the C++ side reads during the
 call — and the shim compiles. What remains is the mismatch with
 [`DESIGN.md`](../../DESIGN.md): the contract says `string`, the generator emits
-`[]int8`. The user page that reports the old limitation is
-[Limits](../../site/content/explanation/limits.md) § *`char *` parameters*; it
-predates this measurement and is being corrected separately.
+`[]int8`. An unpaired `const char *` does cross as a `string` in both
+directions, which [`TestCStringShape`](../../internal/gen/cstring_test.go) and
+[`TestCStringRoundTrip`](../../internal/gen/cstring_test.go) pin.
+[Limits](../../site/content/explanation/limits.md) § *`char *` parameters* now
+states both shapes: the unpaired pointer as a `string`, the pair as a borrowed
+`[]int8`.
 
 ## Fixed, kept for the reader who finds the commit
 
@@ -189,7 +201,10 @@ by regenerating; `make examples` now runs `check` before anything regenerates.
 
 ## Status vocabulary
 
-The manual marks rows **designed** and **not shipped**. The authoritative list is
-`rejectUnimplemented` in [`internal/gen/reject.go`](../../internal/gen/reject.go);
-[Decisions](decisions.md) tracks the designed-but-unshipped items with their
-issues.
+The manual marks rows **designed** and **not shipped**. The authoritative split
+between a header-level refusal and a per-declaration warning is
+[`internal/gen/reject.go`](../../internal/gen/reject.go) (`pending`, `declError`,
+`manifestError` and `unbound`) plus the emitters that call them, and the two
+tables that pin it are `TestGenerationErrors` and
+`TestDeclarationsTheBuildCannotCarryAreWarnings`. [Decisions](decisions.md)
+tracks the designed-but-unshipped items with their issues.

@@ -275,10 +275,10 @@ What a slice binds is what the generator carries today, not the whole library.
 `cv::Mat`, `af::array` and Eigen's matrix types are not bound by these modules,
 so no image is loaded or converted, no array is created, reduced or multiplied,
 and no matrix product is computed through them. A class binds only up to what
-can cross: `cv::Mat` and `af::array` come out without their constructors — there
-is no `NewMat` or `NewArray` — because each declares one member the generator
-cannot carry, and an Eigen matrix specialization cannot be instantiated for the
-generator to read at all.
+can cross: a constructor or member whose signature the generator cannot carry is
+left out with a warning naming it, and the rest of the class still binds. An
+Eigen matrix specialization is a class template whose usual `Options=0` has no
+phantom type in the generic API, which is why no matrix type is in that module.
 [Limits](https://manu343726.github.io/cppgo/explanation/limits/) names each
 refusal.
 
@@ -288,20 +288,24 @@ The full list, with the test that measures each one, is
 [Limits](https://manu343726.github.io/cppgo/explanation/limits/). The ones that
 shape day-to-day use:
 
-- **These C++ constructs are refused for now**: an enum (a named set of integer
-  constants), a class that inherits from another, an operator such as `+` or `==`
-  defined for a C++ type, a template declared inside a class, a smart pointer (a
-  C++ type that owns and frees an object automatically), and a variadic function
-  (one taking a variable number of arguments). Each is a generation error naming
-  the declaration and a workaround; the full list is the linked page.
+- **These C++ constructs are not bound**: a member function template, an operator
+  outside the generator's naming table, a smart pointer (a C++ type that owns
+  and frees an object automatically), a variadic function (one taking a variable
+  number of arguments), a C array, and `void *`. Each is named in a warning with
+  a workaround, and the rest of the package is written; a template pattern the
+  two-phase flow cannot model — a public field on a class template, a dependent
+  signature, a parameter pack — stops generation instead. The full list is the
+  linked page.
 - **a Go function passed to C++ as a callback takes at most six integer and eight
   floating-point arguments.**
 - **`long double` and `__int128` have no Go type of the same width; `void *` and
-  `std::nullptr_t` are refused.**
+  `std::nullptr_t` are not bound.**
 - **a macro-only API cannot be bound**: libclang sees the expansion of a macro (a
   name the compiler replaces with text before parsing), not its declaration.
-- **`char *` parameters do not bind in this build.** Use `std::string` or
-  `std::string_view` (a non-owning view of a string) at the C++ boundary.
+- **`const char *` crosses as a Go `string`** in both directions. A non-`const`
+  `char *` parameter does not bind, because the callee would write into an
+  immutable Go string; use `const char *`, `std::string` or `std::string_view` (a
+  non-owning view of a string) at the C++ boundary.
 - **the shim cppgo builds must match your library's compiler family and standard
   library.** The two call each other across a compiled interface — the ABI, the
   layout of arguments and results — and nothing detects a mismatch for you.

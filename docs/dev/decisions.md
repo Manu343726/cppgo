@@ -149,7 +149,7 @@ obvious idea:
 | Item | State | Tracked by |
 |---|---|---|
 | the full error projection: `std::error_code` (a library's own error value), `std::expected` (a value or an error), `errno` (C's per-thread error number), `std::variant` (one of several types), configured out-parameters and custom result types | the projection is implemented and tested in [`internal/errormap`](../../internal/errormap); the generator does not consume it | [#19](https://git.manu343726.com/manu343726/cppgo/issues/19) |
-| generics breadth, operators, inheritance, enums | two-phase templates work for scalar type arguments and dimensions; the rest are refused with a message | the wider generator work, under epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1), an issue that groups the work |
+| generics breadth | two-phase templates work for scalar type arguments and dimensions; a public field on a class template, a function template whose signature names a dependent type, and a parameter pack are not part of the generic API | the wider generator work, under epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1), an issue that groups the work |
 | the OpenCV (computer vision), ArrayFire (GPU arrays) and Eigen (header-only linear algebra) slices | shipped, phase 1: [`examples/opencv`](../../examples/opencv), [`examples/arrayfire`](../../examples/arrayfire) and [`examples/eigen`](../../examples/eigen) each bind the declarations the generator carries and test them against the installed library; `cv::Mat`, `af::array` and Eigen's matrices wait on [#112](https://git.manu343726.com/manu343726/cppgo/issues/112), and by-value records since [#102](https://git.manu343726.com/manu343726/cppgo/issues/102) already let a C++ free function hand Go a `cv::Mat` or an `af::array` | [#42](https://git.manu343726.com/manu343726/cppgo/issues/42), epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1) |
 | embedding a *generated* package | `OpenFS` works; the generated `Open` does not call it yet | [ADR-0003](../adr/0003-embedded-libraries.md) |
 | a user-facing benchmark comparison | shipped: the suite in [`benchmarks/`](../../benchmarks) measures every arm and the manual publishes its medians | the fixes its findings asked for are tracked in [#51](https://git.manu343726.com/manu343726/cppgo/issues/51) |
@@ -161,6 +161,7 @@ obvious idea:
   builds; the type map and the generator disagree. The measurement is in
   [Evidence](evidence.md).
 
-The user page that still reports the older, stronger form of this limitation is
-[Limits](../../site/content/explanation/limits.md) § *`char *` parameters*; it
-predates the measurement and is being corrected separately.
+[Limits](../../site/content/explanation/limits.md) § *`char *` parameters* now
+states both shapes: an unpaired `const char *` crosses as a `string`, and the
+pair as a borrowed `[]int8`. The pair is the defect the type map still describes
+differently.
