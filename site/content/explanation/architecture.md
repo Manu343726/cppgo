@@ -367,7 +367,9 @@ offset of base-class subobjects through `clang_getOffsetOfBase`, which libclang
 plus the *type closure* of every bound signature — the types that signature
 mentions, and the types those mention, transitively. `-bind` and `-exclude` narrow
 the set, and an entry that names nothing is an error. A construct this build does
-not support is refused with a message naming it and the fix, which is what
+not support is reported with a message naming it and the fix — a declaration is
+left out with a warning, while a template pattern the generic API cannot model
+stops the run — which is what
 [Limits]({{< ref "explanation/limits.md" >}}) tabulates.
 
 **Determinism.** The same inputs produce byte-identical Go and C++. Bindings are
