@@ -34,6 +34,19 @@ std::int64_t strings(std::int32_t precision, std::int32_t flags, const std::stri
                      const std::string &b, const std::string &c, const std::string &d,
                      const std::string &e, const std::string &f) noexcept;
 
+/// Wide's constructor needs eight INTEGER words — seven arguments plus its
+/// this — so the factory crosses in the block too, and `new (self)` reads the
+/// receiver out of it.
+class Wide {
+public:
+    Wide(std::int64_t a, std::int64_t b, std::int64_t c, std::int64_t d, std::int64_t e,
+         std::int64_t f, std::int64_t g) noexcept;
+    std::int64_t value() const noexcept;
+
+private:
+    std::int64_t value_;
+};
+
 /// The receiver is an argument word like any other: a method with six arguments
 /// is seven INTEGER words with its this.
 class Accumulator {

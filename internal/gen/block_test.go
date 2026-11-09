@@ -4,10 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
 // TestArgumentBlockShape pins the crossing of a signature past the register
@@ -148,6 +151,19 @@ func TestArgumentBlock(t *testing.T) {
 		t.Fatalf("Strings = %d, want %d", value, wantStrings)
 	}
 
+	// A constructor the register file cannot carry: seven arguments plus its
+	// this is eight INTEGER words, so the factory builds a block too.
+	wide, err := NewWide(1, 2, 3, 4, 5, 6, 7)
+	if err != nil {
+		t.Fatalf("NewWide: %v", err)
+	}
+	if got := wide.Value(); got != 1+2*10+3*100+4*1000+5*10000+6*100000+7*1000000 {
+		t.Fatalf("NewWide(1..7).Value = %d, want %d", got, 1+2*10+3*100+4*1000+5*10000+6*100000+7*1000000)
+	}
+	if err := wide.Close(); err != nil {
+		t.Fatalf("Close(wide): %v", err)
+	}
+
 	// The receiver is a block field: six arguments plus this is seven words.
 	acc, err := NewAccumulatorInt64(100)
 	if err != nil {
@@ -164,3 +180,77 @@ func TestArgumentBlock(t *testing.T) {
 	}
 }
 `
+
+// TestAllocatableNamesTheMissingLayout pins the report the generator makes when
+// a record's layout is unknown: the factory is omitted and the reason is stated,
+// rather than an allocation of -1 bytes.
+func TestAllocatableNamesTheMissingLayout(t *testing.T) {
+	b := &builder{}
+	assert.True(t, b.allocatable(&recordModel{CxxName: "ns::Known", Size: 8, Align: 8}))
+	assert.False(t, b.allocatable(&recordModel{CxxName: "ns::Box<int>"}))
+	require.Len(t, b.warnings, 1)
+	assert.Contains(t, b.warnings[0], "ns::Box<int> has no layout the Go side can allocate")
+}
+
+// TestFieldAccessorSkipsATypeTheManifestDropped is the report half of the
+// selection rule: a public field whose record or enum the manifest did not keep
+// has no accessor, because its Go signature would name a type the package does
+// not emit. Binding one record by name is what produces that shape.
+func TestFieldAccessorSkipsATypeTheManifestDropped(t *testing.T) {
+	cfg := fixtureConfig("fields", "fields.hpp")
+	cfg.Bind = []string{"fields::Settings"}
+	cfg.Warnings = nil
+	rendered, err := RenderResult(cfg)
+	require.NoError(t, err)
+	joined := strings.Join(rendered.Warnings, "\n")
+	assert.Contains(t, joined, "fields::Settings::payload is not bound: its type, fields::Payload, is not part of the generated API")
+	assert.Contains(t, joined, "fields::Settings::origin is not bound: its type, fields::Point, is not part of the generated API")
+}
+
+// TestBlockWordShapes pins the word table: the size the block's layout is
+// computed from and the C++ type the shim declares for it are one decision.
+func TestBlockWordShapes(t *testing.T) {
+	for _, tc := range []struct {
+		slotType string
+		cType    string
+		size     int
+	}{
+		{"int64", "int64_t", 8},
+		{"uint64", "uint64_t", 8},
+		{"uintptr", "uintptr_t", 8},
+		{"unsafe.Pointer", "void *", 8},
+		{"float64", "double", 8},
+		{"float32", "float", 4},
+	} {
+		assert.Equal(t, tc.size, wireWordSize(tc.slotType), tc.slotType)
+		assert.Equal(t, tc.cType, blockFieldType(tc.slotType), tc.slotType)
+	}
+	assert.Zero(t, wireWordSize("int32"), "a word the block cannot carry has no size")
+	// blockFieldType's fallback is only reachable past wireWordSize's check; it
+	// is the pointer's own type so a malformed word cannot name a C++ type.
+	assert.Equal(t, "void *", blockFieldType("int32"))
+}
+
+// TestBuildArgumentBlockRefusals covers the two shapes the block cannot carry.
+func TestBuildArgumentBlockRefusals(t *testing.T) {
+	b := &builder{}
+
+	unrepresentable := &binding{sym: cxx.Symbol{QualifiedName: "ns::f"}, ID: "aaaa"}
+	for i := 0; i < 7; i++ {
+		unrepresentable.Wire = append(unrepresentable.Wire, &wireArg{slotType: "int32", cName: "a" + itoa(i)})
+	}
+	err := b.buildArgumentBlock(unrepresentable)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot carry the word")
+
+	tooManyOuts := &binding{sym: cxx.Symbol{QualifiedName: "ns::g"}, ID: "bbbb"}
+	for i := 0; i < maxIntRegs; i++ {
+		tooManyOuts.Wire = append(tooManyOuts.Wire, &wireArg{isOut: true, slotType: "unsafe.Pointer", cName: "o" + itoa(i)})
+	}
+	for i := 0; i < 7; i++ {
+		tooManyOuts.Wire = append(tooManyOuts.Wire, &wireArg{slotType: "int64", cName: "a" + itoa(i)})
+	}
+	err = b.buildArgumentBlock(tooManyOuts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "past the register file")
+}

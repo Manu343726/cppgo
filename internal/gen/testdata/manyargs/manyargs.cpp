@@ -37,6 +37,12 @@ std::int64_t strings(std::int32_t precision, std::int32_t flags, const std::stri
            static_cast<std::int64_t>(f.size()) * 10000000;
 }
 
+Wide::Wide(std::int64_t a, std::int64_t b, std::int64_t c, std::int64_t d, std::int64_t e,
+           std::int64_t f, std::int64_t g) noexcept
+    : value_(a + b * 10 + c * 100 + d * 1000 + e * 10000 + f * 100000 + g * 1000000) {}
+
+std::int64_t Wide::value() const noexcept { return value_; }
+
 Accumulator::Accumulator() noexcept : value_(0) {}
 
 Accumulator::Accumulator(std::int64_t base) noexcept : value_(base) {}
