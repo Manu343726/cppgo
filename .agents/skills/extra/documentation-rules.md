@@ -173,3 +173,29 @@ Applying it:
   tutorial;
 - a how-to guide opens with the task, when the reader needs it, and the scenario
   it assumes, then gives the steps.
+
+## Rule 7 — Write for the reader who does not know the topic
+
+Every page is written for the reader the project defines: a competent Go
+developer who has never built an FFI and, on an explanation page, has never
+looked at the Go runtime's internals. Every term — C++, FFI or Go-runtime — is
+defined the first time the page uses it, in the sentence that needs it. The page
+builds from what the reader already knows; no sentence requires a term or
+mechanism the page defines later. A step is not skipped because it is obvious to
+someone who has done it before. An analogy is allowed where it removes a leap,
+followed by the precise statement. Each line of a code block the reader cannot
+parse is named and explained: "the trampoline" is not an explanation of the
+trampoline.
+
+Applying it:
+
+- the test is a read: every term used before its definition, every sentence whose
+  antecedent is undefined, every code block with an unexplained identifier or
+  instruction, every step skipped as obvious;
+- define in the sentence, or in a short list above the first use — not in a
+  glossary the reader must find; a link to another page is allowed only where
+  that page owns the concept (rule 1), and the sentence here must still stand
+  alone;
+- extends rule 4 to assembly and to runtime internals: naming a mechanism is not
+  explaining it;
+- the bar is the same on a tutorial, a how-to, a reference page and the README.
