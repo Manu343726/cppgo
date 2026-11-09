@@ -1,17 +1,29 @@
 ---
 title: cppgo
-description: Call C++ from Go with no cgo at build time.
+description: Generate a Go package that calls a C++ library, with no cgo at build time.
 ---
 
-cppgo generates a Go package from a C++ header. You point it at the header and
-at the way your project compiles it; it writes the Go package you call. Your
-library, your build and your sources are not modified, and the Go side needs no
-cgo and no `import "C"`.
+cppgo gives a Go program an ordinary Go package that calls a C++ library. It
+writes the **binding** for you: the Go code that calls a library written in
+another language. You give it the library's **header** — the C++ file a program
+includes to see its classes and functions — and the **compilation
+configuration** for that header, the directories your C++ compiler searches for
+included files and the language standard it compiles with. It writes a Go
+package that calls the library; this page calls it the **generated package**.
 
-The input is the C++ header — here, the class the quick start binds, in
+Your C++ sources, your build and your library are not modified, and the
+generated package needs no **cgo at build time** and no `import "C"`. cgo is
+Go's built-in way to call C: it needs a C compiler at build time and a special
+`import "C"` block, which lets Go compile C code written beside it. cppgo loads
+the compiled library at run time through a small Go library — the **runtime** —
+that does not depend on cgo.
+
+The input is the C++ header — here, the class the example binds, in
 [`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
 
 ```cpp
+#include <cstddef>
+
 namespace mathx {
 
 class Vector {
@@ -46,11 +58,19 @@ private:
 } // namespace mathx
 ```
 
-You generate from it:
+Build the generator and run the example's generation step:
 
 ```console
-$ cppgo gen -header include/mathx/vector.hpp -package mathx \
-            -library build/libmathx.so -out .
+$ make build
+$ make -C examples/mathx gen
+```
+
+The example builds its own copy of the generator; from inside `examples/mathx`,
+the generation command is:
+
+```console
+$ build/cppgo gen -header include/mathx/vector.hpp -package mathx \
+                  -library build/libmathx.so -out .
 ```
 
 The result is an ordinary Go package. These are the declarations that class
@@ -68,13 +88,19 @@ And you call it:
 
 ```go
 v, err := mathx.NewVector(3, 4)
-if err != nil { /* ... */ }
+if err != nil {
+	log.Fatal(err)
+}
 defer v.Close()
 
-norm, err := v.Norm()   // norm() can throw, so the Go call returns an error
-v.Scale(2)              // scale() is noexcept, so there is no error to check
-```
+norm, err := v.Norm()   // norm() can fail, so the Go call returns an error
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(norm)       // 5
 
+v.Scale(2)              // scale() cannot fail, so there is no error to check
+```
 
 ## Start here
 
@@ -91,7 +117,7 @@ is built this way.
 
 ## Maturity
 
-The generator, the runtime and the two examples are implemented and tested.
-Three things are designed and not shipped yet, and every page marks them where
-they appear: the full error projection, the wider operators/inheritance work, and
-the OpenCV, ArrayFire and Eigen target slices.
+The generator, the runtime and the examples are implemented and tested. Three
+things are designed and not shipped yet, and every page marks them where they
+appear: the full set of C++ failure conventions, the remaining C++ construct
+support, and the OpenCV, ArrayFire and Eigen target slices.
