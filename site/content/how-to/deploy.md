@@ -9,8 +9,9 @@ a Go binary and two C++ files, and you need them on another machine, in a
 container, or in a package you hand to somebody else.
 
 A program that uses a generated package loads **two** C++ files at run time: the
-one cppgo built for you, and the C++ library it was linked against. The task is
-to get those two files to the machine and tell the program where they are.
+one cppgo built for you — the *shim* — and the C++ library it was linked
+against. The task is to get those two files to the machine and tell the program
+where they are.
 
 Both are *shared objects* (`.so` on Linux): files the operating system loads into
 the process at run time. They are not linked into the Go binary.

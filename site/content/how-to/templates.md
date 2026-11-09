@@ -361,10 +361,10 @@ pipeline.
 | Inheritance is refused | a template that derives from a base is out of this build |
 | A template with a dependent, unclassified field is refused | "not a type this build classifies" |
 
-Those are the generics, operators and inheritance items of the wider generator
-work, not a configuration you have missed. The
-[limits page]({{< ref "explanation/limits.md" >}}) lists each one, and the Eigen
-target slice, which the two-phase flow exists for, is designed and not shipped.
+Each of those is a construct this build does not bind, not a configuration you
+have missed. The [limits page]({{< ref "explanation/limits.md" >}}) lists each
+one, and the Eigen binding, which the two-phase flow exists for, is designed and
+not available yet.
 
 ## What you just did
 
