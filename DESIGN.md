@@ -826,7 +826,7 @@ not 64-bit is a generation error, not a silent reinterpretation.
 | `(T *p, size_t n)` | `[]T` | borrowed; `const` decides whether the callee may write |
 | `(char *p, size_t n)` | `string` | borrowed for the call; not NUL-terminated |
 | mirrorable record, by value | `T` | the Go struct *is* the C layout |
-| non-POD record, by value | `*T` | a parameter's word is the object's address and the shim passes it, so C++ copies it into the call; a result is placement-new'ed into Go's pinned storage, which `Close` destroys once; the call returns `(T, error)` whatever the declaration promises |
+| non-POD record, by value | `*T` | a parameter's word is the object's address and the shim passes it, so C++ copies it into the call; a result is placement-new'ed into Go's pinned storage, where the destructor the record **declares** runs once, at `Close` — a record that declares none releases the storage and runs nothing (`TestNonPODByValueRecordShape` asserts both sentences); the call returns `(T, error)` whatever the declaration promises |
 | `T[N]` (record field) | `[N]T` | fixed-size array |
 | `std::string` | `string` | copied in and out |
 | `std::string_view` | `string` | borrowed for the call; **designed, not measured** |
