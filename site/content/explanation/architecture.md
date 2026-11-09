@@ -4,6 +4,13 @@ description: "How cppgo works: the artefacts it produces, and one call from Go t
 weight: 20
 ---
 
+**Before this page, read
+[The Go runtime and a native call]({{< ref "explanation/go-runtime.md" >}}).**
+The design below — a `NOSPLIT` trampoline, a generated C++ shim, three carriers
+— is what it is because a goroutine's stack moves, a foreign call is invisible to
+the scheduler and the collector, and a callback is the one way back into Go.
+Without that model the choices on this page read as arbitrary.
+
 This is the how-it-works page: it explains the mechanism behind the API. What
 you need in order to *use* cppgo is on the other pages — start with
 [Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}}), use the
