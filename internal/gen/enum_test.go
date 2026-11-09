@@ -130,10 +130,12 @@ func TestEnumBindingWithoutConstants(t *testing.T) {
 		ConstantsKnown: false,
 		Underlying:     cxx.Param{Kind: cxx.TypeInteger, Spelling: "int", SizeBytes: 4},
 	}}
-	err := b.buildEnums()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mathx::Box<int>::Kind")
-	assert.Contains(t, err.Error(), "literal initialisers")
+	// An enum whose values cannot be read is omitted and reported; the record
+	// that names it stays usable.
+	b.buildEnums()
+	require.NotEmpty(t, b.warnings)
+	assert.Contains(t, b.warnings[0], "mathx::Box<int>::Kind")
+	assert.Contains(t, b.warnings[0], "literal initialisers")
 }
 
 // TestEnumUnderlyingTypeWithoutAGoWidth refuses an enum whose underlying type

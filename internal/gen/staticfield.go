@@ -13,7 +13,7 @@ import (
 //
 // The manifest narrows this like it narrows a function: an entry that names the
 // member or the record selects it.
-func (b *builder) buildStaticFields() error {
+func (b *builder) buildStaticFields() {
 	for _, name := range b.order {
 		owner := b.records[name]
 		raw := b.rawRecord(owner.CxxName)
@@ -27,7 +27,9 @@ func (b *builder) buildStaticFields() error {
 			}
 			getter, err := b.newStaticFieldBinding(owner, field, false)
 			if err != nil {
-				return fmt.Errorf("cppgo: the static data member %s%s: %w", owner.CxxName, "::"+field.Name, err)
+				b.warnings = append(b.warnings, fmt.Sprintf(
+					"%s::%s is not bound: %v", owner.CxxName, field.Name, err))
+				continue
 			}
 			owner.Statics = append(owner.Statics, getter)
 			b.bindings = append(b.bindings, getter)
@@ -36,13 +38,14 @@ func (b *builder) buildStaticFields() error {
 			}
 			setter, err := b.newStaticFieldBinding(owner, field, true)
 			if err != nil {
-				return fmt.Errorf("cppgo: the static data member %s%s: %w", owner.CxxName, "::"+field.Name, err)
+				b.warnings = append(b.warnings, fmt.Sprintf(
+					"%s::%s has no setter: %v", owner.CxxName, field.Name, err))
+				continue
 			}
 			owner.Statics = append(owner.Statics, setter)
 			b.bindings = append(b.bindings, setter)
 		}
 	}
-	return nil
 }
 
 // staticFieldSelected reports whether the manifest asks for a static member.
@@ -70,6 +73,9 @@ func (b *builder) staticFieldSelected(owner *recordModel, field cxx.StaticField)
 // newStaticFieldBinding builds one half of a static data member: the read when
 // write is false, the assignment when it is true.
 func (b *builder) newStaticFieldBinding(owner *recordModel, field cxx.StaticField, write bool) (*binding, error) {
+	if err := noBorrowedRecordPointer(field.Type); err != nil {
+		return nil, err
+	}
 	sym := cxx.Symbol{
 		QualifiedName: owner.CxxName + "::" + field.Name,
 		Parent:        owner.CxxName,
@@ -97,26 +103,7 @@ func (b *builder) newStaticFieldBinding(owner *recordModel, field cxx.StaticFiel
 	built.staticWrite = write
 	// A static member is data: there is no symbol to call, so the thunk is the
 	// only carrier that can read or write it.
-	built.Carrier = thunk
-	built.Reason = "a static data member: the thunk reads or writes its storage"
-	built.Status = built.hasStd
-	built.ErrorResult = built.Status
-	if built.Status && built.Result != nil && built.Out == nil && !built.StdResult {
-		built.Out = built.Result
-		built.OutLocal = outLocalType(built.Result)
-		built.Wire = append(built.Wire, &wireArg{
-			label:    "out",
-			slotType: "unsafe.Pointer",
-			class:    classInt,
-			size:     8,
-			expr:     "unsafe.Pointer(&cppgoResult)",
-			keep:     "&cppgoResult",
-			cType:    outParamType(built.Result),
-			cName:    "cppgo_result",
-		})
-	}
-	built.Thunk = "cppgo_thunk_" + built.ID
-	built.Symbol = built.Thunk
+	b.forceThunk(built, "a static data member: the thunk reads or writes its storage")
 	name := exportName(field.Name)
 	if write {
 		name = "Set" + name

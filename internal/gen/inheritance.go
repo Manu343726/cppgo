@@ -34,24 +34,29 @@ type baseModel struct {
 func (b *builder) buildInheritance() error {
 	for _, name := range b.order {
 		record := b.records[name]
-		bases, err := b.basesOf(record)
-		if err != nil {
-			return recordError(b.rawRecord(record.CxxName), err)
-		}
-		record.Bases = bases
+		record.Bases = b.basesOf(record)
 	}
 	// Inherited methods, innermost base first so an override in a nearer base
 	// wins over the one further away.
 	for _, name := range b.order {
 		record := b.records[name]
+		if b.rawRecord(record.CxxName).Synthesized {
+			// A specialization synthesized from a pattern inherits the
+			// pattern's base list, and a base member's signature read there is
+			// the pattern's. Copying it can instantiate a member the C++
+			// type system rejects for this instantiation (Eigen's vector-only
+			// accessors on a 3x3 matrix), which the shim's compile finds and Go
+			// cannot undo. The base views are casts and stay.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s inherits %d base class(es) and its inherited members are not copied: a specialization synthesized from a pattern cannot prove that a base member is valid for this instantiation; bind the members through As<Base>()",
+				record.CxxName, len(record.Bases)))
+			continue
+		}
 		taken := map[string]bool{}
 		for _, own := range record.Methods {
 			taken[methodKey(own.sym)] = true
 		}
 		for _, base := range record.Bases {
-			if !b.recordAccessible(base) {
-				continue
-			}
 			for _, inherited := range b.inheritedMethods(base.Record) {
 				key := methodKey(inherited.sym)
 				if taken[key] {
@@ -68,12 +73,10 @@ func (b *builder) buildInheritance() error {
 	for _, name := range b.order {
 		record := b.records[name]
 		for _, base := range record.Bases {
-			if !b.recordAccessible(base) {
-				continue
-			}
 			up, err := b.newBaseView(record, base.Record, false)
 			if err != nil {
-				return fmt.Errorf("cppgo: %s: %w", record.CxxName, err)
+				b.warnings = append(b.warnings, fmt.Sprintf("%s: As%s is not generated: %v", record.CxxName, base.Record.GoName, err))
+				continue
 			}
 			record.Methods = append(record.Methods, up)
 			b.bindings = append(b.bindings, up)
@@ -92,7 +95,8 @@ func (b *builder) buildInheritance() error {
 			}
 			down, err := b.newBaseView(base, child, true)
 			if err != nil {
-				return fmt.Errorf("cppgo: %s: %w", base.CxxName, err)
+				b.warnings = append(b.warnings, fmt.Sprintf("%s: As%s is not generated: %v", base.CxxName, child.GoName, err))
+				continue
 			}
 			base.Methods = append(base.Methods, down)
 			b.bindings = append(b.bindings, down)
@@ -102,7 +106,7 @@ func (b *builder) buildInheritance() error {
 }
 
 // basesOf resolves a record's public bases, transitively, into models.
-func (b *builder) basesOf(record *recordModel) ([]*baseModel, error) {
+func (b *builder) basesOf(record *recordModel) []*baseModel {
 	var out []*baseModel
 	seen := map[string]bool{}
 	var walk func(raw cxx.Record, depth int)
@@ -129,24 +133,17 @@ func (b *builder) basesOf(record *recordModel) ([]*baseModel, error) {
 		}
 	}
 	walk(b.rawRecord(record.CxxName), 0)
-	return out, nil
+	return out
 }
 
 // maxHierarchyDepthForBases bounds the walk through a base chain.
 const maxHierarchyDepthForBases = 16
-
-// recordAccessible reports whether a base's members are reachable: the base is
-// part of the generated API, so its model exists.
-func (b *builder) recordAccessible(base *baseModel) bool { return base.Record != nil }
 
 // inheritedMethods is a record's methods together with those of its own bases,
 // so a two-level hierarchy reaches the grandparent's members.
 func (b *builder) inheritedMethods(record *recordModel) []*binding {
 	out := append([]*binding(nil), record.Methods...)
 	for _, base := range record.Bases {
-		if base.Record == nil {
-			continue
-		}
 		for _, method := range b.inheritedMethods(base.Record) {
 			out = append(out, method)
 		}

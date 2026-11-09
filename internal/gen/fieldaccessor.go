@@ -19,7 +19,7 @@ import (
 // a view of the field inside the object: the thunk returns the member's
 // address, and the Go value shares the object exactly like a borrowed result
 // does.
-func (b *builder) buildFieldAccessors() error {
+func (b *builder) buildFieldAccessors() {
 	for _, name := range b.order {
 		owner := b.records[name]
 		if owner.Mirrored {
@@ -31,26 +31,84 @@ func (b *builder) buildFieldAccessors() error {
 			}
 			getter, err := b.newFieldBinding(owner, field, false)
 			if err != nil {
-				return recordError(b.rawRecord(owner.CxxName), fmt.Errorf("the public field %s: %w", field.Name, err))
+				// One member of a record the caller asked for as a whole: the
+				// record stays usable and the omission is reported, because a
+				// pointer nobody owns has no Go value to be.
+				b.warnings = append(b.warnings, fmt.Sprintf(
+					"%s::%s is not bound: %v", owner.CxxName, field.Name, err))
+				continue
 			}
 			owner.Methods = append(owner.Methods, getter)
 			b.bindings = append(b.bindings, getter)
 			if field.Type.IsConst {
 				continue
 			}
+			if !b.fieldAssignable(field) {
+				b.warnings = append(b.warnings, fmt.Sprintf(
+					"%s::%s has no setter: its type's copy assignment is not public",
+					owner.CxxName, field.Name))
+				continue
+			}
 			setter, err := b.newFieldBinding(owner, field, true)
 			if err != nil {
-				return recordError(b.rawRecord(owner.CxxName), fmt.Errorf("the public field %s: %w", field.Name, err))
+				b.warnings = append(b.warnings, fmt.Sprintf(
+					"%s::%s has no setter: %v", owner.CxxName, field.Name, err))
+				continue
 			}
 			owner.Methods = append(owner.Methods, setter)
 			b.bindings = append(b.bindings, setter)
 		}
 	}
-	return nil
+}
+
+// fieldAssignable reports whether a setter can copy into the member: a record's
+// copy assignment may be private or protected, which a field setter cannot call.
+// A scalar or a pointer is always assignable.
+func (b *builder) fieldAssignable(field cxx.Field) bool {
+	if field.Type.Kind != cxx.TypeRecord {
+		return true
+	}
+	return b.copyAssignmentPublic(field.Type.RecordName)
+}
+
+// copyAssignmentPublic reports whether a record's copy assignment is callable by
+// someone outside it: an implicit one is public, and a declared one has an
+// access specifier the model carries on its symbol. A record can carry both a
+// public implicit one (libclang reports it) and a protected declared one, and
+// the declared one is what a field setter would call, so any non-public
+// declaration makes the setter impossible.
+func (b *builder) copyAssignmentPublic(record string) bool {
+	public := true
+	for _, sym := range b.symbols {
+		if sym.QualifiedName != record+"::operator=" || !sym.IsOperator || sym.Operator != "=" {
+			continue
+		}
+		if sym.Access != cxx.AccessPublic {
+			return false
+		}
+		public = true
+	}
+	return public
+}
+
+// noBorrowedRecordPointer refuses a field that is a raw pointer to a record: the
+// address belongs to C++ and nothing on the Go side owns it, so the value cannot
+// be a Go pointer to a record — a view needs a receiver to share the object with,
+// and a field has none.
+func noBorrowedRecordPointer(typ cxx.Param) error {
+	if typ.Kind != cxx.TypePointer || typ.Pointee == nil || typ.Pointee.Kind != cxx.TypeRecord {
+		return nil
+	}
+	return pending(
+		fmt.Sprintf("%q is a pointer to a record, and nothing on the Go side owns it", typ.Spelling),
+		"expose the pointed-to object through a method, or take the address only inside C++")
 }
 
 // newFieldBinding builds one half of a public field accessor.
 func (b *builder) newFieldBinding(owner *recordModel, field cxx.Field, write bool) (*binding, error) {
+	if err := noBorrowedRecordPointer(field.Type); err != nil {
+		return nil, err
+	}
 	// The member's type as a parameter: a record the Go side cannot hold by
 	// value is reached through its address, which is also the view the getter
 	// hands back.
@@ -99,28 +157,7 @@ func (b *builder) newFieldBinding(owner *recordModel, field cxx.Field, write boo
 	built.fieldByValue = byValue
 	// A field accessor reads or writes the member's storage; it is never a
 	// symbol the library exports.
-	built.Carrier = thunk
-	built.Reason = "a field accessor: the thunk reads or writes the member"
-	built.Status = built.hasStd || byValue
-	built.ErrorResult = built.Status
-	if built.Status && built.Result != nil && built.Out == nil && !built.StdResult && built.ViewResult {
-		// The view address travels through an out-pointer, so a failing thunk
-		// still delivers nothing.
-		built.Out = built.Result
-		built.OutLocal = outLocalType(built.Result)
-		built.Wire = append(built.Wire, &wireArg{
-			label:    "out",
-			slotType: "unsafe.Pointer",
-			class:    classInt,
-			size:     8,
-			expr:     "unsafe.Pointer(&cppgoResult)",
-			keep:     "&cppgoResult",
-			cType:    outParamType(built.Result),
-			cName:    "cppgo_result",
-		})
-	}
-	built.Thunk = "cppgo_thunk_" + built.ID
-	built.Symbol = built.Thunk
+	b.forceThunk(built, "a field accessor: the thunk reads or writes the member")
 	name := exportName(field.Name)
 	if write {
 		name = "Set" + name

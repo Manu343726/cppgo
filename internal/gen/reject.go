@@ -2,7 +2,6 @@ package gen
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Manu343726/cppgo/internal/cxx"
 )
@@ -40,22 +39,6 @@ func symbolError(sym cxx.Symbol, err error) error {
 	return declError(sym.DeclFile, sym.DeclLine, displaySignature(sym), err)
 }
 
-// nestedRecords reports which record definitions are types nested inside
-// another record: their qualified name's parent is itself a record.
-func nestedRecords(records []cxx.Record) map[string]bool {
-	names := make(map[string]bool, len(records))
-	for _, rec := range records {
-		names[rec.QualifiedName] = true
-	}
-	nested := map[string]bool{}
-	for _, rec := range records {
-		if i := strings.LastIndex(rec.QualifiedName, "::"); i > 0 && names[rec.QualifiedName[:i]] {
-			nested[rec.QualifiedName] = true
-		}
-	}
-	return nested
-}
-
 // rejectUnimplemented is the single list of constructs this build does not
 // emit yet. It runs before anything is classified, so a construct that would
 // otherwise be omitted silently, or emitted as the wrong type because
@@ -71,10 +54,6 @@ func (b *builder) rejectUnimplemented() error {
 			// A class template is the generic API's input, not a record: the
 			// two-phase model in template.go decides what it can emit, and it
 			// names the construct it cannot.
-		case len(rec.MemberTemplates) > 0:
-			return recordError(rec, pending(
-				fmt.Sprintf("the member function template %s is not emitted by this build yet", rec.MemberTemplates[0].QualifiedName),
-				"expose the concrete instantiation as a non-template member"))
 		}
 	}
 
@@ -86,7 +65,7 @@ func (b *builder) rejectUnimplemented() error {
 			// member function template of a concrete record is named by
 			// Record.MemberTemplates above.
 			continue
-		case sym.IsVariadic:
+		case sym.IsVariadic && b.symbolSelected(sym):
 			return symbolError(sym, pending(
 				"a variadic function has no fixed argument list to lay out",
 				"replace the ellipsis with a fixed parameter list or a span"))

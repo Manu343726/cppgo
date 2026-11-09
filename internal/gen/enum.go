@@ -101,7 +101,7 @@ func (b *builder) nestPrefix(qualified string, records map[string]string) string
 }
 
 // buildEnums turns every enum definition into an enumModel.
-func (b *builder) buildEnums() error {
+func (b *builder) buildEnums() {
 	seen := map[string]bool{}
 	for _, enum := range b.rawEnums {
 		if enum.QualifiedName == "" || seen[enum.QualifiedName] {
@@ -109,19 +109,24 @@ func (b *builder) buildEnums() error {
 		}
 		seen[enum.QualifiedName] = true
 		if !enum.ConstantsKnown {
-			return declError(enum.DeclFile, enum.DeclLine, enum.QualifiedName, pending(
-				"the enumerator values of a template specialization's enum cannot be read from the pattern",
-				"give the enumerators literal initialisers, or expose the values through functions"))
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is not bound: the enumerator values of a template specialization's enum cannot be read from the pattern; give them literal initialisers",
+				enum.QualifiedName))
+			continue
 		}
 		model, err := b.enumModelFor(enum)
 		if err != nil {
-			return declError(enum.DeclFile, enum.DeclLine, enum.QualifiedName, err)
+			// One enum of a record the caller asked for as a whole: the record
+			// stays usable, the enum is reported, and a signature that names it
+			// fails on its own.
+			b.warnings = append(b.warnings, fmt.Sprintf("%s is not bound: %v", enum.QualifiedName, err))
+			seen[enum.QualifiedName] = false
+			continue
 		}
 		b.enums[enum.QualifiedName] = model
 		b.enumOrder = append(b.enumOrder, enum.QualifiedName)
 	}
 	sort.Strings(b.enumOrder)
-	return nil
 }
 
 // enumModelFor classifies one enum's underlying type and names its constants.
@@ -155,12 +160,6 @@ func (b *builder) enumModelFor(enum cxx.Enum) (*enumModel, error) {
 		})
 	}
 	return model, nil
-}
-
-// enumByName finds an enum model by qualified name.
-func (b *builder) enumByName(name string) (*enumModel, bool) {
-	enum, ok := b.enums[name]
-	return enum, ok
 }
 
 // selectEnums narrows the enums the manifest binds. With no -bind every enum

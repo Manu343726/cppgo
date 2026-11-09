@@ -412,9 +412,7 @@ func build(cfg Config) (*packageModel, error) {
 	// Type names come first: an enum nested in a record is named after it, and
 	// a field's Go type needs the enum model the name produces.
 	b.assignTypeNames()
-	if err := b.buildEnums(); err != nil {
-		return nil, err
-	}
+	b.buildEnums()
 	b.mapper = &mapper{records: b.records, enums: b.enums}
 	if err := b.buildRecords(); err != nil {
 		return nil, err
@@ -428,12 +426,8 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.buildBindings(); err != nil {
 		return nil, err
 	}
-	if err := b.buildStaticFields(); err != nil {
-		return nil, err
-	}
-	if err := b.expandDefaults(); err != nil {
-		return nil, err
-	}
+	b.buildStaticFields()
+	b.expandDefaults()
 	for i, entry := range b.cfg.Status {
 		if !b.statusMatched[i] {
 			return nil, fmt.Errorf("cppgo: -status %s: it names nothing this header declares", entry)
@@ -442,9 +436,7 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.applySelection(); err != nil {
 		return nil, err
 	}
-	if err := b.buildFieldAccessors(); err != nil {
-		return nil, err
-	}
+	b.buildFieldAccessors()
 	if err := b.buildInheritance(); err != nil {
 		return nil, err
 	}
@@ -536,6 +528,18 @@ func (b *builder) buildRecords() error {
 		b.records[rec.QualifiedName] = model
 		b.order = append(b.order, rec.QualifiedName)
 	}
+	// A member function template has no signature of its own, so it is left out
+	// of the API and reported: the non-template overloads beside it are bound,
+	// and an instantiation is a separate declaration.
+	for _, name := range b.order {
+		raw := b.rawRecord(name)
+		for _, member := range raw.MemberTemplates {
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is a member function template and is not bound: name its concrete instantiation as a non-template member beside it",
+				member.QualifiedName))
+		}
+	}
+
 	// The fields are mapped once every model exists: a mirrored field may be a
 	// record whose own model has not been built yet when its container is.
 	for _, rec := range b.rawRecords {
@@ -991,7 +995,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				// A method's borrowed pointer is a view of the receiver: the
 				// object is Go's, and the returned address is inside it. A free
 				// function's is an address nobody owns, which Go cannot hold.
-				if owner == nil || owner.Mirrored {
+				if owner == nil || owner.Mirrored || sym.Kind != cxx.Method {
 					return nil, pending(fmt.Sprintf("%q is a pointer to an opaque record", sym.Result.Spelling), "return it through a reference at the C++ boundary")
 				}
 				binding.ViewResult = true

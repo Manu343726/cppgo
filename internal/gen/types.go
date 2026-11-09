@@ -310,6 +310,26 @@ trimmed:
 	return nil, pending(fmt.Sprintf("%q is not a scalar or a known record", name), "use a scalar element type at the C++ boundary")
 }
 
+// recordFor finds the record a declared type names: the exact qualified name
+// first, then a unique simple-name match, because a declaration inside a
+// namespace or a class spells its own types unqualified ("Matrix<double, 3, 3>"
+// for Eigen::Matrix<double, 3, 3>).
+func (m *mapper) recordFor(name string) (*recordModel, bool) {
+	if record, ok := m.records[name]; ok {
+		return record, true
+	}
+	return m.lookupRecord(simpleNameRespectingTemplates(name))
+}
+
+// simpleNameRespectingTemplates is the last component of a qualified name,
+// split outside any template argument list.
+func simpleNameRespectingTemplates(name string) string {
+	if i := lastQualifiedSeparator(name); i >= 0 {
+		return name[i+2:]
+	}
+	return name
+}
+
 // lookupRecord finds a record by its spelling. A template argument is often
 // spelled unqualified inside its own namespace ("V" for "ns::V"), so an exact
 // miss falls back to a unique simple-name match; an ambiguous name is a miss
@@ -318,9 +338,12 @@ func (m *mapper) lookupRecord(name string) (*recordModel, bool) {
 	if record, ok := m.records[name]; ok {
 		return record, true
 	}
+	// The same type is spelled with and without spaces after a template
+	// argument's comma, depending on where libclang read it.
+	wanted := strings.ReplaceAll(name, " ", "")
 	var found *recordModel
 	for qualified, record := range m.records {
-		if simpleName(qualified) != name {
+		if strings.ReplaceAll(simpleName(qualified), " ", "") != wanted {
 			continue
 		}
 		if found != nil {
@@ -517,7 +540,7 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 		// A record pointer does not need the record to be mirrorable: the Go
 		// type is *Record either way, and an opaque one crosses as the address
 		// of the object it owns.
-		record, ok := m.records[p.Pointee.RecordName]
+		record, ok := m.recordFor(p.Pointee.RecordName)
 		if !ok {
 			return nil, missingRecord(*p.Pointee)
 		}
@@ -575,7 +598,7 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 // call, which is where the C++ copy constructor lives and where a value above
 // 16 bytes is materialized without any Go-side stack knowledge.
 func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
-	record, ok := m.records[p.RecordName]
+	record, ok := m.recordFor(p.RecordName)
 	if !ok {
 		return nil, missingRecord(p)
 	}
