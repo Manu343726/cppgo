@@ -699,6 +699,7 @@ with no constructors, no virtual functions and a standard layout, such as
 value, because copying it is C++'s job even when the bytes are simple; what makes
 it cheap is that the copy is a memcpy between two 16-byte blocks with the same
 layout.
+
 Which constructs go through the shim at all, and which are refused, is the
 [carrier and construct table]({{< ref "explanation/carriers.md" >}}#the-construct-table).
 
@@ -738,9 +739,10 @@ without any argument:
 	DECQ AX
 ```
 
-`R11` holds the return address the `CALL` pushed. Subtracting the table's base
-gives the byte offset of the *next* slot's instruction, and dividing by five
-gives the index plus one, which is what the `DECQ` removes.
+`R11` was loaded, a few instructions earlier, with the return address the slot's
+`CALL` pushed. Subtracting the table's base gives the byte offset of the *next*
+slot's instruction, and dividing by five gives the index plus one, which is what
+the `DECQ` removes.
 
 Before that, the trampoline saves the register file: the six integer argument
 registers and the eight `XMM` registers go into the same 128-byte argument block
