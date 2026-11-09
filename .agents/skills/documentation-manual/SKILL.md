@@ -282,9 +282,11 @@ Applying it:
   [`site/content/tutorials/first-binding.md`](../../../site/content/tutorials/first-binding.md)
   and [`site/content/tutorials/full-project.md`](../../../site/content/tutorials/full-project.md).
 
-The anti-pattern, verbatim from the current
-[`site/content/how-to/templates.md`](../../../site/content/how-to/templates.md) (lines
-13–17, replaced by [#70](https://git.manu343726.com/manu343726/cppgo/issues/70)):
+The anti-pattern, abridged from
+[`site/content/how-to/templates.md`](../../../site/content/how-to/templates.md) as the page
+opened before rule 6 applied (its link markup is elided here). The page now opens with
+prose, an objective, and the real `metrics` scenario of
+[`examples/full`](../../../examples/full):
 
 > ## The header
 >
@@ -295,23 +297,41 @@ The anti-pattern, verbatim from the current
 Three defects in three lines: it opens on a section title that assumes the reader knows why
 the header matters; it introduces `box::Box` with an internal test fixture as the reason the
 type exists ("the fixture the two-phase flow is measured on" is about the project's tests,
-not about the reader's task); and the sentence names a path without a link. A learned
+not about the reader's task); and it sends the reader to a path in
+`internal/gen/testdata`, where no library they can bind lives. A learned
 reader gets through it; a reader learning the two-phase flow cannot tell whether `Box` is a
 library they can use.
 
-## Rules 5 and 6 live in the rule list too
+## The rule list carries rules 1–6
 
-[`../extra/documentation-rules.md`](../extra/documentation-rules.md) currently ends at
-rule 4. Rules 5 and 6 are being added to that file by
-[#68](https://git.manu343726.com/manu343726/cppgo/issues/68) (benchmarks) and
-[#70](https://git.manu343726.com/manu343726/cppgo/issues/70) (tutorials), and the wording in
-this manual is extracted from those two issues.
+[`../extra/documentation-rules.md`](../extra/documentation-rules.md) carries all six rules —
+rule 1 through rule 6, each with its own `Applying it` list — and it is the canonical wording.
+The manual's § *Rule 5* and § *Rule 6* above are its long form: the same requirement, plus the
+examples and the closing a tutorial owes, which the rule list leaves to this page. Where a
+sentence of rules 5 or 6 in this manual differs from the file, the file wins, as the
+precedence at the top of this page says.
 
-**Once those land, the rule list is the canonical wording and this manual follows it**: the
-manual keeps the examples and the checklist, and where a sentence of rules 5 or 6 in this
-manual differs from the file, the file wins, as the precedence at the top of this page says.
-Do not edit the rule list for documentation reasons. It is the operator's file; the
-benchmarks workstream owns rules 5, the tutorials workstream owns rule 6, and a writer
+Rule 5, *A benchmarks page is read one scenario at a time*, opens:
+
+> The benchmarks page is organised per scenario, in the order the scenarios are measured, and
+> every scenario has the same four parts: **the scenario** — what is measured, the C++ work,
+> and the variants compared; **the code** — the C++ declaration and the call each arm makes
+> to reach it; **the results** — one row per arm with the numbers; **the conclusions** — what
+> this scenario's numbers say and why, written for a reader who has not seen the other
+> scenarios.
+
+Rule 6, *A tutorial teaches a person, a how-to answers a task*, opens:
+
+> Every tutorial opens with an introduction (what the reader will build and why), states its
+> objective (the concrete result at the end), introduces the example scenario it uses — a
+> real, user-facing project, not an internal test fixture — and then walks step by step,
+> explaining what each step does and why.
+
+The first is the four parts the manual's § *Rule 5* numbers, the second the opening of the
+shape its § *Rule 6* lists; the manual adds the examples that make each one checkable, and the
+closing section the rule list leaves to the long form.
+
+Do not edit the rule list for documentation reasons. It is the operator's file, and a writer
 reports a disagreement instead of resolving it alone.
 
 ## The anti-patterns, named
@@ -322,7 +342,7 @@ for. Each is quoted as written, and each one is a defect wherever it appears.
 | The anti-pattern | Why it fails | What replaces it |
 |---|---|---|
 | *"Measured 2026-11-08 on the machine that built this tree"* | A date, a machine and a description of the authoring process on a user page (rule 2). The user cannot use any of the three, and the page will be wrong as soon as the tree moves. | The characteristic and its neutral environment: *"median of six runs on a Ryzen 7 6800HS; the run is linked"*, on the benchmarks page, with the method in the developer docs. |
-| *"The header. The template is declared in a header… This is `box::Box`, the fixture the two-phase flow is measured on, in `internal/gen/testdata`"* | A terse feature-announcement opening (rule 6), an internal test fixture used as the example (rule 6), and a bare path (rule 4). | An introduction and objective, a real library from [`examples/`](../../../examples), the header in code with a link, then the numbered steps. |
+| *"The header. The template is declared in a header… This is `box::Box`, the fixture the two-phase flow is measured on, in `internal/gen/testdata`"* | A terse feature-announcement opening (rule 6), an internal test fixture used as the example (rule 6), and a path into `internal/` that a user cannot follow (rule 4). | An introduction and objective, a real library from [`examples/`](../../../examples), the header in code with a link, then the numbered steps — what [`site/content/how-to/templates.md`](../../../site/content/how-to/templates.md) now does. |
 | A Go snippet with no C++ above it (rule 3) | The reader cannot tell what was generated, from which declaration, or whether the snippet is the generator's output or something they must write. | The C++ declaration, the `cppgo gen` command, the generated Go, then the Go call. |
 | A benchmark table with no scenario and no code above it (rule 4, rule 5) | The table is a wall of names the reader has never seen, with no way to judge a row. | Scenario, scenario code (every arm's C++ and Go), table with iterations and runs, conclusions. |
 
