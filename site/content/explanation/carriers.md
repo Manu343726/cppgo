@@ -153,7 +153,7 @@ pointers in, and **SSE**, the eight floating-point registers beside them.
 | non-POD by value | thunk | measured, **refused by the generator** |
 | more than 6 INTEGER / 8 SSE arguments | — | **refused**: the argument block is not implemented |
 | exception-throwing call | thunk (`try`/`catch`) | supported |
-| callback parameter, `std::function` | reentrant | emitted, not exercised by an example |
+| callback parameter, `std::function` (C++'s wrapper around any callable) | reentrant | emitted, not exercised by an example |
 | class / function template | thunk, called reentrantly | supported |
 | static member | thunk, no `this` (the object a method was called on) | supported |
 | enum | — | **refused** |
