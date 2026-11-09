@@ -191,6 +191,13 @@ func (b *builder) baseName(binding *binding) (string, error) {
 		return "New" + binding.Owner.GoName, nil
 	}
 	name := exportName(simpleName(binding.sym.QualifiedName))
+	if binding.sym.IsOperator {
+		operator, err := b.operatorGoName(binding)
+		if err != nil {
+			return "", err
+		}
+		name = operator
+	}
 	if binding.IsStatic {
 		return binding.Owner.GoName + name, nil
 	}

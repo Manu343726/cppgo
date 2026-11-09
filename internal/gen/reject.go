@@ -99,10 +99,6 @@ func (b *builder) rejectUnimplemented() error {
 			// member function template of a concrete record is named by
 			// Record.MemberTemplates above.
 			continue
-		case sym.IsOperator || sym.IsConversion:
-			return symbolError(sym, pending(
-				"operators and conversion operators are not emitted by this build yet",
-				"give it a named member function or a named free function"))
 		case sym.IsVariadic:
 			return symbolError(sym, pending(
 				"a variadic function has no fixed argument list to lay out",
