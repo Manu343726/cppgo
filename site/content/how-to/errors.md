@@ -50,7 +50,13 @@ nil or closed receiver returns. A `CallError` has no comparable identity, so
 ## A status code, today
 
 Some C libraries report a class of failures as a 32-bit return code and put the
-value in an out-parameter. Name that declaration with `-status`:
+value in an out-parameter. Name that declaration with `-status`. This is the
+declaration, from
+[`internal/gen/testdata/status/status.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/status/status.hpp):
+
+```cpp
+std::int32_t parse(const std::string &text);
+```
 
 ```console
 $ cppgo gen -header include/status.hpp -package status \

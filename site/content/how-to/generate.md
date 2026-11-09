@@ -9,7 +9,55 @@ This guide assumes you have read
 [Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}}) or already
 know what `cppgo gen` produces.
 
-## 1. State how the header is compiled
+The commands use the example library in
+[`examples/mathx`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx);
+substitute your own paths where it has its own.
+
+## 1. The header you bind
+
+cppgo reads a header, never a compiled library: the declarations are the source
+of truth. This is the header the guide binds, `mathx::Vector` in
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
+
+```cpp
+namespace mathx {
+
+class Vector {
+public:
+    Vector(double x, double y);
+
+    Vector(const Vector &other);
+
+    ~Vector();
+
+    double x() const { return x_; }
+
+    double y() const;
+
+    double norm() const;
+
+    double dot(const double *ys, std::size_t n) const;
+
+    double at(std::size_t index) const;
+
+    void validate() const;
+
+    void scale(double k) noexcept;
+
+    static int dims();
+
+private:
+    double x_;
+    double y_;
+};
+
+} // namespace mathx
+```
+
+Nothing in it knows that cppgo exists, and nothing cppgo writes is compiled into
+it.
+
+## 2. State how the header is compiled
 
 `cppgo gen` needs the include paths and the language standard your project uses.
 There are two ways to supply them, in this order of preference:
@@ -19,17 +67,19 @@ There are two ways to supply them, in this order of preference:
   header:
 
   ```console
-  $ cppgo gen -header include/mylib/api.hpp -package mylib \
-              -compile-commands build/compile_commands.json -out ./mylib
+  $ cppgo gen -header include/mathx/vector.hpp -package mathx \
+              -compile-commands build/compile_commands.json -out .
   ```
 
 - **A `.clangd` file.** For a project with no compilation database, the
   `CompileFlags` block in `.clangd` is enough, and the same file keeps clangd's
-  editor behaviour correct:
+  editor behaviour correct. The example's
+  [`examples/mathx/.clangd`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/.clangd)
+  is the whole of its compilation configuration:
 
   ```yaml
   CompileFlags:
-    Add: [-std=c++20, -Iinclude]
+    Add: [-std=c++17, -Iinclude]
   ```
 
 Do not skip this because the header compiles: a missing include path produces a
@@ -42,7 +92,7 @@ cppgo: warning: the compilation flags for api.hpp are an assumption
 misread the header
 ```
 
-## 2. Decide what to bind
+## 3. Decide what to bind
 
 By default, the header is the unit of selection: every public declaration in it
 is bound, plus the types those declarations use. For a large library, narrow the
@@ -63,11 +113,11 @@ cppgo: -bind cv::Maat: it names nothing this header declares
 That is deliberate. A typo that silently shrinks the API is the failure mode
 worth an error, because nobody notices a missing function until it is needed.
 
-## 3. Run it
+## 4. Run it
 
 ```console
-$ cppgo gen -header include/mylib/api.hpp -package mylib \
-            -library build/libmylib.so -out ./mylib
+$ cppgo gen -header include/mathx/vector.hpp -package mathx \
+            -library build/libmathx.so -out .
 ```
 
 | Flag | What it does |
@@ -87,7 +137,7 @@ $ cppgo gen -header include/mylib/api.hpp -package mylib \
 
 The complete reference is [Command line]({{< ref "reference/cli.md" >}}).
 
-## 4. Read the report
+## 5. Read the report
 
 The report has one line per binding, and a last line naming the compiler that
 built the C++ side:
@@ -103,15 +153,48 @@ Check the last line against the compiler that built your library. The middle
 columns are explained in [Architecture]({{< ref "explanation/architecture.md" >}}#generation-parse-selection-determinism);
 you do not need them to use the package.
 
-## 5. Commit the sources and check them
+## 6. The generated Go, and the call
+
+The declarations in step 1 became these Go declarations, copied from the
+generated
+[`examples/mathx/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/zz_cppgo.gen.go):
+
+```go
+func NewVector(x float64, y float64) (*Vector, error)
+func (v *Vector) Norm() (float64, error)
+func (v *Vector) Scale(k float64)
+func (v *Vector) Close() error
+```
+
+`Norm` returns an error because `mathx::Vector::norm()` can throw; `Scale`
+returns nothing because `mathx::Vector::scale(double) noexcept` cannot fail. A
+program calls the package the way it calls any Go package:
+
+```go
+v, err := mathx.NewVector(3, 4)
+if err != nil {
+	log.Fatal(err)
+}
+defer v.Close()
+
+norm, err := v.Norm()
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(norm)          // 5
+
+v.Scale(2)                 // no error to check: this call cannot fail
+```
+
+## 7. Commit the sources and check them
 
 The generated sources are reproducible — the same inputs produce the same files
 — so commit them with your project and let a check catch drift:
 
 ```console
-$ cppgo check -header include/mylib/api.hpp -package mylib \
-              -library build/libmylib.so -out ./mylib
-./mylib: generated files are up to date
+$ cppgo check -header include/mathx/vector.hpp -package mathx \
+              -library build/libmathx.so -out .
+./: generated files are up to date
 $ echo $?
 0
 ```

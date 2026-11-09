@@ -10,6 +10,7 @@ design rather than operate it. They explain the functionality: how a call
 reaches C++, what it costs, and where it stops.
 
 - [Why cppgo exists]({{< ref "explanation/why.md" >}})
+- [The Go runtime and a native call]({{< ref "explanation/go-runtime.md" >}}) — the model the design works around
 - [Architecture]({{< ref "explanation/architecture.md" >}}) — how it works
 - [Carriers and the construct table]({{< ref "explanation/carriers.md" >}})
 - [Performance]({{< ref "explanation/benchmarks.md" >}}) — the cost of a call

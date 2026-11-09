@@ -32,11 +32,12 @@ them while you read.
 
 ## Step 1 — Look at the C++
 
-Here is the header the lesson binds. Nothing in it knows that `cppgo` exists:
-no annotations, no `extern "C"` block, no binding declarations.
+Here is the header the lesson binds,
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp).
+Nothing in it knows that `cppgo` exists: no annotations, no `extern "C"` block,
+no binding declarations.
 
 ```cpp
-// examples/mathx/include/mathx/vector.hpp
 namespace mathx {
 
 struct Point {
@@ -47,15 +48,23 @@ struct Point {
 class Vector {
 public:
     Vector(double x, double y);
+
     Vector(const Vector &other);
+
     ~Vector();
 
     double x() const { return x_; }
+
     double y() const;
-    double norm() const;                     // can throw
+
+    double norm() const;
+
     double dot(const double *ys, std::size_t n) const;
-    double at(std::size_t index) const;      // throws std::out_of_range
-    void validate() const;                   // throws std::runtime_error
+
+    double at(std::size_t index) const;
+
+    void validate() const;
+
     void scale(double k) noexcept;
 
     static int dims();
@@ -66,6 +75,7 @@ private:
 };
 
 Point midpoint(Point a, Point b);
+
 void saxpy(double a, const double *x, double *y, std::size_t n);
 
 } // namespace mathx
@@ -156,18 +166,22 @@ and the example's `Makefile` shows which ones it ignores.
 
 ## Step 5 — Call it from Go
 
-The generated package is ordinary Go. These are the declarations this lesson
-uses, copied from
+`cppgo gen` turned the header in Step 1 into a Go package. These are the four
+declarations from
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp)
+that the lesson calls:
+
+```cpp
+Vector(double x, double y);
+~Vector();
+double norm() const;
+void scale(double k) noexcept;
+```
+
+They arrive as these Go declarations, copied from
 [`examples/mathx/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/zz_cppgo.gen.go):
 
 ```go
-// Open loads what the package needs and resolves its bindings.
-func Open(path string) error
-
-// CppgoLibraryPath overrides where your C++ library is loaded from, for a
-// deployment that does not keep it beside the generated one.
-var CppgoLibraryPath string
-
 // NewVector constructs a mathx::Vector.
 func NewVector(x float64, y float64) (*Vector, error)
 
@@ -177,9 +191,22 @@ func (v *Vector) Norm() (float64, error)
 // Scale calls mathx::Vector::scale.
 func (v *Vector) Scale(k float64)
 
-// Close destroys the object. It returns cppgo.ErrClosed when the receiver has
-// no live object.
+// Close destroys the object. It returns cppgo.ErrClosed when the receiver has no live object.
 func (v *Vector) Close() error
+```
+
+The package also has two entry points that are not generated from a C++
+declaration: `Open` loads the two shared objects, and `CppgoLibraryPath` says
+where your library is when it is not beside them.
+
+```go
+// Open loads the cppgo-built shim and, when the package has one, the user's
+// library it was linked against, then resolves every symbol this package binds.
+func Open(path string) error
+
+// CppgoLibraryPath overrides where the user's library is loaded from, for a
+// deployment that does not keep it beside the shim.
+var CppgoLibraryPath string
 ```
 
 Two rules are visible in that list, and they hold for every generated package:
