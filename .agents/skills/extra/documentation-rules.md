@@ -69,3 +69,53 @@ Applying it:
   provenance;
 - moving is not deleting: the passage goes to the developer document that owns
   it.
+
+## Rule 3 — Binding examples start from the C++ API
+
+Binding and code-generation examples and tutorials start from the C++ API. The
+page opens with the C++ declaration/header and the library it comes from, then
+the generation command, then the generated Go, then the Go call. The Go code is
+never the starting point of a binding example.
+
+Applying it:
+
+- a page that shows generated Go shows the C++ declaration it comes from —
+  copied from the real header in the repository, with a link to that file —
+  next to or before the Go. Generated Go never appears in isolation in a
+  tutorial, a how-to guide or a reference page;
+- the order is the order of the work: the C++ header, `cppgo gen`, the generated
+  Go, the call from Go. A page that currently opens with a Go type or function
+  moves the C++ header or signature to the top, and the Go becomes the product
+  of the generation;
+- a page whose subject is not binding or code generation keeps its own order,
+  and any generated Go it shows still brings its C++ declaration along;
+- the C++ is taken from the tree, never invented, and the Go snippet corresponds
+  to the C++ excerpt beside it. A target library whose headers are not in the
+  repository shows its real header when the slice lands; until then the page
+  says the slice is designed.
+
+## Rule 4 — Show the code before talking about it
+
+Documentation does not mention a thing assuming the reader knows what it is.
+Show the code first — the C++ declaration and the Go binding/call, or the
+relevant snippet — then discuss it. A page that talks about `cppgo_direct`, a
+carrier, a helper or a function without showing or linking its definition fails
+this rule. Benchmarks are the clear case: every arm and every measured function
+shows the C++ it calls and the Go call that reaches it (and the cgo/Go
+equivalent where compared) before the table; a reader must be able to read the
+table from the code above it.
+
+Applying it:
+
+- a measured row, an arm, a carrier, a helper or a generated type is introduced
+  by its definition — the C++ declaration or the Go function, copied from the
+  tree and linked — before the text explains or measures it;
+- a benchmarks page puts the header and the call of each arm above the tables,
+  so the table is a summary of code the reader has already seen, never the first
+  appearance of a name;
+- a page whose subject is not code (a conceptual explanation, a comparison, a
+  decision record) may link the definition instead of inlining it, and such a
+  page is not reordered to satisfy this rule;
+- a name with no definition and no link — `cppgo_direct`, a `cppgo_thunk_…`
+  symbol, a helper such as `cppgo_last_error`, an arm named only in a table
+  cell — is a defect to fix, not a shorthand to allow.

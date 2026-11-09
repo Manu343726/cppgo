@@ -1,27 +1,33 @@
 ---
 title: "Generated API"
-description: "The Go shapes cppgo gen writes for records, classes, functions and templates."
+description: "The Go shapes cppgo gen writes for records, classes, functions and templates, and the C++ declarations they come from."
 weight: 20
 ---
 
-This page describes the package `cppgo gen` writes. The snippets are copied from
-generated packages in the examples, so they are the output, not a sketch of it.
+This page describes the package `cppgo gen` writes. Every shape is shown with
+the C++ declaration it comes from — copied from the header in the repository,
+linked — and the Go it became, copied from a generated package in the examples.
+The C++ is the input; the Go is the output.
 
 ## Package entry
 
-Every generated package has one way in:
+Every generated package has one way in. These two are not generated from a C++
+declaration: `Open` loads the two shared objects and `CppgoLibraryPath` says
+where the user's library is.
 
 ```go
-// Open loads what the package needs and resolves its bindings.
+// Open loads the cppgo-built shim and, when the package has one, the user's
+// library it was linked against, then resolves every symbol this package binds.
 //
-// path names the C++ file cppgo built beside this package. A path of "" uses the
+// path names the shim cppgo compiled beside this package. A path of "" uses the
 // name the package was generated with. It is safe to call Open more than once;
 // the first successful call wins.
 func Open(path string) error
 
-// CppgoLibraryPath overrides where your C++ library is loaded from, for a
-// deployment that does not keep it beside the generated file. It must be set
-// before the first Open; a later change is not observed.
+// CppgoLibraryPath overrides where the user's library is loaded from, for a
+// deployment that does not keep it beside the shim. It must be set before the
+// first Open: the two objects are loaded once, and a later change is not
+// observed.
 var CppgoLibraryPath string
 ```
 
@@ -35,7 +41,18 @@ no explicit call. A missing binding is reported once, as
 ### A record with a natural layout becomes a Go struct
 
 A C++ record whose fields are all public and whose layout matches Go's becomes a
-Go struct with the same fields:
+Go struct with the same fields. This is `mathx::Point`, in
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
+
+```cpp
+struct Point {
+    double x;
+    double y;
+};
+```
+
+and this is the Go struct it became, from
+[`examples/mathx/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/zz_cppgo.gen.go):
 
 ```go
 // Point is mathx::Point: a POD, 16 bytes, X at offset 0, Y at offset 8.
@@ -57,6 +74,42 @@ becomes an opaque value instead: Go storage the C++ side owns, with `Close`,
 fields.
 
 ### A class becomes a struct with a lifetime
+
+The class the generated package in the examples binds, `mathx::Vector`, from
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
+
+```cpp
+class Vector {
+public:
+    Vector(double x, double y);
+
+    Vector(const Vector &other);
+
+    ~Vector();
+
+    double x() const { return x_; }
+
+    double y() const;
+
+    double norm() const;
+
+    double dot(const double *ys, std::size_t n) const;
+
+    double at(std::size_t index) const;
+
+    void validate() const;
+
+    void scale(double k) noexcept;
+
+    static int dims();
+
+private:
+    double x_;
+    double y_;
+};
+```
+
+becomes a Go struct with a lifetime:
 
 ```go
 // Vector is mathx::Vector. The object belongs to C++; obj is where it lives.
@@ -85,14 +138,33 @@ The rules that hold for every class:
 
 ### Zero and closed values
 
-A method on a nil or closed value returns `cppgo.ErrClosed`:
+A method on a nil or closed value returns `cppgo.ErrClosed`. The C++ side is the
+inline accessor and the `noexcept` setter in the class above:
+
+```cpp
+double x() const { return x_; }
+
+void scale(double k) noexcept;
+```
+
+`X` has an error result to carry that failure:
 
 ```go
 func (v *Vector) X() (float64, error) {
 	if v == nil || v.obj == nil {
 		return 0, cppgo.ErrClosed
 	}
-	...
+	if err := cppgoOpen(""); err != nil {
+		return 0, err
+	}
+	cppgo.ProbeStack()
+	var cppgoResult float64
+	cppgoStatus := cppgoCall_00064a4bc112(cppgoSym_00064a4bc112, v.cppgoAddr(), unsafe.Pointer(&cppgoResult))
+	cppgo.KeepAlive(v, &cppgoResult)
+	if cppgoStatus != 0 {
+		return 0, cppgoCallError("mathx::Vector::x")
+	}
+	return cppgoResult, nil
 }
 ```
 
@@ -104,7 +176,12 @@ func (v *Vector) Scale(k float64) {
 	if v == nil || v.obj == nil {
 		panic("cppgo: mathx::Vector::scale(double) noexcept on a closed Vector")
 	}
-	...
+	if err := cppgoOpen(""); err != nil {
+		panic(err)
+	}
+	cppgo.ProbeStack()
+	cppgoCall_5e3a9d471306(cppgoSym_5e3a9d471306, v.cppgoAddr(), k)
+	cppgo.KeepAlive(v)
 }
 ```
 
@@ -113,9 +190,38 @@ fail, so its Go signature has nowhere to put an error.
 
 ## Functions and overloads
 
-A free or static function becomes a package function. An overload takes a suffix
-built from the Go parameter types, in order, and one declaration keeps the bare
-name:
+A free function becomes a package function. An overload takes a suffix built
+from the Go parameter types, in order, and one declaration keeps the bare name.
+These are the declarations, in
+[`internal/gen/testdata/overloads/overloads.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/overloads/overloads.hpp):
+
+```cpp
+namespace over {
+
+class Thing {
+public:
+    Thing();
+    Thing(int32_t value);
+    ~Thing();
+
+    int32_t value() const;
+    int32_t value(int32_t scale) const;
+
+    void reset();
+    void reset(int32_t value);
+
+private:
+    int32_t value_;
+};
+
+int32_t add(int32_t a, int32_t b) noexcept;
+double add(double a, double b) noexcept;
+
+} // namespace over
+```
+
+and these are the Go functions they became, from
+[`internal/gen/testdata/golden/overloads/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/golden/overloads/zz_cppgo.gen.go):
 
 ```go
 func AddFloat64Float64(a float64, b float64) float64
@@ -128,8 +234,7 @@ A collision that no suffix separates is a generation error naming both
 declarations, and `-rename '<signature>=<GoName>'` is the way out.
 
 A default argument is **not** expanded by this build: the Go function takes every
-parameter and the caller passes the default. `int add(int a, int b = 2)` becomes
-`func Add(a int32, b int32) int32`.
+parameter of the declaration and the caller passes the value.
 
 ## Values: the type map
 
@@ -153,7 +258,34 @@ parameter and the caller passes the default. `int add(int a, int b = 2)` becomes
 | `T[N]` as a record field | `[N]T` | fixed-size array |
 | function pointer, `std::function<R(Args…)>` | `func(…) R` | see *Callbacks* |
 
-For a header that uses them, the generated signatures look like this:
+For a header that uses them, the fixture in
+[`internal/gen/testdata/std/std.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/std/std.hpp)
+declares one function per shape:
+
+```cpp
+namespace stdx {
+
+std::string describe(const std::string &prefix, std::string_view suffix);
+
+std::size_t text_length(const std::string &value);
+
+std::string_view literal_view();
+
+std::vector<double> doubled(const std::vector<double> &values);
+
+double sum(std::span<const double> values);
+
+std::array<double, 3> triple(std::array<double, 3> values);
+
+std::optional<double> maybe(bool present, double value);
+
+double unwrap(std::optional<double> value, double fallback);
+
+} // namespace stdx
+```
+
+The generated signatures are, copied from
+[`internal/gen/testdata/golden/std/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/golden/std/zz_cppgo.gen.go):
 
 ```go
 func Describe(prefix string, suffix string) (string, error)
@@ -197,14 +329,50 @@ There is no example in `examples/` that passes a callback yet.
 
 ## Templates
 
-A class or function template becomes a Go generic type or function, and the
-concrete C++ types are provided by `cppgo build -scan`:
+A class template — `box::Box` in
+[`internal/gen/testdata/box/box.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/box/box.hpp):
+
+```cpp
+template <typename T>
+class Box {
+public:
+    Box() : value_() {}
+    Box(T value) : value_(value) {}
+    Box(const Box &other) = delete;
+    ~Box() {}
+    T get() const { return value_; }
+    void set(T value) { value_ = value; }
+    T add(T other) const { return value_ + other; }
+    T *echo(T *value) const { return value; }
+    const T *peek(const T *value) const { return value; }
+    void consume(const T &value) { value_ = value; }
+    static T identity(T value) { return value; }
+
+private:
+    T secret() const { return value_; }
+    T value_;
+};
+```
+
+— becomes a Go generic type, and the concrete C++ types are provided by
+`cppgo build -scan`:
 
 ```go
-type Box[T any] struct{ obj *cppgo.Object }
+// Box is box::Box<T>: the generic API. The concrete specializations are the ones
+// the program instantiates; `cppgo build` collects them and emits the shim.
+type Box[T any] struct {
+	obj *cppgo.Object
+}
 
+// NewBox constructs a box::Box<T>.
+//
+// C++: box::Box::Box<T>(T), two-phase template
 func NewBox[T any](value T) (*Box[T], error)
+
+// Get calls box::Box::get.
 func (b *Box[T]) Get() (T, error)
+
+// Set calls box::Box::set.
 func (b *Box[T]) Set(value T) error
 ```
 
@@ -228,7 +396,14 @@ also an error.
 ## The comment on every binding
 
 Every generated declaration carries a comment naming the C++ declaration it came
-from and how cppgo calls it:
+from and how cppgo calls it. For `mathx::Vector::at`, declared in
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
+
+```cpp
+double at(std::size_t index) const;
+```
+
+the generated comment is:
 
 ```
 // C++: mathx::Vector::at(std::size_t) const, _ZNK5mathx6Vector2atEm (thunk cppgo_thunk_79aeb346bd10, not noexcept: an exception would unwind into Go), verified against libmathx.so

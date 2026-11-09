@@ -50,9 +50,10 @@ name: CI
 #
 #    A changed recipe gets a new address: `recipe-e1efb00b847f` is still served, unchanged, at
 #    `sha256:6605cad213a3efbd8ae2485b34e2488b5f81ee732d713839125d5b7d78101ccd`. The digest this
-#    block used to quote for it, `sha256:42e52d97…`, is not what the registry serves for that
-#    tag; quote the digest `docker buildx imagetools inspect` reports, never a local image id
-#    or a remembered number.
+#    block used to quote for it, `sha256:42e52d97…`, is the manifest of the `latest` tag, which
+#    lags at a build that predates the prose gate — a different tag, not this one. Quote the
+#    digest that `docker buildx imagetools inspect <registry>/<name>:<tag>` reports for the tag
+#    being named, never a digest remembered from another one.
 #
 #    Publishing on a `Dockerfile` change is not automated yet: a change lands in
 #    `.forgejo/workflows/image.yml` on the day it does, and this block gains one link to it.

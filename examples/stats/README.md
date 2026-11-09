@@ -23,6 +23,8 @@ Requirements: Go 1.25+, a C++17 compiler, libclang 20+ (generation only).
 
 ## The header
 
+[`include/stats/stats.hpp`](include/stats/stats.hpp) is the whole input:
+
 ```cpp
 namespace stats {
 
@@ -57,6 +59,9 @@ cppgo: built libcppgo_stats.so with /usr/bin/g++
 
 ## The generated API
 
+`make gen` turned the header above into
+[`zz_cppgo.gen.go`](zz_cppgo.gen.go). Its declarations are:
+
 ```go
 func Open(path string) error
 var CppgoLibraryPath string
@@ -73,6 +78,20 @@ The four functions that cannot fail return their value with **no error result**.
 
 `DataPointer` returns the address it was given, which shows that the slice is not
 copied on the way in.
+
+## The call
+
+A call from [`stats_test.go`](stats_test.go), where `histogram` writes into the
+caller's slice:
+
+```go
+xs := []float64{0, 1, 2, 3, 4, 5, 6, 7, 8}
+bins := make([]float64, 4)
+
+if err := Histogram(xs, bins, 0, 8); err != nil {
+	t.Fatalf("Histogram: %v", err)
+}
+```
 
 ## Tests
 
