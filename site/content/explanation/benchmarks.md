@@ -10,28 +10,204 @@ reached three ways: a plain Go function, cgo, and the package cppgo generates.
 
 The comparison comes from the benchmark suite in
 [`benchmarks/`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/README.md).
-That page documents every arm, the raw `go test` output the numbers are taken
-from, the ranges behind each median, and how to run it again.
+That page documents the raw `go test` output the numbers are taken from, the
+ranges behind each median, and how to run it again.
 
-## What each arm measures
+## The C++ that is measured
 
-| Arm | How Go reaches the function |
-|---|---|
-| `go_direct` | no C++: a plain Go function called directly (`//go:noinline`, so it is a real call) |
-| `go_indirect` | the same Go function behind a `func` value — the baseline where a callback makes a value unavoidable |
-| `cgo` / `cgo_thunk` | the C++ library through a hand-written `extern "C"` shim and cgo, with and without `noexcept` |
-| `cppgo_direct` | the generated package, for a declaration the direct carrier can take |
-| `cppgo_thunk` | the same arithmetic with `noexcept` removed, so the call pays the status and out-parameter shape a throwing declaration has |
-| `cppgo` | the generated package, on the carrier its declaration gets |
+One header is the source of every measured call,
+[`benchmarks/include/bench/bench.hpp`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/include/bench/bench.hpp).
+Each row of the tables below names one of these declarations:
 
-Every arm calls the same compiled C++ library, built once with the library's own
-flags. Nothing is mocked and nothing is reimplemented for an arm: where two arms
-differ, it is because their declarations differ.
+```cpp
+namespace bench {
 
-The cgo wrapper is the fastest correct wrapper for this work — borrowed Go
-memory is passed as `(pointer, length)` rather than `C.CString`/`C.CBytes`, and
-results are copied out once. The cppgo numbers are the generated API as shipped,
-entry point included, because that is what a caller pays.
+std::int64_t add(std::int64_t a, std::int64_t b) noexcept;
+
+std::int64_t add_thunk(std::int64_t a, std::int64_t b);
+
+struct Point {
+    double x;
+    double y;
+};
+
+struct Sample {
+    double a;
+    double b;
+    double c;
+};
+
+Point midpoint(Point a, Point b);
+
+Sample blend(Sample a, Sample b, double t) noexcept;
+
+std::string describe(std::string_view prefix, double value);
+
+std::vector<double> doubled(const std::vector<double> &values);
+
+std::int32_t ratio(std::int32_t a, std::int32_t b);
+
+std::int32_t parse(const std::string &text);
+
+std::int32_t fold(const std::function<std::int32_t(std::int32_t, std::int32_t)> &fn,
+                  std::int32_t a, std::int32_t b);
+
+class Counter {
+public:
+    explicit Counter(std::int64_t start);
+
+    ~Counter();
+
+    std::int64_t get() const noexcept;
+
+    void bump(std::int64_t by) noexcept;
+
+private:
+    std::int64_t value_;
+};
+
+} // namespace bench
+```
+
+`add` and `add_thunk` are the same arithmetic; only `noexcept` differs, which is
+what moves the second one to the shim. `ratio` throws `std::domain_error` on a
+zero divisor, and `parse` reports failure with a 32-bit status code. Every arm
+calls this one compiled `libbench.so`.
+
+## The arms
+
+The names in the tables are the benchmark's sub-test names. Each arm is a Go
+package with its own benchmark file, and the statements below are the ones inside
+its `b.Loop()`.
+
+### Plain Go — `go_direct`, `go_indirect`
+
+The reference implementation, with no foreign call anywhere.
+[`benchmarks/gobase/bench_test.go`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/gobase/bench_test.go):
+
+```go
+sinkInt64 = benchdata.Add(addA, addB)
+sinkInt64 = benchdata.AddFn(addA, addB)
+sinkPoint = benchdata.Midpoint(pointA, pointB)
+sinkSample = benchdata.Blend(sampleA, sampleB, blendT)
+sinkString = benchdata.Describe(describePrefix, describeValue)
+sinkFloats = benchdata.Doubled(values)
+sinkInt32, sinkErr = benchdata.Ratio(ratioA, ratioZeroDivisor)
+sinkErr = benchdata.Parse(statusText)
+sinkErr = benchdata.Parse("!" + statusText)
+sinkInt32 = benchdata.Fold(callback, 3, 4)
+counter := benchdata.NewCounter(7)
+counter.Bump(1)
+sinkInt64 = existingCounter.Get()
+```
+
+The functions are in
+[`benchmarks/internal/benchdata/benchdata.go`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/internal/benchdata/benchdata.go);
+`Add` carries `//go:noinline`, so `go_direct` is a real call and not inlined
+work, and `AddFn` is the same function behind a `func` value:
+
+```go
+//go:noinline
+func Add(a, b int64) int64 { return a + b }
+
+var AddFn = func(a, b int64) int64 { return a + b }
+```
+
+### cgo — `cgo`, `cgo_thunk`
+
+The same calls, through the hand-written wrapper in
+[`benchmarks/cgo`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo),
+which pays cgo's crossing on every one of them:
+
+```go
+sinkInt64 = Add(addA, addB)
+sinkInt64, sinkErr = AddThunk(addA, addB)
+sinkPoint, sinkErr = Midpoint(pointA, pointB)
+sinkSample = Blend(sampleA, sampleB, blendT)
+sinkString, sinkErr = Describe(describePrefix, describeValue)
+sinkFloats, sinkErr = Doubled(values)
+sinkInt32, sinkErr = Ratio(ratioA, ratioZeroDivisor)
+sinkErr = Parse(statusText)
+sinkErr = Parse("!" + statusText)
+sinkInt32, sinkErr = Fold(foldFnArg, 3, 4)
+counter, err := NewCounter(7)
+counter.Bump(1)
+sinkInt64 = existingCounter.Get()
+```
+
+Those are wrappers, not the C calls. The crossing's two wrappers, from
+[`benchmarks/cgo/cgo.go`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo/cgo.go):
+
+```go
+func Add(a, b int64) int64 {
+	return int64(C.bench_add(C.int64_t(a), C.int64_t(b)))
+}
+
+func AddThunk(a, b int64) (int64, error) {
+	var out C.int64_t
+	if status := C.bench_add_thunk(C.int64_t(a), C.int64_t(b), &out); status != 0 {
+		return 0, lastError("bench::add_thunk")
+	}
+	return int64(out), nil
+}
+```
+
+and the `extern "C"` surface they call, from
+[`benchmarks/cgo/bench_c.h`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo/bench_c.h):
+
+```c
+int64_t bench_add(int64_t a, int64_t b);
+int32_t bench_add_thunk(int64_t a, int64_t b, int64_t *out);
+```
+
+Every other wrapper has one of those two shapes: a direct call with no status
+when the declaration is `noexcept` (`Blend`), or the status-and-out-parameter
+call when it can fail or returns a `std::` type (`Describe` and the rest).
+
+### cppgo — `cppgo_direct`, `cppgo_thunk`, `cppgo`
+
+The same calls again, from the generated package in
+[`benchmarks/cppgo`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cppgo).
+`cppgo_direct` and `cppgo_thunk` are the two halves of the crossing; the other
+rows are labelled `cppgo` because the declaration decides its carrier:
+
+```go
+sinkInt64 = Add(addA, addB)
+sinkInt64, sinkErr = AddThunk(addA, addB)
+sinkPoint, sinkErr = Midpoint(pointA, pointB)
+sinkSample = Blend(sampleA, sampleB, blendT)
+sinkString, sinkErr = Describe(describePrefix, describeValue)
+sinkFloats, sinkErr = Doubled(values)
+sinkInt32, sinkErr = Ratio(ratioA, ratioZeroDivisor)
+sinkErr = Parse(statusText)
+sinkErr = Parse("!" + statusText)
+sinkInt32, sinkErr = Fold(benchdata.Add32, 3, 4)
+counter, err := NewCounter(7)
+counter.Bump(1)
+sinkInt64 = existingCounter.Get()
+```
+
+The declarations behind them, copied from
+[`benchmarks/cppgo/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cppgo/zz_cppgo.gen.go):
+
+```go
+func Add(a int64, b int64) int64
+func AddThunk(a int64, b int64) (int64, error)
+func Midpoint(a Point, b Point) (Point, error)
+func Blend(a Sample, b Sample, t float64) Sample
+func Describe(prefix string, value float64) (string, error)
+func Doubled(values []float64) ([]float64, error)
+func Ratio(a int32, b int32) (int32, error)
+func Parse(text string) error
+func Fold(fn func(int32, int32) int32, a int32, b int32) (int32, error)
+func NewCounter(start int64) (*Counter, error)
+func (c *Counter) Bump(by int64)
+func (c *Counter) Get() int64
+```
+
+The generated package implements the same call shape as the other two arms:
+where a declaration can fail the Go signature carries an error, and where it
+cannot — `Add`, `Blend`, `Bump`, `Get` — it does not.
 
 ## Environment
 
@@ -50,7 +226,7 @@ the reproducible claim.
 
 ## The crossing
 
-`bench::add(int64, int64)` — one call, nothing else:
+`bench::add` and `bench::add_thunk` — one call, nothing else:
 
 | Arm | Median ns/op | B/op | allocs/op |
 |---|---:|---:|---:|
@@ -68,8 +244,9 @@ out-parameter's allocation, not the call into C++.
 
 ## The rest of the work
 
-Medians from the same run. The last column puts the cgo and cppgo medians side by
-side.
+Medians from the same run. Each row is one declaration from the header above, and
+the arms are the ones whose calls are shown above it. The last column puts the
+cgo and cppgo medians side by side.
 
 | What is measured | Go | cgo | cppgo | cppgo vs cgo |
 |---|---:|---:|---:|---:|
@@ -81,9 +258,9 @@ side.
 | `throw`: an exception becomes a Go error | 75.9 | 5522 | 7405 | 1.3× slower |
 | `parse` succeeds (`-status`) | 9.51 | 134.7 | 71.8 | 1.9× faster |
 | `parse` fails (`-status`) | 143.8 | 912.4 | 2518 | 2.8× slower |
-| callback round trip: C++ calls a Go function once | 11.6 (`go_indirect`) | 356.3 | 1776 | 5.0× slower |
-| construct and destroy an opaque object | 32.3 | 466.9 | 2974 | 6.4× slower |
-| one `noexcept` method call on a live object | 6.35 | 153.0 | 43.3 | 3.5× faster |
+| `fold`: C++ calls a Go function once | 11.6 (`go_indirect`) | 356.3 | 1776 | 5.0× slower |
+| `Counter`: construct and destroy an opaque object | 32.3 | 466.9 | 2974 | 6.4× slower |
+| `Counter::get`: one `noexcept` method call on a live object | 6.35 | 153.0 | 43.3 | 3.5× faster |
 
 ## What the numbers say
 
@@ -105,3 +282,9 @@ side.
 - **By-value arguments allocate.** A POD passed by value costs 3 allocations
   against cgo's 1; the small row's time does not show it, but it is garbage per
   call.
+
+## Related
+
+- The suite, its raw output and how to run it: [`benchmarks/README.md`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/README.md).
+- Which construct gets which carrier: [Carriers and the construct table]({{< ref "explanation/carriers.md" >}}).
+- What each `cppgo` call becomes at the ABI: [Architecture]({{< ref "explanation/architecture.md" >}}).
