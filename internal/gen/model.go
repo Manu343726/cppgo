@@ -399,6 +399,9 @@ type builder struct {
 	flags       []string
 	usesFree    bool
 	usesCString bool
+	// manifestErr is the first request the manifest made that a declaration
+	// cannot satisfy. It is fatal, unlike a declaration the build cannot carry.
+	manifestErr error
 }
 
 // build loads the headers and turns the model into a package model.
@@ -444,6 +447,9 @@ func build(cfg Config) (*packageModel, error) {
 	}
 	if err := b.buildBindings(); err != nil {
 		return nil, err
+	}
+	if b.manifestErr != nil {
+		return nil, b.manifestErr
 	}
 	b.buildStaticFields()
 	b.expandDefaults()
@@ -729,11 +735,9 @@ func (b *builder) buildBindings() error {
 		if sym.IsVariadic {
 			// The ellipsis has no fixed argument list to lay out, so there is
 			// no thunk to write. The overloads beside it still bind.
-			if fatal := b.unbound(sym, pending(
+			b.unbound(sym, pending(
 				"a variadic function has no fixed argument list to lay out",
-				"replace the ellipsis with a fixed parameter list or a span")); fatal != nil {
-				return fatal
-			}
+				"replace the ellipsis with a fixed parameter list or a span"))
 			continue
 		}
 		owner := b.records[sym.Parent]
@@ -745,9 +749,7 @@ func (b *builder) buildBindings() error {
 			}
 			binding, err := b.newBinding(sym, nil)
 			if err != nil {
-				if fatal := b.unbound(sym, err); fatal != nil {
-					return fatal
-				}
+				b.unbound(sym, err)
 				continue
 			}
 			b.bindings = append(b.bindings, binding)
@@ -768,9 +770,7 @@ func (b *builder) buildBindings() error {
 			case sym.IsCopyConstructor:
 				clone, err := b.newBinding(sym, owner)
 				if err != nil {
-					if fatal := b.unbound(sym, err); fatal != nil {
-						return fatal
-					}
+					b.unbound(sym, err)
 					continue
 				}
 				clone.IsConstructor = false
@@ -784,9 +784,7 @@ func (b *builder) buildBindings() error {
 			default:
 				ctor, err := b.newBinding(sym, owner)
 				if err != nil {
-					if fatal := b.unbound(sym, err); fatal != nil {
-						return fatal
-					}
+					b.unbound(sym, err)
 					continue
 				}
 				owner.Ctors = append(owner.Ctors, ctor)
@@ -807,9 +805,7 @@ func (b *builder) buildBindings() error {
 			}
 			method, err := b.newBinding(sym, owner)
 			if err != nil {
-				if fatal := b.unbound(sym, err); fatal != nil {
-					return fatal
-				}
+				b.unbound(sym, err)
 				continue
 			}
 			if sym.Kind == cxx.StaticMethod {
@@ -2094,18 +2090,16 @@ func (b *builder) layout() {
 // outLocalType is the Go type of the local a thunk writes through its
 // out-pointer. It must have exactly the C type's width and representation.
 func outLocalType(result *goType) string {
+	if result.CString {
+		// The thunk writes the library's pointer; the wrapper copies the bytes
+		// out of it before the call returns.
+		return "unsafe.Pointer"
+	}
 	switch result.Kind {
 	case goBool:
 		// A C++ bool is one byte; an int8 local is the honest mirror and the
 		// wrapper converts it to a Go bool.
 		return "int8"
-	case goString:
-		if result.CString {
-			// The thunk writes the library's pointer; the wrapper copies the
-			// bytes out of it before the call returns.
-			return "unsafe.Pointer"
-		}
-		return result.Go
 	case goPointer:
 		return "unsafe.Pointer"
 	default:

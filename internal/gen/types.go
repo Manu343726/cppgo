@@ -626,9 +626,7 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 // pointer to a plain char, never to signed char or unsigned char, which are
 // different C++ types with different Go mappings.
 func isCString(p cxx.Param) bool {
-	if p.Kind != cxx.TypePointer || p.Pointee == nil {
-		return false
-	}
+	// The caller has already checked that this is a pointer with a pointee.
 	return p.Pointee.Kind == cxx.TypeInteger &&
 		(p.Pointee.ClangKind == "Char_S" || p.Pointee.ClangKind == "Char_U")
 }

@@ -49,23 +49,23 @@ type manifestError struct{ err error }
 // Error implements error.
 func (e manifestError) Error() string { return e.err.Error() }
 
-// Unwrap exposes the underlying error.
-func (e manifestError) Unwrap() error { return e.err }
-
 // unbound records a declaration the model cannot carry. The record or the
 // overload set keeps every declaration it can, and the one it cannot is a
 // warning naming the declaration and the reason — never a refusal of the
 // declaration's owner. That is the difference between one uncarryable
 // constructor and an unbindable class.
 //
-// A manifestError propagates instead, because it is the invocation that is
-// wrong: the caller formats it against the declaration and stops.
-func (b *builder) unbound(sym cxx.Symbol, err error) error {
+// A manifestError is not a limitation of the declaration but a mistake in the
+// invocation, so it is not a warning: the first one is kept and build stops
+// with it once every declaration has been visited.
+func (b *builder) unbound(sym cxx.Symbol, err error) {
 	if _, ok := err.(manifestError); ok {
-		return symbolError(sym, err)
+		if b.manifestErr == nil {
+			b.manifestErr = symbolError(sym, err)
+		}
+		return
 	}
 	b.warnings = append(b.warnings, fmt.Sprintf("%s is not bound: %v", displaySignature(sym), err))
-	return nil
 }
 
 // instantiationNamed reports whether an -instantiate entry names exactly this

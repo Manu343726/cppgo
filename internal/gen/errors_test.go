@@ -117,3 +117,34 @@ func joinWarnings(warnings []string) string {
 	}
 	return joined
 }
+
+// TestOmittedMembersAreReported covers the members a record or a template keeps
+// but cannot bind: a member function template has no signature of its own, an
+// operator of a class template has one per instantiation, and a dependent type
+// has none until it is substituted. Each is omitted from the API and named in
+// the report, which is a different answer from failing the whole header — that
+// answer is what made a real header unbindable.
+func TestOmittedMembersAreReported(t *testing.T) {
+	cases := []struct {
+		header string
+		want   string
+	}{
+		{"membertemplate.hpp", "err::WithMember::identity is a member function template"},
+		{"tempoperator.hpp", "operator"},
+		{"tempmembertemplate.hpp", "err::Holder::identity is a member function template"},
+		{"tempdependent.hpp", `std::vector<T>" is not a type this build classifies`},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.header, func(t *testing.T) {
+			t.Parallel()
+			rendered, err := RenderResult(Config{
+				Headers: []string{filepath.Join("testdata", "errors", tc.header)},
+				Package: "err",
+				Library: "liberr",
+			})
+			require.NoError(t, err)
+			assert.Contains(t, joinWarnings(rendered.Warnings), tc.want)
+		})
+	}
+}
