@@ -249,6 +249,8 @@ func (p *Point) Clone() (*Point, error) {
 // Vector is mathx::Vector. The object belongs to C++; obj is where it lives.
 type Vector struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -256,6 +258,9 @@ type Vector struct {
 func (v *Vector) cppgoAddr() uintptr {
 	if v == nil || v.obj == nil {
 		return 0
+	}
+	if v.addr != 0 {
+		return v.addr
 	}
 	return v.obj.Addr()
 }
