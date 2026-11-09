@@ -83,7 +83,7 @@ package, and the edge between the first and the other two is the contract.
 | artefact | who owns it | what it is |
 |---|---|---|
 | **the user's library** | the user | their sources, their compiler flags, their build. `libuser.so` in the tests. cppgo never writes into it and never asks it to include anything |
-| **the cppgo shim** | cppgo | `zz_cppgo_shim.cpp`, generated from the same header parse as the Go API, **compiled by cppgo** into `libcppgo_shim.so` (or `.a` for a static link), linked against the user's library. One `extern "C"` thunk per binding the direct ABI cannot express. `extern "C"` is the C++ linkage specification that switches off C++ name mangling — the compiler's encoding of namespaces, classes and overloads into one symbol name — so the thunk's symbol is the plain C name a `dlsym` lookup can find |
+| **the cppgo shim** | cppgo | `cppgo_shim/zz_cppgo_shim.cpp` and its header, generated from the same header parse as the Go API, **compiled by cppgo** into `libcppgo_<package>.so` — `libcppgo_user.so` for `-package user` — and linked against the user's library. One `extern "C"` thunk per binding the direct ABI cannot express. `extern "C"` is the C++ linkage specification that switches off C++ name mangling — the compiler's encoding of namespaces, classes and overloads into one symbol name — so the thunk's symbol is the plain C name a `dlsym` lookup can find |
 | **the generated Go package** | cppgo | the API the caller sees, plus one `NOSPLIT` trampoline per thunk and per direct symbol. A `NOSPLIT` function is one the Go assembler marks as having no stack-growth preamble: it may not grow the stack, and the runtime never preempts it asynchronously. The package loads the shim, which pulls the user's library in through its `DT_NEEDED` entries — the list, recorded in a shared object, of the objects the dynamic loader must map alongside it |
 
 The dotted line is the contract's edge: **the user's build is untouched, and generated code is not in
@@ -98,9 +98,9 @@ it (`buildShim` in [`internal/gen/build.go`](internal/gen/build.go)), and writes
 the generated package. What [`internal/gen`](internal/gen) and [`cmd/cppgo`](cmd/cppgo) do **not** do
 yet, and therefore what the next workstreams owe:
 
-1. **the error pass**: call `errormap.Apply` over the parsed signatures (with the shape inference fed
-   from libclang's members), and refuse to emit when a declaration can fail and its convention is
-   neither inferred nor configured.
+1. **the error pass**: call `Apply` on the package's `*errormap.Config` over the parsed signatures
+   (with the shape inference fed from libclang's members), and refuse to emit when a declaration can
+   fail and its convention is neither inferred nor configured.
 2. **the thunk error-block templates**: the `try`/`catch`, the status-and-block shape, the *pinned*
    block the thunk writes into — pinned meaning the collector has been told the storage may not
    move, because C++ holds its address — and the cloned message, as `internal/errormap`'s fixtures
@@ -121,8 +121,9 @@ Consequences worth stating:
   libstdc++ and LLVM's libc++, and they are not interchangeable. The generator compiles the shim
   with the flags it discovered for the header — from `compile_commands.json`, the *compilation
   database* a C++ build can be asked to emit, which records the compiler and the exact flag list of
-  every translation unit, and from `.clangd` — and with the same standard library, and refuses a
-  libc++ library behind a libstdc++ shim or the other way round (see § *The `std::` ABI*).
+  every translation unit, and from `.clangd` — so a `-D_GLIBCXX_USE_CXX11_ABI=…` the library was
+  built with reaches the shim as well. What the generator does **not** do yet is read the library's
+  standard library back out and refuse a mismatch (see § *The `std::` ABI*).
 - a header-only library with no `.so` at all is a supported case. The shim is all there is, and the
   "library" the generated package loads is the shim.
 
@@ -133,7 +134,7 @@ them is part of this contract.
 
 | layer | package | owns | may depend on |
 |---|---|---|---|
-| **runtime** | `github.com/Manu343726/cppgo` (repository root) | dynamic loading, symbol resolution, the C ABI and its trampolines, the reentrant carrier, stack probing, foreign-object storage, wire helpers, error types, the callback table | the standard library, [`internal/asm`](internal/asm), [`internal/rtl`](internal/rtl), [`internal/callback`](internal/callback), `purego` |
+| **runtime** | `github.com/Manu343726/cppgo` (repository root) | dynamic loading, symbol resolution, the C ABI and its trampolines, the reentrant carrier, stack probing, foreign-object storage, wire helpers, error types, the callback table, and the dependency walk that preloads an embedded set | the standard library, [`internal/asm`](internal/asm), [`internal/rtl`](internal/rtl), [`internal/callback`](internal/callback), [`internal/elfdeps`](internal/elfdeps), `purego` |
 | **generator** | [`internal/gen`](internal/gen), [`internal/cxx`](internal/cxx), [`cmd/cppgo`](cmd/cppgo) | parsing C++ through libclang, flag discovery, binding selection, carrier routing, emitting Go, assembly and the shim, **and the shim's own C++ compile** | anything, including libclang through `purego` and the C++ compiler |
 
 *purego* is the third-party Go library that calls `dlopen` and `dlsym` without cgo: `dlopen` is the C
@@ -231,12 +232,18 @@ Everything else is carried by a thunk in `zz_cppgo_shim.cpp`. The thunk is C++ c
 The direct carrier and a shim thunk are both ordinary C ABI functions from Go's point of view: `Open`
 resolves a `uintptr`, `ProbeStack` runs, and one NOSPLIT trampoline calls it. The carrier is invisible
 in the API and visible in the report, one line per binding: the C++ signature, the carrier, the symbol
-Go calls (a thunk name, or the mangled symbol), and the reason the carrier was chosen. The format is:
+Go calls, and the reason the carrier was chosen. The carrier column carries `direct` or `thunk`, and
+the symbol column the thunk's name (`cppgo_thunk_<hash>`) or the mangled symbol. A run over
+[`internal/gen/testdata/mathx/vector.hpp`](internal/gen/testdata/mathx/vector.hpp), excerpted from
+the nine bindings it reports, with the scratch paths elided as `…`:
 
 ```
-user::Circle::area      shim    shim_shape_area        virtual
-user::checked_div       direct  _ZN4user11checked_divEii   noexcept, out of line, register class
-user::maxof<double>     shim    shim_maxof_double      template instantiation
+$ cppgo gen -header internal/gen/testdata/mathx/vector.hpp -package mathx -out /tmp/…/mathx -library /tmp/…/libmathx.so
+mathx::Vector::Vector(double, double)        thunk  cppgo_thunk_7d8c482bce3e     not noexcept: an exception would unwind into Go
+mathx::Vector::scale(double) noexcept        direct _ZN5mathx6Vector5scaleEd     noexcept, out of line, not virtual, register class
+mathx::Vector::x() const                     thunk  cppgo_thunk_00064a4bc112     not noexcept: an exception would unwind into Go
+…
+cppgo: built /tmp/…/mathx/libcppgo_mathx.so with /usr/bin/g++
 ```
 
 ### The callback-capable call
@@ -294,7 +301,10 @@ Each argument names one input, and a bracket means the argument is optional:
 `cppgo gen` parses the headers through libclang, selects every public declaration, emits the Go
 package and the shim, compiles the shim, and writes the invocation into the generated file so the
 regeneration command lives in the repository. `cppgo check` runs the same work, writes no output, and
-exits non-zero when a file is stale.
+exits non-zero when a file is stale. `cppgo build` is phase two of § *Templates and the two-phase
+generics flow*: it reads the Go packages named by `-scan`, emits the shim thunks for the template
+instantiations they use, and compiles the shim again. Templates have a section of their own because
+they are the only construct that needs this second command.
 
 **Fallback, a declaration file.** For a project that avoids libclang, the same emitters take a
 hand-written description of the symbols and signatures to bind. It produces the same artefacts and is
@@ -341,8 +351,10 @@ std::int32_t checked_div(std::int32_t a, std::int32_t b);
 } // namespace user
 ```
 
-`cppgo gen` writes this package, and this is the API. The bodies are elided; every function is
-generated in full.
+`cppgo gen` writes this package, and this is the API. The bodies are elided, every function is
+generated in full, and the `// C++:` evidence comments are abbreviated: the real line also carries
+the carrier and the reason the generator chose it (§ *Generation. Input, selection, evidence,
+output*).
 
 ```go
 // Code generated by cppgo gen. DO NOT EDIT.
@@ -435,7 +447,7 @@ generated trampoline calls the user's symbol; *shim* means the cppgo-built thunk
 | 2 | inline / header-only | shim includes the header; the body is compiled into the shim | `TestInlineHeaderOnlyIsReachableOnlyThroughTheShim` (the user's library exports no symbol, the shim does) | a declaration whose definition is not visible to the shim cannot be bound: the user must include the header that defines it, or provide an out-of-line definition |
 | 3 | `std::string` | copied in and out through a buffer; the `std::string` lives and dies inside the shim | `TestStdStringAndVector` | the shim and the library must use the same standard library and the same `_GLIBCXX_USE_CXX11_ABI`, the preprocessor macro that selects between libstdc++'s two incompatible `std::string` implementations |
 | 3 | `std::vector<T>` | copied in and out through the caller's slice | `TestStdStringAndVector/std::vector_in_and_out` | same as `std::string` |
-| 3 | `std::string_view`, `std::span` | borrowed: `(pointer, length)`, no copy, valid for the call | **designed, not measured** (v3 oracle at `5b4fef7`; the shim receives the raw pair and constructs the view) | the callee must not retain the view |
+| 3 | `std::string_view`, `std::span` | borrowed: `(pointer, length)`, no copy, valid for the call | **designed, not measured** (derived from the v3 shim's behaviour, commit `5b4fef7`, which is not on `main`; the shim receives the raw pair and constructs the view) | the callee must not retain the view |
 | 3 | `std::array<T,N>` | by value through the shim | **designed, not measured** | same ABI rule as any by-value aggregate |
 | 3 | `std::optional<T>` | as a parameter `*T` (nil is `nullopt`); as a return `(T, bool)`, or `(T, error)` with `absent:`; the shim constructs and reads it | **designed, not measured** | the two axes are not the same type, and the return axis follows § *Errors from C++ to Go* |
 | 3 | `std::unique_ptr<T>` | a parameter consumes the Go value, a result is owning (`Close` destroys it) | **designed, not measured** | the deleter must be the default one |
@@ -501,11 +513,12 @@ everywhere else. The C++ side catches, the Go side reads a status.
 `std::` types cross at the shim, and the shim is C++ compiled by cppgo. The dependency is therefore
 explicit and checkable rather than a layout trick:
 
-- the shim is compiled with the flags the generator discovered for the header, and with the same
-  compiler family the library was built with. The generator records the compiler it used and the
-  `_GLIBCXX_USE_CXX11_ABI` value it was given, and rejects a shim whose standard library does not
-  match the one the library links (`libstdc++` vs `libc++`, detected from the compiler and its
-  default standard library).
+- the shim is compiled with the flags the generator discovered for the header, which is how a
+  `_GLIBCXX_USE_CXX11_ABI` value the library was built with reaches the shim. The compiler is the one
+  `-cxx` names, else `g++`, else `clang++`, and it is named in the report. What the generator does
+  **not** do yet is detect the library's own standard library (`libstdc++` vs `libc++`) and refuse a
+  shim that disagrees with it: matching the compiler family and the standard library is the user's
+  input today, and a mismatch surfaces when the shim is linked or loaded, not as a generation error.
 - `std::string`'s layout never appears in Go. It appears in the shim. The shim is where a
   `std::string` can legally be constructed.
 - a `std::` type outside the table still crosses as an opaque value, constructed and destroyed by the
@@ -646,7 +659,8 @@ Rules, each of which is a test in `internal/errormap` (`TestConfigValidation`):
 Evidence for the mechanism, end to end, is `internal/errormap`: a user library and the cppgo-built
 shim built as two objects, and six C++ functions covering **five** of the table's rows, a
 `std::error_code` return, a `std::expected<T, std::error_code>` (C++23), a `std::runtime_error`, a
-`std::system_error`, a `bool` + out-parameter function driven by `testdata/cppgo.yaml`, and a
+`std::system_error`, a `bool` + out-parameter function driven by
+[`internal/errormap/testdata/cppgo.yaml`](internal/errormap/testdata/cppgo.yaml), and a
 `ns::Result<T>` inferred from its shape, each asserted with `errors.As` and `errors.Is` on the Go side
 (`TestErrorCodeReturn`, `TestExpectedReturn`, `TestExceptionReturn`, `TestConfiguredOutParamReturn`,
 `TestInferredCustomResult`), plus every validation error above.
@@ -673,21 +687,24 @@ A C++ template only exists where it is instantiated: the compiler emits a functi
 only for the concrete arguments something uses it with, `maxof<int>` and not `maxof` in general. For a
 template-heavy library — Eigen, the C++ linear-algebra template library, above all — the Go API is
 generic and the C++ instantiation is a build step. That is the *two-phase flow*: `cppgo gen` writes
-the generic API, then a second phase adds the C++ instantiations the Go program actually uses. It
-takes four steps:
+the generic API, then a second phase adds the C++ instantiations the Go program actually uses. The
+second phase is the `cppgo build` command, which names the Go packages to read with `-scan` and the
+directory their patterns resolve against with `-scan-dir`. It takes four steps:
 
 1. **the Go program instantiates the generic API** — `Matrix[float64, 4, 4]`,
    `Vector[float32, 3]`. The user writes only the Go program.
-2. **cppgo collects the instantiations** — by type-checking the Go program with `go/packages` and
-   reading the type arguments at each instantiation, or from an explicit list the package declares
-   (the `-instantiate` manifest entries, for a program that wants to pin the set). The output is a
-   list of C++ specialisations: `Eigen::Matrix<double,4,4>`, `Eigen::Vector3f`.
+2. **cppgo collects the instantiations** — `cppgo build -scan ./cmd/...` type-checks the Go program
+   with `go/packages` and reads the type arguments at each instantiation, or takes an explicit list
+   the package declares (the `-instantiate` manifest entries, for a program that wants to pin the
+   set). The output is a list of C++ specialisations: `Eigen::Matrix<double,4,4>`,
+   `Eigen::Vector3f`.
 3. **cppgo emits the shim from that list** — `template struct Eigen::Matrix<double,4,4>;` plus a thunk
    per operation the Go type uses, and **compiles it** into the cppgo artefact that links the
    library.
 4. the generated Go package calls the thunks. The failure mode when a Go instantiation has no C++
-   counterpart is a load-time error naming the exact line to add, measured by
-   `TestTwoPhaseGenerics` (its `int64` subtest).
+   counterpart is a load-time error naming the exact line to add: `TestTwoPhaseGenerics` runs a
+   third program that asks for `Box[int64]`, which the shim was not built for, and asserts the error
+   carries `template struct ::box::Box<std::int64_t>;`.
 
 What each target exercises, and what is out of scope with the reason. They are three real C++
 libraries, each with a different shape of problem: **Eigen** is linear algebra over templates,
@@ -710,7 +727,7 @@ fixture, never a mock, and never a hand-written declaration. A slice is accepted
 its generated package against the real headers, loads the real shared object through the cppgo-built
 shim, and asserts on real values.
 
-Layout, one directory per target:
+Layout, one directory per target. None of them exists yet; they are created with the slices.
 
 ```
 internal/targets/opencv/     generated package (zz_cppgo.gen.go, zz_cppgo_amd64.s) + opencv_test.go
@@ -853,6 +870,13 @@ finds the layer that failed:
 - `*callback.Panic` — a panic raised inside a callback, captured rather than unwound into C++.
 - `ErrClosed`, a sentinel — the receiver has no live object: a nil pointer, or one already closed.
 
+The embedded path of § *Loading* adds four more, each naming the file and the cache directory
+involved: `*ExtractError` (an object that could not be written out), `*DependencyError` (a
+`DT_NEEDED` entry that neither the embedded set nor the loader provides), `*SearchError` (a name no
+search location held, listing the paths that were tried) and `ErrInsecureCache` (a cache path that is
+not a private directory, so extraction is refused). [ADR-0003](docs/adr/0003-embedded-libraries.md)
+owns that mechanism.
+
 The `-status` convention remains available for C++ APIs that report failures as a 32-bit return code.
 The Go binding returns `error` instead of the integer, and wraps the message in `*CallError`.
 
@@ -956,9 +980,9 @@ Rules the contract fixes:
 ## Loading
 
 [`github.com/ebitengine/purego`](https://github.com/ebitengine/purego) is the only third-party runtime
-dependency, and this is deliberate: it solves `dlopen`/`dlsym` without cgo by importing its own stand-in
-for the cgo runtime, `internal/fakecgo`. That package is larger and less forgiving than any loader we
-would write.
+dependency, and this is deliberate: it solves `dlopen`/`dlsym` without cgo by importing its own
+`internal/fakecgo` package, a stand-in for the cgo runtime. That package is larger and less forgiving
+than any loader we would write.
 
 Two entry points hand the process a library: `Open` takes a path, and `OpenFS` first extracts an
 embedded file set into a private per-user cache and loads the object from there
@@ -976,13 +1000,21 @@ own test asserts it.
 
 ## Generation. Input, selection, evidence, output
 
-- **Input.** `-header` (repeatable), `-package`, `-library`, `-compile-commands`, `-bind`,
-  `-exclude`, `-instantiate`, `-rename`, `-status`, and **planned for a later `cppgo gen`**,
-  `-errors cppgo.yaml`, the package's error configuration. When the emitter debt
+The three commands — `cppgo gen`, `cppgo build` and `cppgo check` — share one flag set, which is
+the list below; `gen` ignores `-scan`, because the instantiations are phase two's input.
+
+- **Input.** `-header` (repeatable), `-package`, `-out`, `-library`, `-cxx` (the C++ compiler for the
+  shim, defaulting to `g++`, then `clang++`), `-compile-commands`, `-bind`, `-exclude`, `-instantiate`,
+  `-rename` and `-status`; `-scan` and `-scan-dir`, phase two's input; `-check` and `-q`, which decide
+  what the run does with its result. **Planned for a later `cppgo gen`**: `-errors cppgo.yaml`, the
+  package's error configuration. When the emitter debt
   above is paid it becomes a generation input like the headers, so `cppgo check` fails when it changes
   without a regeneration. Until then the only code that reads it is `internal/errormap`'s tests.
-- **Compilation flags** come from `compile_commands.json` and `.clangd`, in clangd's order, never
-  invented. A database entry's relative paths are rebased against the entry's `directory` — the
+- **Compilation flags** come from `compile_commands.json` and `.clangd`, in clangd's order, and are
+  never invented silently: when neither names the header, the run assumes `-std=c++17` and the
+  header's own directory and says so with a warning, because a parse without the project's real flags
+  can misread the header. A database entry's relative paths are rebased against the entry's
+  `directory` — the
   include search paths (`-I`, `-isystem`, `-iquote`, `-idirafter`) and the included files
   (`-include`, `-imacros`), in both the joined and the separated spelling. clangd does this, and
   libclang does not: it resolves a relative path against cppgo's working directory instead. That is a
@@ -995,20 +1027,35 @@ own test asserts it.
 - **Evidence.** libclang answers types, sizes, offsets, visibility, inline-vs-out-of-line, virtual,
   exception specification, defaulted/deleted special members, template arguments and base lists. The
   ELF tier is a cross-check for direct bindings against the library's `.dynsym`.
-- **Output.** `zz_cppgo.gen.go` (the API), `zz_cppgo_amd64.s` (the trampolines), `zz_cppgo_shim.cpp`
-  (the thunks), and the compiled shim object. The generated Go file carries the exact invocation that
-  produced it.
-- **Shim build step.** cppgo compiles the shim itself. The same compiler family as the library, the
-  discovered flags, `-shared` (or an object for a static link), linked against the library. The
-  compiler, its version, its standard library and `_GLIBCXX_USE_CXX11_ABI` are recorded in the
-  generated file. A compile error is a generation error with the compiler's message, never a symbol
-  that fails at the first call.
+- **Output.** `zz_cppgo.gen.go` (the API), `zz_cppgo_amd64.s` (the trampolines), `cppgo_shim/zz_cppgo_shim.h`
+  and `cppgo_shim/zz_cppgo_shim.cpp` (the thunks), and the compiled shim `libcppgo_<package>.so`, all
+  under `-out`. The generated Go file carries the exact invocation that produced it.
+- **Shim build step.** cppgo compiles the shim itself: the flags discovered for the header, `-fPIC
+  -shared`, `-Wl,-rpath,$ORIGIN` so the shim finds its siblings wherever it lands
+  ([ADR-0003](docs/adr/0003-embedded-libraries.md)), and the library named as a link input by its
+  soname rather than its build path. The compiler is the one `-cxx` names, else `g++`, else
+  `clang++`. Matching the library's compiler family and standard library is the user's input: the
+  generator does not read either back out of the library (§ *The `std::` ABI*). The report's last line
+  names the object and the compiler that built it, `cppgo: built <shim> with <compiler>`. A compile
+  error is a generation error carrying the compiler's message and the binding whose thunk it is in,
+  never a symbol that fails at the first call.
 - **Determinism.** The same inputs produce byte-identical Go and C++. Bindings are sorted by qualified
   name and thunk names come from a stable hash of the qualified signature. `cppgo check` is the CI
   gate, and the golden files under `internal/gen/testdata` are its unit-level equivalent.
 - **Comments.** The C++ doc comment becomes the Go doc comment, and every binding carries exactly one
-  evidence line, `// C++: user::Circle::area() const, _ZNK4user6Circle4areaEv`, and, when the ELF
-  cross-check ran, it ends `, verified against libuser.so`.
+  evidence line: `// C++: <signature>, <mangled> (<carrier>[ <thunk>], <reason>)`, ending
+  `, verified against <library>` when the ELF cross-check ran. Real lines, one per carrier, from
+  [`benchmarks/cppgo/zz_cppgo.gen.go`](benchmarks/cppgo/zz_cppgo.gen.go):
+
+  ```go
+  // C++: bench::Counter::get() const noexcept, _ZNK5bench7Counter3getEv (direct, noexcept, not virtual, register class; the library exports the symbol), verified against libbench.so
+  // C++: bench::Counter::Counter(std::int64_t), _ZN5bench7CounterC1El (thunk cppgo_thunk_d33d476a9f5f, not noexcept: an exception would unwind into Go), verified against libbench.so
+  // C++: bench::fold(const std::function<std::int32_t (std::int32_t, std::int32_t)> &, std::int32_t, std::int32_t), _ZN5bench4foldERKSt8functionIFiiiEEii (reentrant cppgo_thunk_35edc5cea344, callback: the call enters C through runtime.cgocall, so C++ may call back into Go), verified against libbench.so
+  // C++: bench::Counter::Counter(const bench::Counter &), synthesized (thunk cppgo_thunk_568116dd0671, no mangled symbol), verified against libbench.so
+  ```
+
+  `synthesized` stands in for the symbol when the declaration has none of its own, as a
+  compiler-generated copy constructor does.
 
 ## Hard limits, measured
 
@@ -1031,7 +1078,8 @@ These are the places where the contract says "no", with the measurement behind i
    failure a load-time error naming the line to add.
 8. **`long double` and `__int128` have no Go value type.**
 9. **The shim and the library must share a C++ ABI and a standard library.** Mixing libstdc++ and
-   libc++ is a generation error.
+   libc++ breaks the link or the load (§ *The `std::` ABI*). The generator does not detect it yet, so
+   this is a constraint on the input rather than a refusal.
 
 ## What remains a generation error
 

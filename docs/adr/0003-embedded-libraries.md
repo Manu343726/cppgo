@@ -190,8 +190,9 @@ program maps. It offers no defence against a process running as the same user, a
 attacker who can already write the user's cache directory.
 
 **Wiring left to the emitter.** A generated package's `Open` calling
-`cppgo.OpenFS(<package>Files, "libcppgo_shim.so")` with the package's own `//go:embed` is emitter work
-of the v4 emitter. The prototype leaves it out.
+`cppgo.OpenFS(<package>Files, "libcppgo_<package>.so")` — `libcppgo_metrics.so` for the `metrics`
+package — with the package's own `//go:embed` is emitter work of the v4 emitter. The prototype leaves
+it out: the generated `Open` calls `cppgo.Open` today.
 
 ## Evidence
 
@@ -229,9 +230,11 @@ drwx------ demo-cache/cppgo/ae667028…924bf1
 ```
 
 `XDG_CACHE_HOME` moves the cache for this one run, so the demonstration does not touch the user's
-own. The `loaded` line is the path `OpenFS` returned. The `find` output is the cache layout of
-§ *Cache layout and naming*: one directory per set, one flat file per object. The `stat` output is
-the `0700`/`0600` modes of § *Permissions, atomicity and concurrency*, printed the way `ls -l` does —
-a file type character followed by `r`, `w` and `x` for each of owner, group and other, and `-` where
-permission is absent. Eight concurrent runs of that binary all printed the same path and `= 10`, and
-`ls demo-cache/cppgo` held one entry afterwards.
+own. The `loaded` line is the path `OpenFS` returned. The third line is the call that reached C++:
+the fixture's `main_add` doubles its dependency's sum, so `(2, 3)` reports `10`, and a wrong number
+there would mean the sibling was not the object that was extracted. The `find` output is the cache
+layout of § *Cache layout and naming*: one directory per set, one flat file per object. The `stat`
+output is the `0700`/`0600` modes of § *Permissions, atomicity and concurrency*, printed the way
+`ls -l` does — a file type character followed by `r`, `w` and `x` for each of owner, group and
+other, and `-` where permission is absent. Eight concurrent runs of that binary all printed the same
+path and `= 10`, and `ls demo-cache/cppgo` held one entry afterwards.

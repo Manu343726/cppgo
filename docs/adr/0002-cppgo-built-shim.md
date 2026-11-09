@@ -13,11 +13,14 @@
 **user's** build: `cppgo gen` wrote `zz_cppgo_shim.cpp`/`.h` and the user's C++ build compiled them
 into the library the Go side loads. The Go side stayed cgo-free — cgo being Go's own way of calling
 C, which needs a C toolchain at build time — the API stayed complete, and the shim was parsed through
-libclang (the Clang front end's C library) before it was written. On that basis the shim workstream
-landed: [PR #12](https://git.manu343726.com/manu343726/cppgo/pulls/12), commit
-[`5b4fef7`](https://git.manu343726.com/manu343726/cppgo/commit/5b4fef726bb3a63d7e4b828f24d7ec763f460c18),
-verified against base
-[`67366f4`](https://git.manu343726.com/manu343726/cppgo/commit/67366f41ab0325f31a54e4a6a34e819492d13f3d).
+libclang (the Clang front end's C library) before it was written. The shim workstream that decision
+set up then landed as [PR #12](https://git.manu343726.com/manu343726/cppgo/pulls/12) ("cppgo builds
+its own shim — phase 4a"), merge commit
+[`e110cb2`](https://git.manu343726.com/manu343726/cppgo/commit/e110cb2d1276d1c7929e90fcdad9165a959d5086).
+The v3 shim work whose behaviour v4 reuses is commit `5b4fef7` (`test(gen): compile every fixture
+shim with g++ and clang++`), branched from
+[`67366f4`](https://git.manu343726.com/manu343726/cppgo/commit/67366f41ab0325f31a54e4a6a34e819492d13f3d);
+that commit is **not on `main`**, so it is named here without a link.
 
 Three things then became true at once:
 
@@ -52,8 +55,9 @@ construct matrix that proves the third is [`internal/shim`](../../internal/shim)
 ## Decision
 
 **cppgo owns a third artefact.** For a bound header, cppgo emits and compiles `zz_cppgo_shim.cpp`
-into `libcppgo_shim.so` (or a `.a`), linked against the user's library, and the generated Go package
-loads the shim. The user's build and sources are never modified and never include generated code.
+into `libcppgo_<package>.so` — `libcppgo_metrics.so` for `-package metrics` — linked against the
+user's library, and the generated Go package loads the shim. The user's build and sources are never
+modified and never include generated code.
 
 Everything else in ADR-0001's decision survives, with the carrier rules now measured:
 
@@ -76,9 +80,8 @@ Everything else in ADR-0001's decision survives, with the carrier rules now meas
   package calls the thunks. A Go instantiation with no C++ counterpart is a load-time error naming
   the line to add.
 
-The v3 shim work from
-[`5b4fef7`](https://git.manu343726.com/manu343726/cppgo/commit/5b4fef726bb3a63d7e4b828f24d7ec763f460c18)
-is reused as **semantics**. The by-value, `std::`-marshalling and copy-back behaviour it measured is
+The v3 shim work from `5b4fef7` — the commit named in the context, which is not on `main` — is reused
+as **semantics**. The by-value, `std::`-marshalling and copy-back behaviour it measured is
 the acceptance oracle for the v4 thunks, and its direct-carrier selection rule (an exported mangled
 name makes a header-only declaration direct) is kept with its tests. The file it generated for the
 user's build is not part of v4.
@@ -97,8 +100,10 @@ Harder, and stated plainly:
 
 - **cppgo needs a C++ compiler**, and it must match the library's. Same family, same standard
   library, same `_GLIBCXX_USE_CXX11_ABI` — the preprocessor macro that selects between libstdc++'s
-  two incompatible `std::string` implementations. The generator records all three and rejects a
-  mismatch.
+  two incompatible `std::string` implementations. The shim is compiled with the flags discovered for
+  the header, so a value the library was built with reaches it, and `-cxx` names the compiler. The
+  generator does not read the library's own choice back out or reject a mismatch yet: that is the
+  user's input today.
 - **Two objects ship instead of one**, and their load order matters. The shim links the library, so
   opening the shim brings the library in. A missing library is an `Open` error naming the shim and the
   library it needs.
