@@ -118,6 +118,17 @@ is built this way.
 ## Maturity
 
 The generator, the runtime and the examples are implemented and tested. Three
-things are designed and not shipped yet, and every page marks them where they
-appear: the full set of C++ failure conventions, the remaining C++ construct
-support, and the OpenCV, ArrayFire and Eigen target slices.
+example modules bind a slice of a real library each —
+[OpenCV](https://github.com/Manu343726/cppgo/tree/main/examples/opencv),
+[ArrayFire](https://github.com/Manu343726/cppgo/tree/main/examples/arrayfire)
+and [Eigen](https://github.com/Manu343726/cppgo/tree/main/examples/eigen) — and
+each ships the tests that assert its values against the installed library.
+
+Two things are designed and not shipped yet, and every page marks them where
+they appear: the full set of C++ failure conventions, and the remaining C++
+construct support.
+
+A slice covers the declarations the generator carries today, not the whole
+library. `cv::Mat`, `af::array` and Eigen's matrix types are not bound, so the
+image, array and matrix work is not available through those modules, and
+[Limits]({{< ref "explanation/limits.md" >}}) names the refusal behind each.
