@@ -55,7 +55,8 @@ packaging choices, each with the deployment it suits:
 | 3 | the directory the shim was opened from, when `path` contains a slash and the library sits there | the default: ship the pair in one directory |
 | 4 | the *recorded name*, resolved by the dynamic loader's own search | the library lives in a system directory |
 
-The recorded name is the string the shim stores as its dependency: the
+The recorded name is the dependency name the shim stores for your library
+(`DT_NEEDED` in its dynamic section) and the generated Go looks for: the
 *soname* — the short name (`libmylib.so.1`) a shared object records inside itself
 when it is built, so that programs can depend on the name rather than on a path.
 A library built without a soname is recorded under its file name.
@@ -65,13 +66,15 @@ call; a later change is not observed. `CPPGO_LIBRARY_PATH` holds one path here,
 the library itself — the generated package does not split it into a list.
 
 `Open("")` uses the name the package was generated with, which the loader
-resolves through its own search path — **not** the current directory. That search
-is, in order: `DT_RPATH` recorded in the object that is asking, and only when that
-object has no `DT_RUNPATH`; `LD_LIBRARY_PATH`; the asking object's `DT_RUNPATH`;
-the cache `/etc/ld.so.cache`, built by `ldconfig`; then `/lib` and `/usr/lib`.
-`DT_RPATH` and `DT_RUNPATH` are the same kind of list, recorded in an object at
-link time with `-rpath`; the difference is where they sit in that order. The shim
-cppgo builds carries `DT_RUNPATH = $ORIGIN`, meaning "the directory this object is
+searches for rather than opening as a path — the current directory is not part of
+that search. When the loader resolves a name, it searches, in order: `DT_RPATH`
+of the object that is asking (the Go program when `Open` asks for the shim, the
+shim when it asks for your library), and only when that object has no
+`DT_RUNPATH`; `LD_LIBRARY_PATH`; the asking object's `DT_RUNPATH`; the cache
+`/etc/ld.so.cache`, built by `ldconfig`; then `/lib` and `/usr/lib`. `DT_RPATH`
+and `DT_RUNPATH` are the same kind of list, recorded in an object at link time
+with `-rpath`; the difference is where they sit in that order. The shim cppgo
+builds carries `DT_RUNPATH = $ORIGIN`, meaning "the directory this object is
 in".
 
 The mechanism behind this order, and the names recorded in the files, is in
