@@ -23,7 +23,7 @@ func TestGeneratedGoShape(t *testing.T) {
 		"var _ [16]byte = [unsafe.Sizeof(Point{})]byte{}",
 		"var _ [8]byte = [unsafe.Offsetof(Point{}.Y)]byte{}",
 		"// Vector is mathx::Vector. The object belongs to C++; obj is where it lives.",
-		"type Vector struct {\n\tobj *cppgo.Object\n}",
+		"type Vector struct {\n\tobj *cppgo.Object\n\t// view is the address of this value inside the object, 0 for the object itself.\n\taddr uintptr\n}",
 		"func (v *Vector) cppgoAddr() uintptr",
 		"func NewVector(",
 		"cppgo.NewObject(16, 8, func() {",

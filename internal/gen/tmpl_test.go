@@ -53,8 +53,8 @@ func TestInstantiateOutput(t *testing.T) {
 	files := renderMap(t, tmplConfig())
 	gen := files[GenFileName]
 	for _, want := range []string{
-		"type CellInt struct {\n\tobj *cppgo.Object\n}",
-		"type CellFloat64 struct {\n\tobj *cppgo.Object\n}",
+		"type CellInt struct {\n\tobj *cppgo.Object\n\t// view is the address of this value inside the object, 0 for the object itself.\n\taddr uintptr\n}",
+		"type CellFloat64 struct {\n\tobj *cppgo.Object\n\t// view is the address of this value inside the object, 0 for the object itself.\n\taddr uintptr\n}",
 		"func NewCellInt(value int32) (*CellInt, error)",
 		"func NewCellFloat64(value float64) (*CellFloat64, error)",
 		"func (c *CellInt) Get() (int32, error)",
