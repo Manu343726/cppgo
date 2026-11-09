@@ -92,7 +92,7 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		start := shimLine(&s)
 		fmt.Fprintf(&s, "extern \"C\" %s %s(%s) {\n", shimReturnType(binding), binding.Thunk, shimParams(binding))
 		if len(binding.Block) > 0 {
-			fmt.Fprintf(&s, "\tconst %s *cppgo_args = static_cast<const %s *>(cppgo_block);\n", binding.BlockType, binding.BlockType)
+			fmt.Fprintf(&s, "\tconst %s *cppgo_args = static_cast<const %s *>(cppgo_block);\n", binding.blockType(), binding.blockType())
 		}
 		s.WriteString(body)
 		s.WriteString("}\n")
@@ -118,17 +118,17 @@ func shimLine(b *strings.Builder) int { return strings.Count(b.String(), "\n") +
 // sizeof and offsetof, so a disagreement is a compile error on one side or the
 // other rather than a wrong value at run time.
 func writeArgumentBlock(s *strings.Builder, binding *binding) {
-	fmt.Fprintf(s, "\n// %s is the argument block %s unpacks: the words the register\n// file cannot hold, in the order the declaration names them.\n", binding.BlockType, binding.Thunk)
-	fmt.Fprintf(s, "struct %s {\n", binding.BlockType)
+	fmt.Fprintf(s, "\n// %s is the argument block %s unpacks: the words the register\n// file cannot hold, in the order the declaration names them.\n", binding.blockType(), binding.Thunk)
+	fmt.Fprintf(s, "struct %s {\n", binding.blockType())
 	for _, arg := range binding.Block {
 		fmt.Fprintf(s, "\t%s %s;\n", blockFieldType(arg.slotType), arg.cName)
 	}
 	s.WriteString("};\n")
 	fmt.Fprintf(s, "static_assert(sizeof(%s) == %d, \"cppgo: the argument block of %s is the size the Go side asserts\");\n",
-		binding.BlockType, binding.BlockSize, binding.sym.QualifiedName)
+		binding.blockType(), binding.BlockSize, binding.sym.QualifiedName)
 	for i, arg := range binding.Block {
 		fmt.Fprintf(s, "static_assert(offsetof(%s, %s) == %d, \"cppgo: the argument block of %s has the offset the Go side asserts\");\n",
-			binding.BlockType, arg.cName, binding.BlockOffsets[i], binding.sym.QualifiedName)
+			binding.blockType(), arg.cName, binding.BlockOffsets[i], binding.sym.QualifiedName)
 	}
 }
 

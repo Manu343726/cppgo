@@ -290,10 +290,10 @@ type binding struct {
 	// block the thunk unpacks, nil when the call fits the register file. When it
 	// is set, Wire holds one pointer to the block plus the out-parameters.
 	Block []*wireArg
-	// BlockType is the Go and C name of the block struct, BlockSize its size in
-	// bytes, and BlockOffsets each field's offset, for the assertions both
-	// compilers check.
-	BlockType    string
+	// BlockSize is the block struct's size in bytes and BlockOffsets each
+	// field's offset, for the assertions both compilers check. The struct's name
+	// is derived from the final ID (see blockType), because a default-argument
+	// prefix is re-salted after it is built.
 	BlockSize    int
 	BlockOffsets []int
 	// blockReads maps a thunk parameter name to the expression that reads it out
@@ -1713,7 +1713,6 @@ func (b *builder) buildArgumentBlock(binding *binding) error {
 		return fmt.Errorf("cppgo: %s: the call needs %d words after the argument block, past the register file", binding.sym.QualifiedName, 1+len(rest))
 	}
 	binding.Block = inputs
-	binding.BlockType = "cppgoArgs_" + binding.ID
 	offset, align := 0, 1
 	for _, arg := range inputs {
 		size := wireWordSize(arg.slotType)
@@ -1803,6 +1802,11 @@ func blockFieldType(slotType string) string {
 		return "void *"
 	}
 }
+
+// blockType is the name the block struct has in both languages: it is derived
+// from the binding's final ID, so a binding re-salted for an overloaded default
+// argument never names a struct another binding also declares.
+func (b *binding) blockType() string { return "cppgoArgs_" + b.ID }
 
 // inputs are the arguments the callee receives, in declaration order: the wire
 // when the register file carries them, and the block fields when it does not.

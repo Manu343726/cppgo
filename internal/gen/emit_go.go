@@ -464,9 +464,8 @@ func (m *packageModel) emitClone(b *strings.Builder, record *recordModel, clone 
 	} else {
 		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
 	}
-	for _, assignment := range m.blockAssignments(clone, ctx) {
-		fmt.Fprintf(b, "\t%s\n", assignment)
-	}
+	// A copy constructor takes one argument — the object being copied — so it
+	// can never need an argument block.
 	call := clone.Trampoline + "(" + strings.Join(m.callArgs(clone, ctx), ", ") + ")"
 	if clone.Status {
 		fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
@@ -1026,16 +1025,13 @@ func (m *packageModel) blockAssignments(binding *binding, ctx callContext) []str
 		return nil
 	}
 	out := make([]string, 0, len(binding.Block)+1)
-	out = append(out, "var cppgoBlock "+binding.BlockType)
-	cloneSource := binding.IsClone
+	out = append(out, "var cppgoBlock "+binding.blockType())
 	for _, arg := range binding.Block {
 		expr := arg.expr
-		switch {
-		case arg.label == "this":
+		if arg.label == "this" {
+			// The receiver is the one value that comes from the Go side rather
+			// than from a parameter.
 			expr = ctx.thisExpr
-		case cloneSource:
-			expr = ctx.recvExpr
-			cloneSource = false
 		}
 		out = append(out, "cppgoBlock."+arg.cName+" = "+expr)
 	}
@@ -1052,15 +1048,15 @@ func (m *packageModel) emitArgumentBlocks(b *strings.Builder) {
 			continue
 		}
 		fmt.Fprintf(b, "\n// %s is the argument block of %s: the %d argument words the\n// register file cannot hold, in declaration order. The shim declares the same\n// fields and asserts every offset.\n",
-			binding.BlockType, displaySignature(binding.sym), len(binding.Block))
-		fmt.Fprintf(b, "type %s struct {\n", binding.BlockType)
+			binding.blockType(), displaySignature(binding.sym), len(binding.Block))
+		fmt.Fprintf(b, "type %s struct {\n", binding.blockType())
 		for _, arg := range binding.Block {
 			fmt.Fprintf(b, "\t%s %s\n", arg.cName, arg.slotType)
 		}
 		b.WriteString("}\n")
-		fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Sizeof(%s{})]byte{}\n", binding.BlockSize, binding.BlockType)
+		fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Sizeof(%s{})]byte{}\n", binding.BlockSize, binding.blockType())
 		for i, arg := range binding.Block {
-			fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Offsetof(%s{}.%s)]byte{}\n", binding.BlockOffsets[i], binding.BlockType, arg.cName)
+			fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Offsetof(%s{}.%s)]byte{}\n", binding.BlockOffsets[i], binding.blockType(), arg.cName)
 		}
 	}
 }
