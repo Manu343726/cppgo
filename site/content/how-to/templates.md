@@ -264,7 +264,8 @@ kept at a fixed address so C++ can find it again ([Runtime]({{< ref "reference/r
 documents it). The methods hang off that handle, so `NewAccumulator[int32](10)` is
 the constructor, `i.Add(5)` the C++ `add`, and `i.Close()` the C++ destructor.
 `Add` and `Total` return an `error` because the C++ members can throw; `Close`
-returns `cppgo.ErrClosed` when the receiver has no live object.
+returns `cppgo.ErrClosed` — the sentinel error every generated handle returns
+once it is closed — when the receiver has no live object.
 
 This package compiles, and `go vet` passes on it, with no instantiation at all.
 The type argument is still open, which is the point of phase one: the Go program

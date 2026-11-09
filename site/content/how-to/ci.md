@@ -164,7 +164,9 @@ func TestMain(m *testing.M) {
 
 `TestMain` runs once before any test in the package. It sets
 `CppgoLibraryPath` — the package variable the generated code reads when it opens
-the library — to an absolute path, and calls `Open` on the shim. The variable is
+the library — to an absolute path, and calls `Open` on the shim. `CPPGO_FULL_SHIM`
+in the snippet is the example's own override for the shim path, read by its
+program and its test and by no cppgo code. The variable `CppgoLibraryPath` is
 read once, at open time, so it has to be set before the first generated call;
 `TestMain` is the earliest point a test package controls.
 
