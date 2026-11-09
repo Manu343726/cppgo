@@ -7,16 +7,6 @@
 
 namespace metrics {
 
-// The state the header hides. It never crosses the Go boundary: Go holds a
-// Histogram, and a Histogram holds this pointer.
-struct Histogram::Impl {
-    std::string name;
-    std::vector<double> bounds;
-    std::vector<std::size_t> counts;
-    std::size_t total;
-    double sum;
-};
-
 namespace {
 
 // uniform_bounds is the bucket edges of a histogram over [0, 1]: buckets + 1
@@ -51,16 +41,16 @@ std::int32_t validates_name(const std::string &name) {
 } // namespace
 
 Histogram::Histogram(std::string name, std::size_t buckets)
-    : impl_(new Impl{std::move(name), uniform_bounds(buckets),
-                     std::vector<std::size_t>(buckets, 0), 0, 0.0}) {}
+    : name_(std::move(name)), bounds_(uniform_bounds(buckets)),
+      counts_(buckets, 0), total_(0), sum_(0.0) {}
 
-Histogram::Histogram(const Histogram &other) : impl_(new Impl(*other.impl_)) {}
+Histogram::Histogram(const Histogram &other) = default;
 
-Histogram::~Histogram() { delete impl_; }
+Histogram::~Histogram() = default;
 
-std::size_t Histogram::buckets() const noexcept { return impl_->counts.size(); }
+std::size_t Histogram::buckets() const noexcept { return counts_.size(); }
 
-double Histogram::total() const noexcept { return static_cast<double>(impl_->total); }
+double Histogram::total() const noexcept { return static_cast<double>(total_); }
 
 std::int32_t Histogram::version() noexcept { return 4; }
 
@@ -72,30 +62,30 @@ void Histogram::observe(double value) {
         throw std::out_of_range("a sample must lie in [0, 1]");
     }
     // The last bucket owns the right edge, so 1.0 is counted.
-    std::size_t bucket = impl_->counts.size() - 1;
-    for (std::size_t i = 0; i < impl_->counts.size(); ++i) {
-        if (value < impl_->bounds[i + 1]) {
+    std::size_t bucket = counts_.size() - 1;
+    for (std::size_t i = 0; i < counts_.size(); ++i) {
+        if (value < bounds_[i + 1]) {
             bucket = i;
             break;
         }
     }
-    ++impl_->counts[bucket];
-    ++impl_->total;
-    impl_->sum += value;
+    ++counts_[bucket];
+    ++total_;
+    sum_ += value;
 }
 
 double Histogram::mean() const {
-    if (impl_->total == 0) {
+    if (total_ == 0) {
         throw std::runtime_error("the histogram is empty");
     }
-    return impl_->sum / static_cast<double>(impl_->total);
+    return sum_ / static_cast<double>(total_);
 }
 
-std::string Histogram::name() const { return impl_->name; }
+std::string Histogram::name() const { return name_; }
 
-std::vector<double> Histogram::bounds() const { return impl_->bounds; }
+std::vector<double> Histogram::bounds() const { return bounds_; }
 
-std::vector<std::size_t> Histogram::counts() const { return impl_->counts; }
+std::vector<std::size_t> Histogram::counts() const { return counts_; }
 
 Point centroid(Point a, Point b) noexcept {
     return Point{(a.x + b.x) / 2.0, (a.y + b.y) / 2.0};

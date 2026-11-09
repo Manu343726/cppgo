@@ -41,9 +41,9 @@ struct Point {
 // An opaque class: all of its state is private, and its size and layout stay
 // on the C++ side. Go holds a pointer to an object C++ constructed.
 //
-// The state lives behind an Impl pointer, the usual pimpl: the header carries
-// no standard-library member, so a change to the implementation does not
-// recompile every caller. The Go side never sees any of it either way.
+// The state is the standard library's: a std::string and two std::vectors. The
+// Go side never sees any of it: a container member is copied in and out by the
+// generated accessors exactly like a container parameter.
 class Histogram {
 public:
     Histogram(std::string name, std::size_t buckets);
@@ -74,8 +74,11 @@ public:
     std::vector<std::size_t> counts() const;
 
 private:
-    struct Impl;
-    Impl *impl_;
+    std::string name_;
+    std::vector<double> bounds_;
+    std::vector<std::size_t> counts_;
+    std::size_t total_;
+    double sum_;
 };
 
 // A POD by value, noexcept and out of line: the direct carrier in both
