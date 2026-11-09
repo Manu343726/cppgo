@@ -113,6 +113,12 @@ There are two ways to supply them, and cppgo uses whichever it finds first:
               -compile-commands build/compile_commands.json -out .
   ```
 
+  That is the whole command: `-header` names the declaration file, `-package`
+  the Go package to write, `-compile-commands` the database, and `-out` where the
+  package goes (step 4 lists every flag). On success it prints the per-binding
+  report of step 5; a wrong path in `-compile-commands` is the failure you will
+  meet first.
+
   Without `-compile-commands`, cppgo also looks for a `compile_commands.json` in
   the header's directory and in each directory above it, and uses the nearest
   one.
@@ -158,17 +164,20 @@ project-relative name can still fail to parse.
 
 By default, the header is the unit of selection: every public declaration in it
 is bound, plus the types those declarations use. For a large library, narrow the
-set with roots and exclusions:
+set by naming *roots*. A root is one entry of that selection — a namespace, a
+class, a member or a free function, named the way C++ names it. `-bind` adds a
+root and `-exclude` removes one; both are repeatable, and `-exclude` wins over
+`-bind` for the subtree it names:
 
 ```console
 $ cppgo gen -header include/opencv2/core.hpp -package core \
             -bind cv::Mat -bind 'cv::cvtColor' -exclude 'cv::detail' -out ./cvcore
 ```
 
-A *root* is one entry of that selection — a namespace, a class, a member or a
-free function, named the way C++ names it. `-bind` adds a root and `-exclude`
-removes one; both are repeatable, and `-exclude` wins over `-bind` for the
-subtree it names. An entry that names nothing is an error, never a silent no-op:
+That is the command of step 4 with three flags added: `-bind` and `-exclude` as
+described above, and `-out ./cvcore`, the directory the package is written to. On
+success it prints the report step 5 decodes. An entry that names nothing is an
+error, never a silent no-op:
 
 ```
 cppgo gen: cppgo: -bind cv::Maat: it names nothing this header declares
@@ -180,6 +189,8 @@ mode worth an error, because nobody notices a missing function until it is neede
 The same check applies to `-rename` and `-status` entries.
 
 ## 4. Run it
+
+The command for the scenario, with every flag it takes explained below it:
 
 ```console
 $ cppgo gen -header include/mathx/vector.hpp -package mathx \
