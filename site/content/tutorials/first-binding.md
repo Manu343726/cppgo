@@ -35,8 +35,8 @@ function the generator uses, and generation fails at load time if yours is older
 
 ## The scenario
 
-The example below is in the repository:
-[`examples/mathx`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx).
+The example this lesson uses is in the repository:
+[`examples/mathx`](https://github.com/Manu343726/cppgo/tree/main/examples/mathx).
 It is a small C++17 library with one class, a two-dimensional vector, built by
 its own `Makefile`; nothing in it mentions cppgo. Every command in this lesson is
 one of that `Makefile`'s targets, so you can run them while you read.
