@@ -96,9 +96,9 @@ These are not part of a shipped program:
 | File | Contents |
 |---|---|
 | [`zz_cppgo.gen.go`](../../examples/mathx/zz_cppgo.gen.go) | the Go API, an `Open` function that loads the objects, and one declaration per trampoline |
-| [`zz_cppgo_amd64.s`](../../examples/mathx/zz_cppgo_amd64.s) | one `NOSPLIT` assembly trampoline per binding: it aligns the stack, makes the call and restores it |
+| [`zz_cppgo_amd64.s`](../../examples/mathx/zz_cppgo_amd64.s) | one `NOSPLIT` assembly trampoline per binding the reentrant carrier does not take — the direct and the thunk carriers — plus `cppgoFree` when the package frees C++ storage; each trampoline aligns the stack, makes the call and restores it. Measured: `grep -c '^TEXT '` is 13 in [`examples/mathx/zz_cppgo_amd64.s`](../../examples/mathx/zz_cppgo_amd64.s) (12 thunks + 1 direct) and 17 in [`examples/full/gen/zz_cppgo_amd64.s`](../../examples/full/gen/zz_cppgo_amd64.s) (16 trampolines + `cppgoFree`) |
 | [`cppgo_shim/zz_cppgo_shim.h`](../../examples/mathx/cppgo_shim/zz_cppgo_shim.h) | the `extern "C"` prototypes of the thunks |
-| [`cppgo_shim/zz_cppgo_shim.cpp`](../../examples/mathx/cppgo_shim/zz_cppgo_shim.cpp) | the thunks, one per binding the direct trampoline cannot carry |
+| [`cppgo_shim/zz_cppgo_shim.cpp`](../../examples/mathx/cppgo_shim/zz_cppgo_shim.cpp) | the thunks, one per binding the shim carries |
 | `libcppgo_<package>.so` | the shim, compiled by cppgo and linked against the user's library. `<package>` is the name given to `-package` |
 
 The first four are sources and are committed by the examples and the benchmark
