@@ -454,10 +454,11 @@ pipeline.
 | Limit | What it means |
 |---|---|
 | Type arguments are scalars and pointers to scalars | `bool`, the sized integers, `float32`, `float64`, and pointers to them. A `string` argument is refused with "the Go type string is not a scalar the two-phase flow carries yet": pass a `[]byte` or a scalar instead |
-| Member function templates are refused | "the member function template X is not emitted by this build yet" — expose the concrete instantiation as a non-template member |
-| Operators and conversion operators are refused | a template whose API is `operator+` cannot be bound yet; give it a named member |
+| Member function templates are not in the generic API | `<declaration> is a member function template and is not bound: name its concrete instantiation as a non-template member beside it` — the concrete specialization carries it |
+| An operator of a class template is not in the generic API | `<signature> is not part of the generic API: an operator of a class template is bound on each concrete specialization instead` — the specialization carries `operator+` as `Add` |
 | A public field in a class template is refused | "the public field X of a template is not emitted by this build yet" — make the field private and expose an accessor, or bind one concrete instantiation with `-instantiate` |
-| A template that derives from a base | the template is emitted, but only its own members: the inherited ones are not in the Go API. Bind the base separately, or expose them through the derived class |
+| A function template whose signature names a dependent type stops the run | `"<type>" is not a type this build classifies` — a parameter pack (`af::eval`) or a type such as `Eigen::NoAlias` has no shape in the generic API; write the parameter as a scalar, a pointer or a reference |
+| A template that derives from a base | the generic API emits the template's own members; a specialization synthesized from the pattern does not copy the inherited ones either, and the warning says so. `As<Base>()` still reaches the base |
 
 Each of those is a construct this build does not bind, not a configuration you
 have missed, and the [limits page]({{< ref "explanation/limits.md" >}}) lists
@@ -465,10 +466,12 @@ each one. The Eigen module in
 [`examples/eigen`](https://github.com/Manu343726/cppgo/tree/main/examples/eigen)
 binds the library's configuration enums and thread functions in one `cppgo gen`
 pass, because none of them is a template. Its matrix types are class templates,
-and the two-phase flow meets Eigen's own wall there: the explicit instantiation
-it writes instantiates every constructor, and Eigen's constructors static-assert
-the vector sizes they are declared for, so no matrix size compiles. That is why
-no matrix type is in the module.
+and the generic API names a template's non-type parameters with `D1`..`D8` and
+`Dynamic`; Eigen's `Options` parameter has no phantom type for the value `0`, so
+the usual `Matrix<double,-1,-1,0,-1,-1>` cannot be spelled there. A
+specialization whose non-type arguments all have a phantom type does go through
+the two-phase flow, where each thunk instantiates only the members it calls.
+That is why no matrix type is in the module.
 
 ## What you just did
 
