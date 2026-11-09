@@ -200,7 +200,7 @@ func cppgoBool(v bool) int64 {
 	return 0
 }
 
-// Number is ops::Number. The object belongs to C++; obj is where it lives.
+// Number is ops::Number (sizeof 8). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A number with an overloaded arithmetic surface.
 type Number struct {

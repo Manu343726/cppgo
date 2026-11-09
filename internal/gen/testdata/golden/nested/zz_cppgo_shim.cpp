@@ -30,12 +30,8 @@ extern "C" const char *cppgo_last_error(void) {
 	return cppgo_error_message.c_str();
 }
 
-extern "C" double cppgo_thunk_69caaf1ac697(const void * self) {
-	return static_cast<const ::nested::Box<double>::Slot *>(self)->value;
-}
-
-extern "C" void cppgo_thunk_b7515a44159b(void * self, double value) {
-	static_cast<::nested::Box<double>::Slot *>(self)->value = value;
+extern "C" void cppgo_thunk_4258c40f37a8(void * self) {
+	new (self) ::nested::Box<double>();
 }
 
 extern "C" int32_t cppgo_thunk_f5a0fc22f71a(const void * self, double * cppgo_result) {
@@ -60,8 +56,8 @@ extern "C" void cppgo_thunk_2d3c65cca5e0(void * self, double value) {
 	static_cast<::nested::Box<double> *>(self)->set(value);
 }
 
-extern "C" void cppgo_thunk_2ab08dcc1fb8(const void * self, const void ** cppgo_result) {
-	*cppgo_result = static_cast<void *>(const_cast<::nested::Box<double>::Slot *>(&(static_cast<const ::nested::Box<double> *>(self)->slot())));
+extern "C" const void * cppgo_thunk_2ab08dcc1fb8(const void * self) {
+	return reinterpret_cast<const void *>(&(static_cast<const ::nested::Box<double> *>(self)->slot()));
 }
 
 extern "C" int32_t cppgo_thunk_cd198751f776(void * self) {
@@ -78,12 +74,8 @@ extern "C" int32_t cppgo_thunk_cd198751f776(void * self) {
 	}
 }
 
-extern "C" int32_t cppgo_thunk_6acbf582c31d(const void * self) {
-	return static_cast<const ::nested::Box<int>::Slot *>(self)->value;
-}
-
-extern "C" void cppgo_thunk_ace9ca410133(void * self, int32_t value) {
-	static_cast<::nested::Box<int>::Slot *>(self)->value = value;
+extern "C" void cppgo_thunk_8c92f829796a(void * self) {
+	new (self) ::nested::Box<int>();
 }
 
 extern "C" int32_t cppgo_thunk_287866fbe240(const void * self, int32_t * cppgo_result) {
@@ -108,8 +100,8 @@ extern "C" void cppgo_thunk_74fbfe7307c2(void * self, int32_t value) {
 	static_cast<::nested::Box<int> *>(self)->set(value);
 }
 
-extern "C" void cppgo_thunk_c446c210d48e(const void * self, const void ** cppgo_result) {
-	*cppgo_result = static_cast<void *>(const_cast<::nested::Box<int>::Slot *>(&(static_cast<const ::nested::Box<int> *>(self)->slot())));
+extern "C" const void * cppgo_thunk_c446c210d48e(const void * self) {
+	return reinterpret_cast<const void *>(&(static_cast<const ::nested::Box<int> *>(self)->slot()));
 }
 
 extern "C" int32_t cppgo_thunk_ce57d3d272b8(void * self) {

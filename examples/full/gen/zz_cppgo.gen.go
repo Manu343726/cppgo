@@ -239,7 +239,7 @@ func cppgoCloseError(symbol string) error {
 	return nil
 }
 
-// Histogram is metrics::Histogram. The object belongs to C++; obj is where it lives.
+// Histogram is metrics::Histogram (sizeof 96). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 type Histogram struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.

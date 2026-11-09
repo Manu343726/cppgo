@@ -34,7 +34,7 @@ func TestDocFixtureIsEmittedAsGoDoc(t *testing.T) {
 		},
 		{
 			name: "a class comment that does not open with the name",
-			want: "// Circle is docs::Circle. The object belongs to C++; obj is where it lives.\n" +
+			want: "// Circle is docs::Circle (sizeof 1). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.\n" +
 				"//\n" +
 				"// A circle.\n" +
 				"//\n" +

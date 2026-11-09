@@ -164,7 +164,7 @@ func cppgoCloseError(symbol string) error {
 	return nil
 }
 
-// Thing is over::Thing. The object belongs to C++; obj is where it lives.
+// Thing is over::Thing (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 type Thing struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.

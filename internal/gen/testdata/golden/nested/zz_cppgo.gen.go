@@ -43,10 +43,8 @@ var (
 
 // Resolved by cppgoOpen before any binding runs.
 var (
-	// cppgo_thunk_69caaf1ac697
-	cppgoSym_69caaf1ac697 uintptr
-	// cppgo_thunk_b7515a44159b
-	cppgoSym_b7515a44159b uintptr
+	// cppgo_thunk_4258c40f37a8
+	cppgoSym_4258c40f37a8 uintptr
 	// cppgo_thunk_f5a0fc22f71a
 	cppgoSym_f5a0fc22f71a uintptr
 	// cppgo_thunk_e6477e0c30d6
@@ -57,10 +55,8 @@ var (
 	cppgoSym_2ab08dcc1fb8 uintptr
 	// cppgo_thunk_cd198751f776
 	cppgoSym_cd198751f776 uintptr
-	// cppgo_thunk_6acbf582c31d
-	cppgoSym_6acbf582c31d uintptr
-	// cppgo_thunk_ace9ca410133
-	cppgoSym_ace9ca410133 uintptr
+	// cppgo_thunk_8c92f829796a
+	cppgoSym_8c92f829796a uintptr
 	// cppgo_thunk_287866fbe240
 	cppgoSym_287866fbe240 uintptr
 	// cppgo_thunk_1ad6e68e72ec
@@ -132,15 +128,13 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		addr *uintptr
 		shim bool
 	}{
-		{name: "cppgo_thunk_69caaf1ac697", addr: &cppgoSym_69caaf1ac697, shim: true},
-		{name: "cppgo_thunk_b7515a44159b", addr: &cppgoSym_b7515a44159b, shim: true},
+		{name: "cppgo_thunk_4258c40f37a8", addr: &cppgoSym_4258c40f37a8, shim: true},
 		{name: "cppgo_thunk_f5a0fc22f71a", addr: &cppgoSym_f5a0fc22f71a, shim: true},
 		{name: "cppgo_thunk_e6477e0c30d6", addr: &cppgoSym_e6477e0c30d6, shim: true},
 		{name: "cppgo_thunk_2d3c65cca5e0", addr: &cppgoSym_2d3c65cca5e0, shim: true},
 		{name: "cppgo_thunk_2ab08dcc1fb8", addr: &cppgoSym_2ab08dcc1fb8, shim: true},
 		{name: "cppgo_thunk_cd198751f776", addr: &cppgoSym_cd198751f776, shim: true},
-		{name: "cppgo_thunk_6acbf582c31d", addr: &cppgoSym_6acbf582c31d, shim: true},
-		{name: "cppgo_thunk_ace9ca410133", addr: &cppgoSym_ace9ca410133, shim: true},
+		{name: "cppgo_thunk_8c92f829796a", addr: &cppgoSym_8c92f829796a, shim: true},
 		{name: "cppgo_thunk_287866fbe240", addr: &cppgoSym_287866fbe240, shim: true},
 		{name: "cppgo_thunk_1ad6e68e72ec", addr: &cppgoSym_1ad6e68e72ec, shim: true},
 		{name: "cppgo_thunk_74fbfe7307c2", addr: &cppgoSym_74fbfe7307c2, shim: true},
@@ -209,7 +203,7 @@ func cppgoCloseError(symbol string) error {
 	return nil
 }
 
-// BoxFloat64 is nested::Box<double>. The object belongs to C++; obj is where it lives.
+// BoxFloat64 is nested::Box<double> (sizeof 24). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 type BoxFloat64 struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.
@@ -226,6 +220,28 @@ func (b *BoxFloat64) cppgoAddr() uintptr {
 		return b.addr
 	}
 	return b.obj.Addr()
+}
+
+// NewBoxFloat64 constructs a nested::Box<double>.
+//
+// C++: nested::Box<double>::Box(), synthesized (thunk cppgo_thunk_4258c40f37a8, no mangled symbol)
+func NewBoxFloat64() (*BoxFloat64, error) {
+	if err := cppgoOpen(""); err != nil {
+		return nil, err
+	}
+	cppgo.ProbeStack()
+	constructed := false
+	var obj *cppgo.Object
+	obj = cppgo.NewObject(24, 8, func() {
+		if !constructed {
+			return
+		}
+		cppgo.ProbeStack()
+		cppgoCall_cd198751f776(cppgoSym_cd198751f776, obj.Addr())
+	})
+	cppgoCall_4258c40f37a8(cppgoSym_4258c40f37a8, obj.Addr())
+	constructed = true
+	return &BoxFloat64{obj: obj}, nil
 }
 
 // Close destroys the object. It returns cppgo.ErrClosed when the receiver has no live object.
@@ -294,15 +310,9 @@ func (b *BoxFloat64) Slot() *BoxFloat64Slot {
 		panic(err)
 	}
 	cppgo.ProbeStack()
-	var cppgoResult unsafe.Pointer
-	cppgoCall_2ab08dcc1fb8(cppgoSym_2ab08dcc1fb8, b.cppgoAddr(), unsafe.Pointer(&cppgoResult))
-	cppgo.KeepAlive(b, &cppgoResult)
-	// A borrowed record result is a view: the receiver's object, one more reference.
-	if cppgoResult == nil {
-		return nil
-	}
-	b.obj.Retain()
-	return &BoxFloat64Slot{obj: b.obj, addr: uintptr(cppgoResult)}
+	cppgoRet := cppgoCall_2ab08dcc1fb8(cppgoSym_2ab08dcc1fb8, b.cppgoAddr())
+	cppgo.KeepAlive(b)
+	return (*BoxFloat64Slot)(cppgoRet)
 }
 
 // Kind calls nested::Box<double>::kind.
@@ -323,69 +333,30 @@ func (b *BoxFloat64) Kind() BoxFloat64Kind {
 	return BoxFloat64Kind(cppgoRet)
 }
 
-// BoxFloat64Slot is nested::Box<double>::Slot. The object belongs to C++; obj is where it lives.
+// BoxFloat64Slot is nested::Box<double>::Slot: a POD, 8 bytes, Value at offset 0.
 type BoxFloat64Slot struct {
-	obj *cppgo.Object
-	// view is the address of this value inside the object, 0 for the object itself.
-	addr uintptr
+	Value float64
 }
 
-// cppgoAddr is the object address handed to C++, or 0 for a nil or closed
-// value.
-func (b *BoxFloat64Slot) cppgoAddr() uintptr {
-	if b == nil || b.obj == nil {
-		return 0
+// The C++ layout is proven at compile time: a wrong size, alignment or
+// field offset does not compile.
+var _ [8]byte = [unsafe.Sizeof(BoxFloat64Slot{})]byte{}
+var _ [8]byte = [unsafe.Alignof(BoxFloat64Slot{})]byte{}
+var _ [0]byte = [unsafe.Offsetof(BoxFloat64Slot{}.Value)]byte{}
+
+// NewBoxFloat64Slot returns a zero BoxFloat64Slot.
+func NewBoxFloat64Slot() (*BoxFloat64Slot, error) { return &BoxFloat64Slot{}, nil }
+
+// Clone copies the value.
+func (b *BoxFloat64Slot) Clone() (*BoxFloat64Slot, error) {
+	if b == nil {
+		return nil, cppgo.ErrClosed
 	}
-	if b.addr != 0 {
-		return b.addr
-	}
-	return b.obj.Addr()
+	clone := *b
+	return &clone, nil
 }
 
-// Close releases the object storage. It returns cppgo.ErrClosed when the
-// receiver has no live object.
-func (b *BoxFloat64Slot) Close() error {
-	if b == nil || b.obj == nil {
-		return cppgo.ErrClosed
-	}
-	obj := b.obj
-	b.obj = nil
-	obj.Release()
-	return nil
-}
-
-// Value reads nested::Box<double>::Slot::value.
-//
-// C++: nested::Box<double>::Slot::value() const noexcept, synthesized (thunk cppgo_thunk_69caaf1ac697, a field accessor: the thunk reads or writes the member)
-func (b *BoxFloat64Slot) Value() float64 {
-	if b == nil || b.obj == nil {
-		panic("cppgo: nested::Box<double>::Slot::value() const noexcept on a closed BoxFloat64Slot")
-	}
-	if err := cppgoOpen(""); err != nil {
-		panic(err)
-	}
-	cppgo.ProbeStack()
-	cppgoRet := cppgoCall_69caaf1ac697(cppgoSym_69caaf1ac697, b.cppgoAddr())
-	cppgo.KeepAlive(b)
-	return cppgoRet
-}
-
-// SetValue sets nested::Box<double>::Slot::value.
-//
-// C++: nested::Box<double>::Slot::value(double) noexcept, synthesized (thunk cppgo_thunk_b7515a44159b, a field accessor: the thunk reads or writes the member)
-func (b *BoxFloat64Slot) SetValue(value float64) {
-	if b == nil || b.obj == nil {
-		panic("cppgo: nested::Box<double>::Slot::value(double) noexcept on a closed BoxFloat64Slot")
-	}
-	if err := cppgoOpen(""); err != nil {
-		panic(err)
-	}
-	cppgo.ProbeStack()
-	cppgoCall_b7515a44159b(cppgoSym_b7515a44159b, b.cppgoAddr(), value)
-	cppgo.KeepAlive(b)
-}
-
-// BoxInt is nested::Box<int>. The object belongs to C++; obj is where it lives.
+// BoxInt is nested::Box<int> (sizeof 12). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 type BoxInt struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.
@@ -402,6 +373,28 @@ func (b *BoxInt) cppgoAddr() uintptr {
 		return b.addr
 	}
 	return b.obj.Addr()
+}
+
+// NewBoxInt constructs a nested::Box<int>.
+//
+// C++: nested::Box<int>::Box(), synthesized (thunk cppgo_thunk_8c92f829796a, no mangled symbol)
+func NewBoxInt() (*BoxInt, error) {
+	if err := cppgoOpen(""); err != nil {
+		return nil, err
+	}
+	cppgo.ProbeStack()
+	constructed := false
+	var obj *cppgo.Object
+	obj = cppgo.NewObject(12, 4, func() {
+		if !constructed {
+			return
+		}
+		cppgo.ProbeStack()
+		cppgoCall_ce57d3d272b8(cppgoSym_ce57d3d272b8, obj.Addr())
+	})
+	cppgoCall_8c92f829796a(cppgoSym_8c92f829796a, obj.Addr())
+	constructed = true
+	return &BoxInt{obj: obj}, nil
 }
 
 // Close destroys the object. It returns cppgo.ErrClosed when the receiver has no live object.
@@ -470,15 +463,9 @@ func (b *BoxInt) Slot() *BoxIntSlot {
 		panic(err)
 	}
 	cppgo.ProbeStack()
-	var cppgoResult unsafe.Pointer
-	cppgoCall_c446c210d48e(cppgoSym_c446c210d48e, b.cppgoAddr(), unsafe.Pointer(&cppgoResult))
-	cppgo.KeepAlive(b, &cppgoResult)
-	// A borrowed record result is a view: the receiver's object, one more reference.
-	if cppgoResult == nil {
-		return nil
-	}
-	b.obj.Retain()
-	return &BoxIntSlot{obj: b.obj, addr: uintptr(cppgoResult)}
+	cppgoRet := cppgoCall_c446c210d48e(cppgoSym_c446c210d48e, b.cppgoAddr())
+	cppgo.KeepAlive(b)
+	return (*BoxIntSlot)(cppgoRet)
 }
 
 // Kind calls nested::Box<int>::kind.
@@ -499,69 +486,30 @@ func (b *BoxInt) Kind() BoxIntKind {
 	return BoxIntKind(cppgoRet)
 }
 
-// BoxIntSlot is nested::Box<int>::Slot. The object belongs to C++; obj is where it lives.
+// BoxIntSlot is nested::Box<int>::Slot: a POD, 4 bytes, Value at offset 0.
 type BoxIntSlot struct {
-	obj *cppgo.Object
-	// view is the address of this value inside the object, 0 for the object itself.
-	addr uintptr
+	Value int32
 }
 
-// cppgoAddr is the object address handed to C++, or 0 for a nil or closed
-// value.
-func (b *BoxIntSlot) cppgoAddr() uintptr {
-	if b == nil || b.obj == nil {
-		return 0
+// The C++ layout is proven at compile time: a wrong size, alignment or
+// field offset does not compile.
+var _ [4]byte = [unsafe.Sizeof(BoxIntSlot{})]byte{}
+var _ [4]byte = [unsafe.Alignof(BoxIntSlot{})]byte{}
+var _ [0]byte = [unsafe.Offsetof(BoxIntSlot{}.Value)]byte{}
+
+// NewBoxIntSlot returns a zero BoxIntSlot.
+func NewBoxIntSlot() (*BoxIntSlot, error) { return &BoxIntSlot{}, nil }
+
+// Clone copies the value.
+func (b *BoxIntSlot) Clone() (*BoxIntSlot, error) {
+	if b == nil {
+		return nil, cppgo.ErrClosed
 	}
-	if b.addr != 0 {
-		return b.addr
-	}
-	return b.obj.Addr()
+	clone := *b
+	return &clone, nil
 }
 
-// Close releases the object storage. It returns cppgo.ErrClosed when the
-// receiver has no live object.
-func (b *BoxIntSlot) Close() error {
-	if b == nil || b.obj == nil {
-		return cppgo.ErrClosed
-	}
-	obj := b.obj
-	b.obj = nil
-	obj.Release()
-	return nil
-}
-
-// Value reads nested::Box<int>::Slot::value.
-//
-// C++: nested::Box<int>::Slot::value() const noexcept, synthesized (thunk cppgo_thunk_6acbf582c31d, a field accessor: the thunk reads or writes the member)
-func (b *BoxIntSlot) Value() int32 {
-	if b == nil || b.obj == nil {
-		panic("cppgo: nested::Box<int>::Slot::value() const noexcept on a closed BoxIntSlot")
-	}
-	if err := cppgoOpen(""); err != nil {
-		panic(err)
-	}
-	cppgo.ProbeStack()
-	cppgoRet := cppgoCall_6acbf582c31d(cppgoSym_6acbf582c31d, b.cppgoAddr())
-	cppgo.KeepAlive(b)
-	return int32(cppgoRet)
-}
-
-// SetValue sets nested::Box<int>::Slot::value.
-//
-// C++: nested::Box<int>::Slot::value(int) noexcept, synthesized (thunk cppgo_thunk_ace9ca410133, a field accessor: the thunk reads or writes the member)
-func (b *BoxIntSlot) SetValue(value int32) {
-	if b == nil || b.obj == nil {
-		panic("cppgo: nested::Box<int>::Slot::value(int) noexcept on a closed BoxIntSlot")
-	}
-	if err := cppgoOpen(""); err != nil {
-		panic(err)
-	}
-	cppgo.ProbeStack()
-	cppgoCall_ace9ca410133(cppgoSym_ace9ca410133, b.cppgoAddr(), int64(value))
-	cppgo.KeepAlive(b)
-}
-
-// Outer is nested::Outer. The object belongs to C++; obj is where it lives.
+// Outer is nested::Outer (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // The outer type.
 type Outer struct {
@@ -702,7 +650,7 @@ func (o *Outer) SetValue(value int32) {
 	cppgo.KeepAlive(o)
 }
 
-// OuterHolder is nested::Outer::Holder. The object belongs to C++; obj is where it lives.
+// OuterHolder is nested::Outer::Holder (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A nested opaque type.
 type OuterHolder struct {
@@ -1171,11 +1119,8 @@ func (b *Box[T]) Set(value T) error {
 // aligned stack for the C call, restores the Go stack pointer and only then
 // stores the result. They must not be called directly.
 
-// cppgoCall_69caaf1ac697 is the NOSPLIT trampoline for cppgo_thunk_69caaf1ac697.
-func cppgoCall_69caaf1ac697(fn uintptr, this uintptr) float64
-
-// cppgoCall_b7515a44159b is the NOSPLIT trampoline for cppgo_thunk_b7515a44159b.
-func cppgoCall_b7515a44159b(fn uintptr, this uintptr, a1 float64)
+// cppgoCall_4258c40f37a8 is the NOSPLIT trampoline for cppgo_thunk_4258c40f37a8.
+func cppgoCall_4258c40f37a8(fn uintptr, this uintptr)
 
 // cppgoCall_f5a0fc22f71a is the NOSPLIT trampoline for cppgo_thunk_f5a0fc22f71a.
 func cppgoCall_f5a0fc22f71a(fn uintptr, this uintptr, out unsafe.Pointer) int32
@@ -1187,16 +1132,13 @@ func cppgoCall_e6477e0c30d6(fn uintptr, this uintptr) int64
 func cppgoCall_2d3c65cca5e0(fn uintptr, this uintptr, a1 float64)
 
 // cppgoCall_2ab08dcc1fb8 is the NOSPLIT trampoline for cppgo_thunk_2ab08dcc1fb8.
-func cppgoCall_2ab08dcc1fb8(fn uintptr, this uintptr, out unsafe.Pointer)
+func cppgoCall_2ab08dcc1fb8(fn uintptr, this uintptr) unsafe.Pointer
 
 // cppgoCall_cd198751f776 is the NOSPLIT trampoline for cppgo_thunk_cd198751f776.
 func cppgoCall_cd198751f776(fn uintptr, this uintptr) int32
 
-// cppgoCall_6acbf582c31d is the NOSPLIT trampoline for cppgo_thunk_6acbf582c31d.
-func cppgoCall_6acbf582c31d(fn uintptr, this uintptr) int64
-
-// cppgoCall_ace9ca410133 is the NOSPLIT trampoline for cppgo_thunk_ace9ca410133.
-func cppgoCall_ace9ca410133(fn uintptr, this uintptr, a1 int64)
+// cppgoCall_8c92f829796a is the NOSPLIT trampoline for cppgo_thunk_8c92f829796a.
+func cppgoCall_8c92f829796a(fn uintptr, this uintptr)
 
 // cppgoCall_287866fbe240 is the NOSPLIT trampoline for cppgo_thunk_287866fbe240.
 func cppgoCall_287866fbe240(fn uintptr, this uintptr, out unsafe.Pointer) int32
@@ -1208,7 +1150,7 @@ func cppgoCall_1ad6e68e72ec(fn uintptr, this uintptr) int64
 func cppgoCall_74fbfe7307c2(fn uintptr, this uintptr, a1 int64)
 
 // cppgoCall_c446c210d48e is the NOSPLIT trampoline for cppgo_thunk_c446c210d48e.
-func cppgoCall_c446c210d48e(fn uintptr, this uintptr, out unsafe.Pointer)
+func cppgoCall_c446c210d48e(fn uintptr, this uintptr) unsafe.Pointer
 
 // cppgoCall_ce57d3d272b8 is the NOSPLIT trampoline for cppgo_thunk_ce57d3d272b8.
 func cppgoCall_ce57d3d272b8(fn uintptr, this uintptr) int32
