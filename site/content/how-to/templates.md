@@ -13,8 +13,10 @@ types a program actually asks for.
 
 So a template library takes two commands. `cppgo gen` writes the generic Go API.
 `cppgo build -scan` reads your Go program, collects the type arguments it uses,
-and adds the matching C++ code before it compiles the shim. The reason for the
-split is [in Architecture]({{< ref "explanation/architecture.md" >}}#templates-why-two-phases);
+and adds the matching C++ code before it compiles the shim — the C++ library
+that cppgo builds for the package and the generated Go loads at run time. The
+reason for the split is
+[in Architecture]({{< ref "explanation/architecture.md" >}}#templates-why-two-phases);
 this lesson runs both commands on a real library.
 
 ## What you will build
@@ -89,13 +91,15 @@ private field, and `T` is whatever type the program asks for. `twice<T>` is a
 free function with the same kind of parameter.
 
 The C++ compiler produces no code for either one until something supplies `T`.
-That is why the generator cannot write a complete binding on its own: at
-generation time there is no `Accumulator<int32_t>` to call.
+That is called instantiating the template, and the class it produces —
+`Accumulator<std::int32_t>`, say — is a specialization. That is why the
+generator cannot write a complete binding on its own: at generation time there is
+no `Accumulator<int32_t>` to call.
 
 ## Step 2 — Build the library the way the project already builds it
 
-The C++ side is an ordinary shared library with its own CMake build. The lines
-that matter for what follows are in
+The C++ side is an ordinary shared library (`.so`, loaded at run time) with its
+own CMake build. The lines that matter for what follows are in
 [`CMakeLists.txt`](https://github.com/Manu343726/cppgo/blob/main/examples/full/CMakeLists.txt):
 
 ```cmake
@@ -110,10 +114,12 @@ set_target_properties(metrics PROPERTIES VERSION 1.0.0 SOVERSION 1)
 ```
 
 `CMAKE_EXPORT_COMPILE_COMMANDS` makes CMake write
-`build/compile_commands.json`. Both cppgo commands below read it, so the header
-is parsed and the generated C++ is compiled with the same flags the library was
-built with. `VERSION` and `SOVERSION` give the library a soname, which is how the
-generated package finds it at run time.
+`build/compile_commands.json`, the compilation database: the file that records
+the flags each source file is compiled with. Both cppgo commands below read it,
+so the header is parsed and the generated C++ is compiled with the same flags the
+library was built with. `VERSION` and `SOVERSION` record a soname — the name the
+loader looks the library up by — which is how the generated package finds it at
+run time.
 
 The example's [`Makefile`](https://github.com/Manu343726/cppgo/blob/main/examples/full/Makefile)
 wraps that build in one target:
@@ -141,9 +147,9 @@ metrics::Accumulator<T>                      tmpl   -                           
 metrics::twice<T>                            tmpl   -                            generic API, 1 binding(s)
 ```
 
-`tmpl` is the carrier of an uninstantiated template, and the `-` sits where the
-other lines carry a symbol: there is no concrete function to point at yet. The
-count is the number of bindings the generic API declares for the template.
+`tmpl` marks the declaration as a template, and the `-` sits where the other
+lines carry a symbol: there is no concrete function to point at yet. The count is
+the number of bindings the generic API declares for the template.
 
 The Go package those lines produced declares Go generics, from
 [`gen/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo.gen.go):
@@ -282,7 +288,8 @@ template class ::metrics::Accumulator<std::int32_t>;
 ```
 
 The free function template needs no such declaration: one thunk per collected
-type is written for it, and `twice<std::int64_t>` gets the one the program uses.
+type is written for it — the generated C++ function that carries the call — and
+`twice<std::int64_t>` gets the one the program uses.
 
 The Go package did not change between the two phases. Only the C++ side grew.
 

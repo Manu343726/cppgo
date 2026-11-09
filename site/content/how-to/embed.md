@@ -10,9 +10,9 @@ embedded files, unpacks them once into a cache private to your user, and loads
 one of them by name. The C++ side then travels inside the Go binary.
 
 Use it when the program must arrive as a single file and you control the code
-that opens the library. The scenario is a small tool that embeds its shim and
-the library it calls, then loads both from the embedded file system at start-up,
-which is what the example below does.
+that opens the library. The scenario is a small tool that embeds its shim — the
+C++ library cppgo builds — and the library it calls, then loads both from the
+embedded file system at start-up, which is what the example below does.
 
 `OpenFS` is a runtime function today: the package `cppgo gen` writes does not
 call it yet, and a generated `Open` still loads the two files from the

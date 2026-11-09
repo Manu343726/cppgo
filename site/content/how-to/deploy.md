@@ -19,8 +19,8 @@ The scenario is the `full` example. Its program, in
 [`cmd/app/main.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/cmd/app/main.go),
 opens the generated file by a relative path and points the package at its library
 first, because the example's `Makefile` keeps the library under `build/` and the
-shim under `gen/`. Your own deployment can keep the two in one directory instead,
-as Recipe A does.
+C++ side cppgo builds under `gen/`. Your own deployment can keep the two in one
+directory instead, as Recipe A does.
 
 ## Where the generated package looks
 
