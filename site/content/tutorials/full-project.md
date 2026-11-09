@@ -67,6 +67,12 @@ struct Point {
     double y;
 };
 
+// An opaque class: all of its state is private, and its size and layout stay
+// on the C++ side. Go holds a pointer to an object C++ constructed.
+//
+// The state is the standard library's: a std::string and two std::vectors. The
+// Go side never sees any of it: a container member is copied in and out by the
+// generated accessors exactly like a container parameter.
 class Histogram {
 public:
     Histogram(std::string name, std::size_t buckets);
@@ -88,8 +94,11 @@ public:
     std::vector<std::size_t> counts() const;
 
 private:
-    struct Impl;
-    Impl *impl_;
+    std::string name_;
+    std::vector<double> bounds_;
+    std::vector<std::size_t> counts_;
+    std::size_t total_;
+    double sum_;
 };
 
 Point centroid(Point a, Point b) noexcept;
@@ -152,10 +161,17 @@ The block is worth reading once for its syntax, because it is not Go's:
   returns nothing.
 - `static std::int32_t version()` — a `static` member belongs to the class
   rather than to one object, so calling it needs no object.
-- `struct Impl; Impl *impl_;` is the *pimpl* idiom, "pointer to implementation":
-  the header declares that the state exists and the source file defines it, so
-  changing the state does not recompile the callers. The line with no body is a
-  *forward declaration*.
+- `std::string name_;`, the two `std::vector` members, `std::size_t total_;` and
+  `double sum_;` under `private:` are the object's state, and every one of them
+  is a standard-library type or a plain number. `private:` means no code outside
+  the class may read or write them, so the Go side never sees the members: it
+  asks the class for copies through `name()`, `bounds()`, `counts()`, `total()`
+  and `mean()`, which `cppgo gen` binds as Go methods. The three that return a
+  string or a vector copy the whole container out, so their Go signatures carry
+  an error beside the value; `total()` returns a `double` and cannot fail. The
+  trailing underscore in the member names is a convention, not syntax: it marks
+  a member of the class, so a local variable named `name` is visibly a different
+  thing.
 - `template <typename T>` makes `Accumulator` and `twice` *templates*: code
   written with a placeholder type that the compiler fills in at each use.
   `explicit` on a constructor forbids the implicit conversion that would
@@ -174,8 +190,10 @@ only to be bound, and no `extern "C"` block — the marker a C++ function needs
 before it can be found by a plain C name. Each declaration is here to show one
 thing you will call from Go:
 
-- `Histogram` is an **opaque class**: its state is private and its size stays on
-  the C++ side, so Go holds a pointer to an object C++ constructed.
+- `Histogram` is an **opaque class**: its state — a `std::string`, two
+  `std::vector`s, a sample count and a running sum — is private and its size
+  stays on the C++ side, so Go holds a pointer to an object C++ constructed and
+  reads copies of that state through the class's own methods.
 - `Point` is a **POD** — plain old data: a record with no constructors, no
   virtual functions (the C++ mechanism for overriding a method in a derived
   class) and a fixed layout, so Go can mirror its bytes. It is **passed by

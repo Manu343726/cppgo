@@ -23,6 +23,12 @@ struct Point {
     double y;
 };
 
+// An opaque class: all of its state is private, and its size and layout stay
+// on the C++ side. Go holds a pointer to an object C++ constructed.
+//
+// The state is the standard library's: a std::string and two std::vectors. The
+// Go side never sees any of it: a container member is copied in and out by the
+// generated accessors exactly like a container parameter.
 class Histogram {
 public:
     Histogram(std::string name, std::size_t buckets);
@@ -41,8 +47,11 @@ public:
     std::vector<std::size_t> counts() const;
 
 private:
-    struct Impl;
-    Impl *impl_;
+    std::string name_;
+    std::vector<double> bounds_;
+    std::vector<std::size_t> counts_;
+    std::size_t total_;
+    double sum_;
 };
 
 Point centroid(Point a, Point b) noexcept;
@@ -345,7 +354,7 @@ program and the tests use no cgo in either mode.
 
 ## What is not bound yet
 
-The example stays inside what this build binds. Three things a real project may
+The example stays inside what this build binds. Two things a real project may
 expect are not here:
 
 - `std::map`, `std::unordered_map`, `std::set`, `std::pair` and `std::tuple` as
@@ -355,6 +364,3 @@ expect are not here:
   `cppgo build -scan`). The generator does not yet take the given libraries as
   the first source of instantiations and fill the missing ones automatically, so
   the program's instantiations are collected by hand.
-- A class with a standard-library container as a member is refused by this
-  build: it reports a nested type inside the container. The example keeps
-  `Histogram`'s state behind a pimpl, which is the usual C++ shape anyway.
