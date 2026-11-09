@@ -267,7 +267,7 @@ runs the flow in phases, each named after what it produces:
 | Command | What it produces |
 |---|---|
 | `make lib` | `build/libmetrics.so` and `build/compile_commands.json`, by CMake |
-| `make gen` | the generic Go API, one assembly trampoline per direct call, the C++ thunk sources, and `gen/libcppgo_metrics.so` |
+| `make gen` | the generic Go API, one assembly trampoline per binding — except one that passes a Go function to C++ and a template binding: those enter C++ through the runtime — plus `cppgoFree`, the C++ thunk sources, and `gen/libcppgo_metrics.so` |
 | `make scan` | the template types the program uses, added to the C++ side, which is then rebuilt |
 | `make app` | `build/app`, the Go program |
 | `make test` | the suite, twice |
@@ -277,13 +277,17 @@ runs the flow in phases, each named after what it produces:
 A few of those names need defining once. An *assembly trampoline* is a tiny
 function whose only job is to move arguments into the registers the C ABI
 expects and jump to an address; Go passes its arguments its own way, so one
-trampoline is generated per call that reaches the library's own symbol. The *C
-ABI* is the platform's convention for a C call: which registers and which memory
-carry the arguments and the result. A *thunk* is a generated C++ function that
-carries a call the raw symbol cannot — a constructor, a `std::string`, a
-function that may throw — and the shim is the shared object `cppgo` compiles
-from those thunks and links against your library. `extern "C"` gives a thunk a
-plain C name rather than a C++ one, so the loader can find it.
+trampoline is generated per bound call — whether it reaches a symbol in your
+library or a thunk in the shim — except two: a binding that passes a Go function
+to C++ and a template binding. Both enter C++ through the runtime and have none.
+One more trampoline, `cppgoFree`, releases a `std::string` or `std::vector` the
+shim copied out. The *C ABI* is the platform's convention for a C call: which
+registers and which memory carry the arguments and the result. A *thunk* is a
+generated C++ function that carries a call the raw symbol cannot — a
+constructor, a `std::string`, a function that may throw — and the shim is the
+shared object `cppgo` compiles from those thunks and links against your library.
+`extern "C"` gives a thunk a plain C name rather than a C++ one, so the loader
+can find it.
 
 `make` runs `app`, then `test`, then `vet`.
 
@@ -365,7 +369,7 @@ The generated package is these files and directories, in
 | File | Contents |
 |---|---|
 | [`zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo.gen.go) | the Go API |
-| [`zz_cppgo_amd64.s`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo_amd64.s) | one trampoline per direct call |
+| [`zz_cppgo_amd64.s`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo_amd64.s) | one trampoline per binding — the callback-carrying `apply` and the template bindings have none — plus `cppgoFree`, which releases a copied `std::string` or `std::vector` |
 | [`cppgo_shim/`](https://github.com/Manu343726/cppgo/tree/main/examples/full/gen/cppgo_shim) | the `extern "C"` thunks, compiled into `libcppgo_metrics.so` |
 | [`doc.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/doc.go) | the package comment, which you write |
 
