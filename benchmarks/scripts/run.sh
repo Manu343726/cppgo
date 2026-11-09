@@ -40,21 +40,14 @@ fi
 
 mkdir -p results
 
-# run <label> <cgo-mode> <package>...
-run() {
-  local label="$1" mode="$2"
-  shift 2
-  echo "== $label: CGO_ENABLED=$mode go test ${flags[*]} $* =="
-  CGO_ENABLED="$mode" "$GO" test "${flags[@]}" "$@" | tee "results/$label.txt"
-}
-
-run gobase 0 ./gobase
-run cppgo 0 ./cppgo
-run cgo 1 ./cgo
-
-# The environment block. These are facts read from the machine at the moment of
-# the run, not a remembered description of it; anything that cannot be read is
-# reported as missing rather than guessed.
+# The environment block is captured before the first run writes anything: the
+# `Tree:` line has to describe the tree the measurements were taken from, and
+# the run's own output files are tracked, so writing them first would report a
+# dirty tree that only exists because the run started.
+#
+# These are facts read from the machine at the moment of the run, not a
+# remembered description of it; anything that cannot be read is reported as
+# missing rather than guessed.
 read_or_missing() {
   local path="$1"
   if [[ -r $path ]]; then cat "$path"; else echo "missing"; fi
@@ -83,6 +76,18 @@ compiler="$("$CXX" --version | head -n 1)"
   printf 'Tree: %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout')$(git diff --quiet 2>/dev/null || echo ' (dirty)')"
   printf 'Date: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > results/environment.txt
+
+# run <label> <cgo-mode> <package>...
+run() {
+  local label="$1" mode="$2"
+  shift 2
+  echo "== $label: CGO_ENABLED=$mode go test ${flags[*]} $* =="
+  CGO_ENABLED="$mode" "$GO" test "${flags[@]}" "$@" | tee "results/$label.txt"
+}
+
+run gobase 0 ./gobase
+run cppgo 0 ./cppgo
+run cgo 1 ./cgo
 
 CGO_ENABLED=0 "$GO" run ./cmd/benchtable -write README.md -env results/environment.txt \
   gobase=results/gobase.txt cppgo=results/cppgo.txt cgo=results/cgo.txt
