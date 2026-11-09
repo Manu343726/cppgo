@@ -77,7 +77,7 @@ $ cppgo gen -header <path> [-header <path>]... -package <name>
 | File | What it is |
 |---|---|
 | `zz_cppgo.gen.go` | the Go API and the code that loads the C++ side |
-| `zz_cppgo_amd64.s` | the assembly cppgo generated for the calls: one trampoline per direct binding, the function that moves the arguments into the C registers and calls the resolved address |
+| `zz_cppgo_amd64.s` | the assembly cppgo generated for the calls: one trampoline per binding, the function that moves the arguments into the C registers and calls the resolved address, except for a binding that carries a Go callback into C++, which enters C++ from Go instead and has none; plus `cppgoFree`, the trampoline for the `cppgo_free` helper that releases a standard-library result the shim copied out, such as a `std::string` or a `std::vector` |
 | `cppgo_shim/zz_cppgo_shim.h` | declarations for the C++ file |
 | `cppgo_shim/zz_cppgo_shim.cpp` | the C++ source cppgo writes |
 | `libcppgo_<package>.so` | the shim cppgo builds and links against yours |
@@ -85,7 +85,9 @@ $ cppgo gen -header <path> [-header <path>]... -package <name>
 The first four are sources to commit; the `.so` is a build output. What each one
 contains is in [Architecture]({{< ref "explanation/architecture.md" >}}#the-generated-files).
 
-**Report.** On stdout, one line per binding, then the compiler line:
+**Report.** On stdout, one line per binding and one per template — a template's
+line names the generic API and the number of bindings it carries — then the
+compiler line:
 
 ```
 mathx::Vector::norm() const                  thunk  cppgo_thunk_49993cda6560     not noexcept: an exception would unwind into Go
@@ -93,17 +95,17 @@ mathx::Vector::scale(double) noexcept        direct _ZN5mathx6Vector5scaleEd    
 cppgo: built libcppgo_mathx.so with /usr/bin/g++
 ```
 
-The four columns are the C++ declaration, its **carrier**, the symbol the call
-resolves, and why that carrier was chosen. A carrier is the path one call takes
-into C++: `direct` calls the **mangled symbol** — the name the C++ compiler
-stores for a declaration, encoding its namespace, class and parameter types —
-through the generated assembly; `thunk` calls a generated `extern "C"` wrapper
-compiled into the shim; `reentrant` is the path that lets C++ call a Go function
-back, and a call that passes no Go function never needs it. The last column is
-the reason: `not noexcept` means the declaration may throw a C++ exception,
-which cannot unwind through a Go frame, so the shim catches it and returns a
-status instead. Check the compiler line against the compiler that built your
-library.
+A binding's four columns are the C++ declaration, its **carrier**, the symbol
+the call resolves, and why that carrier was chosen. A carrier is the path one
+call takes into C++: `direct` calls the **mangled symbol** — the name the C++
+compiler stores for a declaration, encoding its namespace, class and parameter
+types — through the generated assembly; `thunk` calls a generated `extern "C"`
+wrapper compiled into the shim; `reentrant` is the path that lets C++ call a Go
+function back, and a call that passes no Go function never needs it. The last
+column is the reason: `not noexcept` means the declaration may throw a C++
+exception, which cannot unwind through a Go frame, so the shim catches it and
+returns a status instead. Check the compiler line against the compiler that
+built your library.
 
 The generated `zz_cppgo.gen.go` carries the exact invocation that produced it in
 its banner.
@@ -116,7 +118,8 @@ $ cppgo gen -header include/mathx/vector.hpp -package mathx \
             -library build/libmathx.so -out .
 ```
 
-The three lines above are the report of that command.
+The three lines above are excerpted from that command's report, which lists
+every binding of the header and ends with the compiler line.
 
 ## `cppgo build`
 
@@ -183,7 +186,7 @@ instantiations, so check compares like with like.
 | Exit | Output |
 |---|---|
 | `0` | `<out>: generated files are up to date` |
-| `1` | `cppgo check: <out> is out of date (run "cppgo gen"): <file>` |
+| `1` | `cppgo check: <out> is out of date (run "cppgo gen"): <file>`: one entry per missing or stale file, comma-separated |
 
 The same command as the `build` example, with `check` in place of `build`, makes
 a CI gate:
