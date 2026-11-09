@@ -819,6 +819,12 @@ func (m *packageModel) declaration(binding *binding) string {
 // docLine is the generated description of a call binding.
 func docLine(record *recordModel, binding *binding) string {
 	name := simpleName(binding.sym.QualifiedName)
+	if binding.memberField != nil {
+		if binding.fieldWrite {
+			return fmt.Sprintf("%s sets %s.", binding.GoName, binding.sym.QualifiedName)
+		}
+		return fmt.Sprintf("%s reads %s.", binding.GoName, binding.sym.QualifiedName)
+	}
 	if binding.staticField != nil {
 		if binding.staticWrite {
 			return fmt.Sprintf("%s sets %s.", binding.GoName, binding.sym.QualifiedName)
@@ -866,6 +872,12 @@ func (m *packageModel) emitLengthChecks(b *strings.Builder, binding *binding) {
 // lives until the last view is closed, and no address is handed out that
 // nothing owns.
 func (m *packageModel) emitViewReturn(b *strings.Builder, binding *binding, record *recordModel, recv, local string, hasError bool) {
+	// The view's Go type is the type the declaration returns: a field accessor
+	// returns the field's record, not the receiver's.
+	viewRecord := record
+	if binding.Result != nil && binding.Result.Record != nil {
+		viewRecord = binding.Result.Record
+	}
 	b.WriteString("\t// A borrowed record result is a view: the receiver's object, one more reference.\n")
 	fmt.Fprintf(b, "\tif %s == nil {\n", local)
 	if hasError {
@@ -875,10 +887,10 @@ func (m *packageModel) emitViewReturn(b *strings.Builder, binding *binding, reco
 	}
 	fmt.Fprintf(b, "\t%s.obj.Retain()\n", recv)
 	if hasError {
-		fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}, nil\n", record.GoName, recv, local)
+		fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}, nil\n", viewRecord.GoName, recv, local)
 		return
 	}
-	fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}\n", record.GoName, recv, local)
+	fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}\n", viewRecord.GoName, recv, local)
 }
 
 // emitKeepAlive pins every Go allocation the call handed to C++.

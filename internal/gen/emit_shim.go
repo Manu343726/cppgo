@@ -237,6 +237,9 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 	if binding.Owner != nil {
 		owner = binding.Owner.CxxName
 	}
+	if binding.memberField != nil {
+		return m.fieldTarget(binding, args)
+	}
 	if binding.staticField != nil {
 		qualified := "::" + binding.Owner.CxxName + "::" + binding.staticField.Name
 		if !binding.staticWrite {
@@ -327,6 +330,12 @@ func (m *packageModel) shimValue(binding *binding, call string) string {
 	if binding.ViewResult {
 		// A borrowed record is a reference or a pointer, and the thunk hands
 		// out its address: a reference has no pointer conversion of its own.
+		constResult := binding.sym.Result.Pointee != nil && binding.sym.Result.Pointee.IsConst
+		if constResult || (binding.memberField != nil && binding.sym.IsConst) {
+			// The address points into the object Go owns; the qualifier
+			// belongs to the C++ view C++ handed over, not to the storage.
+			return "static_cast<void *>(const_cast<" + binding.Result.Cxx + " *>(&(" + call + ")))"
+		}
 		if strings.HasSuffix(strings.TrimSpace(binding.sym.Result.Spelling), "&") {
 			return "static_cast<void *>(&(" + call + "))"
 		}

@@ -197,6 +197,15 @@ type binding struct {
 	staticField *cxx.StaticField
 	// staticWrite is true for the setter half of a static data member.
 	staticWrite bool
+	// memberField is the public field a binding reads or writes, nil for every
+	// other binding. The accessor is a method of the record, carried by a thunk
+	// that reads or writes the member.
+	memberField *cxx.Field
+	// fieldWrite is true for the setter half of a field accessor.
+	fieldWrite bool
+	// fieldByValue is true when the member's record type is held by value but
+	// the Go side reaches it through a pointer.
+	fieldByValue bool
 	// fieldName overrides the Go base name a static data member takes.
 	fieldName string
 
@@ -417,6 +426,9 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.applySelection(); err != nil {
 		return nil, err
 	}
+	if err := b.buildFieldAccessors(); err != nil {
+		return nil, err
+	}
 	if err := b.assignNames(); err != nil {
 		return nil, err
 	}
@@ -502,19 +514,17 @@ func (b *builder) buildRecords() error {
 			Comment:              rec.Comment,
 		}
 		model.Mirrored = b.mirrorable(rec)
-		if !model.Mirrored {
-			for _, field := range rec.Fields {
-				if field.Access == cxx.AccessPublic {
-					return recordError(rec, pending(
-						fmt.Sprintf("the public field %s of an opaque record is not emitted by this build yet", field.Name),
-						"make the field private and expose an accessor in C++, or make the record a POD"))
-				}
-			}
+		b.records[rec.QualifiedName] = model
+		b.order = append(b.order, rec.QualifiedName)
+	}
+	// The fields are mapped once every model exists: a mirrored field may be a
+	// record whose own model has not been built yet when its container is.
+	for _, rec := range b.rawRecords {
+		model, ok := b.records[rec.QualifiedName]
+		if !ok || !model.Mirrored {
+			continue
 		}
 		for _, field := range rec.Fields {
-			if !model.Mirrored {
-				continue
-			}
 			model.Fields = append(model.Fields, &fieldModel{
 				GoName:  exportName(field.Name),
 				Type:    b.mirrorFieldType(field.Type),
@@ -522,8 +532,6 @@ func (b *builder) buildRecords() error {
 				Comment: field.Comment,
 			})
 		}
-		b.records[rec.QualifiedName] = model
-		b.order = append(b.order, rec.QualifiedName)
 	}
 	for i, entry := range b.cfg.Instantiate {
 		if !b.instantiateMatched[i] {
@@ -543,10 +551,20 @@ func simpleName(qualified string) string {
 
 // mirrorable reports whether a record's Go value can be its C layout. Every
 // field must be public, at a known offset, not a bitfield, and of a type the
-// type map carries as a value. The generated file asserts the size, alignment
-// and field offsets at compile time, so this predicate is proven, not assumed.
+// type map carries as a value — a scalar, an enum, or a record that is itself
+// mirrorable. The generated file asserts the size, alignment and field offsets
+// at compile time, so this predicate is proven, not assumed.
 func (b *builder) mirrorable(rec cxx.Record) bool {
-	if !rec.LayoutKnown || !rec.IsPOD || rec.Kind == cxx.Union || len(rec.Bases) > 0 {
+	return b.mirrorableRecord(rec, 0)
+}
+
+// maxMirrorDepth bounds the recursion through nested record fields. A record
+// cannot contain itself by value, so the bound is a guard against a malformed
+// model rather than a real limit.
+const maxMirrorDepth = 8
+
+func (b *builder) mirrorableRecord(rec cxx.Record, depth int) bool {
+	if depth > maxMirrorDepth || !rec.LayoutKnown || !rec.IsPOD || rec.Kind == cxx.Union || len(rec.Bases) > 0 {
 		return false
 	}
 	for _, field := range rec.Fields {
@@ -555,21 +573,39 @@ func (b *builder) mirrorable(rec cxx.Record) bool {
 		}
 		switch field.Type.Kind {
 		case cxx.TypeInteger, cxx.TypeFloat, cxx.TypeEnum:
+		case cxx.TypeRecord:
+			inner, ok := b.rawRecordByName(field.Type.RecordName)
+			if !ok || !b.mirrorableRecord(inner, depth+1) {
+				return false
+			}
 		default:
 			return false
 		}
 	}
-	return naturalLayout(rec)
+	return b.naturalLayout(rec)
+}
+
+// rawRecordByName finds a record definition by qualified name.
+func (b *builder) rawRecordByName(name string) (cxx.Record, bool) {
+	for _, rec := range b.rawRecords {
+		if rec.QualifiedName == name {
+			return rec, true
+		}
+	}
+	return cxx.Record{}, false
 }
 
 // naturalLayout reports whether the C++ layout is the one Go would give the
 // generated struct: each field at its natural offset, the size a multiple of
 // the largest alignment. A packed record or one with padding Go would not
 // reproduce is not mirrored; it takes the opaque path instead.
-func naturalLayout(rec cxx.Record) bool {
+func (b *builder) naturalLayout(rec cxx.Record) bool {
 	var offset, maxAlign int64 = 0, 1
 	for _, field := range rec.Fields {
-		size, align := scalarWidth(field.Type)
+		size, align := b.fieldWidth(field)
+		if size < 0 {
+			return false
+		}
 		offset = (offset + align - 1) / align * align
 		if field.OffsetBytes != offset {
 			return false
@@ -581,6 +617,18 @@ func naturalLayout(rec cxx.Record) bool {
 	}
 	offset = (offset + maxAlign - 1) / maxAlign * maxAlign
 	return offset == rec.SizeBytes && maxAlign == rec.AlignBytes
+}
+
+// fieldWidth is the size and alignment of a mirrored field: its own width for a
+// scalar, and the record's for a nested mirrored record.
+func (b *builder) fieldWidth(field cxx.Field) (size, align int64) {
+	if field.Type.Kind == cxx.TypeRecord {
+		if inner, ok := b.rawRecordByName(field.Type.RecordName); ok {
+			return inner.SizeBytes, inner.AlignBytes
+		}
+		return -1, 1
+	}
+	return scalarWidth(field.Type)
 }
 
 // scalarWidth is the size and alignment of a scalar field in Go, which is its
@@ -604,6 +652,11 @@ func (b *builder) mirrorFieldType(p cxx.Param) *goType {
 		// width as the underlying C++ integer, so the layout still holds.
 		if enum, ok := b.enums[p.RecordName]; ok {
 			return &goType{Kind: goEnum, Go: enum.GoName, C: enum.C, Cxx: "::" + enum.CxxName, Enum: enum, Param: p}
+		}
+	}
+	if p.Kind == cxx.TypeRecord {
+		if record, ok := b.records[p.RecordName]; ok {
+			return &goType{Kind: goRecord, Go: record.GoName, C: "void *", Cxx: "::" + record.CxxName, Record: record, Param: p}
 		}
 	}
 	if p.Kind == cxx.TypeFloat {

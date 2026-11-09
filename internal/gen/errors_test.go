@@ -17,7 +17,6 @@ func TestGenerationErrors(t *testing.T) {
 		header string
 		want   string
 	}{
-		{"bitfield.hpp", "public field"},
 		{"callbackargs.hpp", "more than 6 INTEGER arguments"},
 		{"callbackfloat.hpp", "take a double instead"},
 		{"callbackpointer.hpp", "of a callback binding is a"},
@@ -35,12 +34,8 @@ func TestGenerationErrors(t *testing.T) {
 		{"manyfloats.hpp", "argument block"},
 		{"manyints.hpp", "argument block"},
 		{"membertemplate.hpp", "member function template"},
-		{"mixedaccess.hpp", "public field"},
-		{"nestedfield.hpp", "public field"},
 		{"nullptrarg.hpp", "nullptr_t"},
-		{"opaquefield.hpp", "public field"},
 		{"opaquevalue.hpp", "is passed by value"},
-		{"packed.hpp", "public field"},
 		{"pointerresult.hpp", "pointer to an opaque record"},
 		{"smartparam.hpp", "smart-pointer parameter"},
 		{"smartresult.hpp", "smart-pointer result"},
@@ -50,7 +45,6 @@ func TestGenerationErrors(t *testing.T) {
 		{"tempmembertemplate.hpp", "member function template"},
 		{"templnonetype.hpp", "public field"},
 		{"tempoperator.hpp", "operators and conversion operators"},
-		{"unionrecord.hpp", "public field"},
 		{"variadic.hpp", "variadic function"},
 		{"variadicmethod.hpp", "variadic function"},
 		{"voidptr.hpp", "void pointer"},
