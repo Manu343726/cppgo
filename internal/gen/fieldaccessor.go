@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Manu343726/cppgo/internal/cxx"
 )
@@ -43,6 +44,14 @@ func (b *builder) buildFieldAccessors() {
 			if field.Type.IsConst {
 				continue
 			}
+			if name, isStd := stdTypeName(field.Type); isStd {
+				if !stdFieldOwns(name) {
+					b.warnings = append(b.warnings, fmt.Sprintf(
+						"%s::%s has no setter: a %s does not own its storage",
+						owner.CxxName, field.Name, name))
+					continue
+				}
+			}
 			if !b.fieldAssignable(field) {
 				b.warnings = append(b.warnings, fmt.Sprintf(
 					"%s::%s has no setter: its type's copy assignment is not public",
@@ -63,9 +72,13 @@ func (b *builder) buildFieldAccessors() {
 
 // fieldAssignable reports whether a setter can copy into the member: a record's
 // copy assignment may be private or protected, which a field setter cannot call.
-// A scalar or a pointer is always assignable.
+// A scalar or a pointer is always assignable. A standard-library member owns its
+// storage (or does not), which buildFieldAccessors decides before this point.
 func (b *builder) fieldAssignable(field cxx.Field) bool {
 	if field.Type.Kind != cxx.TypeRecord {
+		return true
+	}
+	if _, isStd := stdTypeName(field.Type); isStd {
 		return true
 	}
 	return b.copyAssignmentPublic(field.Type.RecordName)
@@ -91,6 +104,37 @@ func (b *builder) copyAssignmentPublic(record string) bool {
 	return public
 }
 
+// stdFieldCrossesByValue reports whether a member of this standard-library type
+// has a parameter and result recipe in the type map, so the same type crosses
+// as a member that it does as an argument. std::function, std::unique_ptr and
+// std::shared_ptr have none for a field, so they stay unbound with their own
+// report rather than producing a thunk that cannot compile.
+func stdFieldCrossesByValue(name string) bool {
+	switch {
+	case name == "std::string", name == "std::string_view":
+		return true
+	case strings.HasPrefix(name, "std::vector<"),
+		strings.HasPrefix(name, "std::span<"),
+		strings.HasPrefix(name, "std::array<"),
+		strings.HasPrefix(name, "std::optional<"):
+		return true
+	}
+	return false
+}
+
+// stdFieldOwns reports whether a value of this standard-library type owns the
+// storage it points at, so a setter may copy a Go value into the member. A
+// view — std::string_view, std::span — does not: the bytes belong to the Go
+// caller and do not outlive the call, so a setter is refused instead of
+// leaving the member dangling.
+func stdFieldOwns(name string) bool {
+	switch {
+	case name == "std::string_view", strings.HasPrefix(name, "std::span<"):
+		return false
+	}
+	return true
+}
+
 // noBorrowedRecordPointer refuses a field that is a raw pointer to a record: the
 // address belongs to C++ and nothing on the Go side owns it, so the value cannot
 // be a Go pointer to a record — a view needs a receiver to share the object with,
@@ -111,11 +155,19 @@ func (b *builder) newFieldBinding(owner *recordModel, field cxx.Field, write boo
 	}
 	// The member's type as a parameter: a record the Go side cannot hold by
 	// value is reached through its address, which is also the view the getter
-	// hands back.
+	// hands back. A standard-library member is none of that: it is a value the
+	// type map already crosses, so it is passed the way the same type would be
+	// as a parameter — by value, with the thunk constructing and destroying it.
 	typ := field.Type
 	byValue := false
 	if typ.Kind == cxx.TypeRecord {
-		if record, ok := b.records[typ.RecordName]; !ok || !record.Mirrored {
+		if name, isStd := stdTypeName(typ); isStd {
+			if !stdFieldCrossesByValue(name) {
+				return nil, pending(
+					fmt.Sprintf("%q is a standard-library member this build does not cross by value", name),
+					"expose it through a method that returns a supported std:: type")
+			}
+		} else if record, ok := b.records[typ.RecordName]; !ok || !record.Mirrored {
 			byValue = true
 			pointee := typ
 			typ = cxx.Param{

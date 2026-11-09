@@ -30,6 +30,11 @@ extern "C" const char *cppgo_last_error(void) {
 	return cppgo_error_message.c_str();
 }
 
+// cppgo_free releases a result copy the Go side has read.
+extern "C" void cppgo_free(void *block) {
+	::operator delete[](block);
+}
+
 extern "C" int32_t cppgo_thunk_2c0e68342fcb(void * self, const void * arg0) {
 	cppgo_error_message.clear();
 	try {
@@ -72,6 +77,40 @@ extern "C" int32_t cppgo_thunk_37889658747b(const void * self) {
 
 extern "C" void cppgo_thunk_3f0d37245ba0(void * self, int32_t kind) {
 	static_cast<::fields::Settings *>(self)->kind = static_cast<::fields::Kind>(kind);
+}
+
+extern "C" int32_t cppgo_thunk_d4a8ac30e3a5(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::fields::Settings *>(self)->label;
+		const size_t cppgo_size = cppgo_value.size();
+		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
+		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_03ab9ade98be(void * self, const char * label_data, size_t label_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo_label(label_data, label_size);
+		static_cast<::fields::Settings *>(self)->label = cppgo_label;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
 }
 
 extern "C" void cppgo_thunk_cff769c76eef(const void * self, void * cppgo_result) {
@@ -120,4 +159,39 @@ extern "C" void cppgo_thunk_0fe1216633f0(void * self, const int32_t * source) {
 
 extern "C" int32_t cppgo_thunk_e2e995c0f857(const void * self) {
 	return static_cast<const ::fields::Settings *>(self)->version;
+}
+
+extern "C" int32_t cppgo_thunk_fd03fa9b2a3c(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::fields::Settings *>(self)->weights;
+		const size_t cppgo_size = cppgo_value.size();
+		int32_t *cppgo_copy = static_cast<int32_t *>(::operator new[]((cppgo_size == 0 ? 1 : cppgo_size) * sizeof(int32_t)));
+		for (size_t cppgo_i = 0; cppgo_i < cppgo_size; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_10790d2a00a5(void * self, int32_t * weights_data, size_t weights_size) {
+	cppgo_error_message.clear();
+	try {
+		std::vector<int32_t> cppgo_weights;
+		if (weights_size != 0) { cppgo_weights.assign(weights_data, weights_data + weights_size); }
+		static_cast<::fields::Settings *>(self)->weights = cppgo_weights;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
 }

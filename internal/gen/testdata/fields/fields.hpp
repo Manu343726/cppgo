@@ -1,11 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 // The field-accessor fixture: an opaque record whose public fields are the only
 // way to reach its state. A scalar, an enum, a pointer, a mirrored record, a
-// record the Go side cannot hold by value, and a const one: each becomes
-// Field() / SetField(v), and the const one becomes Field() alone.
+// record the Go side cannot hold by value, a standard-library string and
+// vector, and a const one: each becomes Field() / SetField(v), and the const
+// one becomes Field() alone.
 namespace fields {
 
 /** A mirrored value type, held by the record below. */
@@ -52,6 +55,12 @@ public:
 
     /// An opaque record field, reached as a view of the field.
     Payload payload;
+
+    /// A standard-library string field: a Go string, copied in and out.
+    std::string label;
+
+    /// A standard-library vector field: a Go slice, copied in and out.
+    std::vector<std::int32_t> weights;
 
     /// A const field: read only.
     const std::int32_t version = 2;

@@ -268,7 +268,7 @@ func NewHistogram(name string, buckets uint64) (*Histogram, error) {
 	cppgo.ProbeStack()
 	constructed := false
 	var obj *cppgo.Object
-	obj = cppgo.NewObject(8, 8, func() {
+	obj = cppgo.NewObject(96, 8, func() {
 		if !constructed {
 			return
 		}
@@ -296,7 +296,7 @@ func (h *Histogram) Clone() (*Histogram, error) {
 	cppgo.ProbeStack()
 	constructed := false
 	var obj *cppgo.Object
-	obj = cppgo.NewObject(8, 8, func() {
+	obj = cppgo.NewObject(96, 8, func() {
 		if !constructed {
 			return
 		}

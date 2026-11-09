@@ -16,6 +16,8 @@ extern "C" {
  * on this thread, or an empty string when there is none. The pointer
  * stays valid until the next thunk call on the same thread. */
 const char *cppgo_last_error(void);
+/* cppgo_free releases a result copy the Go side has read. */
+void cppgo_free(void *block);
 
 /* cppgo_thunk_2c0e68342fcb: fields::Payload::Payload(const fields::Payload &) */
 int32_t cppgo_thunk_2c0e68342fcb(void * self, const void * arg0);
@@ -34,6 +36,12 @@ int32_t cppgo_thunk_37889658747b(const void * self);
 
 /* cppgo_thunk_3f0d37245ba0: fields::Settings::kind(Kind) noexcept */
 void cppgo_thunk_3f0d37245ba0(void * self, int32_t kind);
+
+/* cppgo_thunk_d4a8ac30e3a5: fields::Settings::label() const noexcept */
+int32_t cppgo_thunk_d4a8ac30e3a5(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_03ab9ade98be: fields::Settings::label(std::string) noexcept */
+int32_t cppgo_thunk_03ab9ade98be(void * self, const char * label_data, size_t label_size);
 
 /* cppgo_thunk_cff769c76eef: fields::Settings::origin() const noexcept */
 void cppgo_thunk_cff769c76eef(const void * self, void * cppgo_result);
@@ -55,6 +63,12 @@ void cppgo_thunk_0fe1216633f0(void * self, const int32_t * source);
 
 /* cppgo_thunk_e2e995c0f857: fields::Settings::version() const noexcept */
 int32_t cppgo_thunk_e2e995c0f857(const void * self);
+
+/* cppgo_thunk_fd03fa9b2a3c: fields::Settings::weights() const noexcept */
+int32_t cppgo_thunk_fd03fa9b2a3c(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_10790d2a00a5: fields::Settings::weights(std::vector<std::int32_t>) noexcept */
+int32_t cppgo_thunk_10790d2a00a5(void * self, int32_t * weights_data, size_t weights_size);
 
 #ifdef __cplusplus
 }
