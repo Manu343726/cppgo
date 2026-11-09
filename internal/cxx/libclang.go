@@ -333,23 +333,27 @@ type libclangFuncs struct {
 	getTranslationUnitCursor func(tu uintptr) CXCursor
 
 	// Cursor inspection.
-	visitChildren        func(parent CXCursor, visitor uintptr, clientData unsafe.Pointer) uint32
-	getCursorKind        func(CXCursor) int32
-	getCursorSpelling    func(CXCursor) CXString
-	getCursorDisplayName func(CXCursor) CXString
-	getCursorType        func(CXCursor) CXType
-	getCursorLocation    func(CXCursor) CXSourceLocation
-	getCursorExtent      func(CXCursor) CXSourceRange
-	getRangeStart        func(CXSourceRange) CXSourceLocation
-	getRangeEnd          func(CXSourceRange) CXSourceLocation
-	isCursorDefinition   func(CXCursor) int32
-	isFunctionInlined    func(CXCursor) int32
-	getSemanticParent    func(CXCursor) CXCursor
-	getCursorDefinition  func(CXCursor) CXCursor
-	cursorMangling       func(CXCursor) CXString
-	isVirtualBase        func(CXCursor) int32
-	cursorGetArgument    func(CXCursor, uint32) CXCursor
-	cursorRawComment     func(CXCursor) CXString
+	visitChildren         func(parent CXCursor, visitor uintptr, clientData unsafe.Pointer) uint32
+	getCursorKind         func(CXCursor) int32
+	getCursorSpelling     func(CXCursor) CXString
+	getCursorDisplayName  func(CXCursor) CXString
+	getCursorType         func(CXCursor) CXType
+	getCursorLocation     func(CXCursor) CXSourceLocation
+	getCursorExtent       func(CXCursor) CXSourceRange
+	getRangeStart         func(CXSourceRange) CXSourceLocation
+	getRangeEnd           func(CXSourceRange) CXSourceLocation
+	isCursorDefinition    func(CXCursor) int32
+	isFunctionInlined     func(CXCursor) int32
+	getSemanticParent     func(CXCursor) CXCursor
+	getCursorDefinition   func(CXCursor) CXCursor
+	cursorMangling        func(CXCursor) CXString
+	isVirtualBase         func(CXCursor) int32
+	cursorGetArgument     func(CXCursor, uint32) CXCursor
+	cursorRawComment      func(CXCursor) CXString
+	cursorNumArguments    func(CXCursor) int32
+	cursorPrettyPrinted   func(CXCursor, uintptr) CXString
+	cursorPrintingPolicy  func(CXCursor) uintptr
+	printingPolicyDispose func(uintptr)
 
 	// Methods and linkage.
 	getCursorStorageClass        func(CXCursor) int32
@@ -456,6 +460,10 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_isVirtualBase", &f.isVirtualBase},
 		{"clang_Cursor_getArgument", &f.cursorGetArgument},
 		{"clang_Cursor_getRawCommentText", &f.cursorRawComment},
+		{"clang_Cursor_getNumArguments", &f.cursorNumArguments},
+		{"clang_getCursorPrettyPrinted", &f.cursorPrettyPrinted},
+		{"clang_getCursorPrintingPolicy", &f.cursorPrintingPolicy},
+		{"clang_PrintingPolicy_dispose", &f.printingPolicyDispose},
 		{"clang_Cursor_getStorageClass", &f.getCursorStorageClass},
 		{"clang_CXXMethod_isStatic", &f.methodIsStatic},
 		{"clang_CXXMethod_isVirtual", &f.methodIsVirtual},

@@ -240,8 +240,37 @@ func (b *builder) applyOverloadSuffixes() {
 		sort.Slice(group, func(i, j int) bool {
 			return displaySignature(group[i].sym) < displaySignature(group[j].sym)
 		})
+		// A group made of one declaration and its default-argument prefixes
+		// keeps the bare name for the full signature: that is the declaration a
+		// reader called, and each prefix is a shorter spelling of it.
+		primary := ""
+		hasPrefix := false
+		for _, binding := range group {
+			if binding.defaultPrefix {
+				hasPrefix = true
+			}
+		}
+		if hasPrefix {
+			for _, binding := range group {
+				if binding.defaultPrefix || len(binding.Params) == 0 {
+					continue
+				}
+				if primary == "" {
+					primary = binding.GoName
+				} else {
+					primary = ""
+					break
+				}
+			}
+		}
 		for _, binding := range group {
 			if len(binding.Params) == 0 {
+				// A genuine zero-argument overload keeps the bare name. A
+				// collision with the full signature is the collision check's
+				// to report.
+				continue
+			}
+			if primary != "" && !binding.defaultPrefix {
 				continue
 			}
 			binding.GoName += paramSuffix(binding.Params)

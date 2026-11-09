@@ -813,6 +813,7 @@ func (e *recordExtractor) synthesizeMember(cursor CXCursor, rec *Record, sub sub
 			member.Params = append(member.Params, sub.param(e.l.param(e.l.f.getArgType(funcType, i))))
 		}
 		e.l.paramNames(cursor, member.Params)
+		e.l.paramDefaults(cursor, member.Params)
 	}
 	if kind == Constructor {
 		member.IsCopyConstructor = e.l.f.constructorIsCopyConstructor(cursor) != 0

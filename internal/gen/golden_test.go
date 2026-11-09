@@ -24,6 +24,7 @@ func goldenFixtures() map[string]Config {
 		"fields":      fixtureConfig("fields", "fields.hpp"),
 		"nested":      nestedConfig(),
 		"inheritance": fixtureConfig("inheritance", "inheritance.hpp"),
+		"defaults":    fixtureConfig("defaults", "defaults.hpp"),
 	}
 }
 

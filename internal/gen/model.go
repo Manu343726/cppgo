@@ -210,6 +210,10 @@ type binding struct {
 	fieldByValue bool
 	// fieldName overrides the Go base name a static data member takes.
 	fieldName string
+	// defaultPrefix is true for a binding that omits trailing default
+	// arguments: the full signature keeps the bare Go name, and a prefix takes
+	// the overload suffix.
+	defaultPrefix bool
 	// base is the base record an inherited method was copied from, nil for a
 	// method the record declares itself.
 	base *recordModel
@@ -425,6 +429,9 @@ func build(cfg Config) (*packageModel, error) {
 		return nil, err
 	}
 	if err := b.buildStaticFields(); err != nil {
+		return nil, err
+	}
+	if err := b.expandDefaults(); err != nil {
 		return nil, err
 	}
 	for i, entry := range b.cfg.Status {
@@ -1005,9 +1012,6 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 			return nil, err
 		}
 	}
-	if err := b.checkRegisters(binding); err != nil {
-		return nil, err
-	}
 	if err := b.checkReentrant(binding); err != nil {
 		return nil, err
 	}
@@ -1037,6 +1041,11 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 			}
 			binding.Wire = append(binding.Wire, out)
 		}
+	}
+	// The register check runs last: a standard-library result adds its
+	// out-parameters to the wire, and those are INTEGER words like any other.
+	if err := b.checkRegisters(binding); err != nil {
+		return nil, err
 	}
 	binding.ID = shortHash(displaySignature(sym))
 	binding.SymbolVar = "cppgoSym_" + binding.ID

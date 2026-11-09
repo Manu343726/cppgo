@@ -118,6 +118,13 @@ type Param struct {
 	// incomplete, variable or dependent array. A dependent size is resolved
 	// when a template argument supplies it.
 	ArraySize int64
+	// HasDefault is true when the parameter declares a default argument. The
+	// default is applied by the caller's compiler, so a binding that omits it
+	// must be written in C++.
+	HasDefault bool
+	// DefaultText is the default expression as the declaration wrote it, for
+	// diagnostics; the generator never evaluates it.
+	DefaultText string
 }
 
 // IsStream reports whether the value is a canonical C++ stream reference or
@@ -499,6 +506,7 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 			sym.Params = append(sym.Params, e.l.param(e.l.f.getArgType(funcType, i)))
 		}
 		e.l.paramNames(cursor, sym.Params)
+		e.l.paramDefaults(cursor, sym.Params)
 	}
 	if sym.Kind == Constructor {
 		// A copy constructor is Clone(), not a factory, and a move
@@ -887,6 +895,66 @@ func (l *Libclang) paramNames(cursor CXCursor, params []Param) {
 		}
 		params[i].Name = l.str(l.f.getCursorSpelling(arg))
 	}
+}
+
+// paramDefaults fills each parameter's default-argument flag from the argument
+// cursors. libclang exposes no "has default" query, so the answer comes from the
+// argument's pretty-printed declaration: "int mode = 3" declares one, "double
+// factor" does not. The default's text is kept and never evaluated.
+func (l *Libclang) paramDefaults(cursor CXCursor, params []Param) {
+	if l.f.cursorNumArguments == nil || l.f.cursorPrettyPrinted == nil {
+		return
+	}
+	if n := int(l.f.cursorNumArguments(cursor)); n < len(params) {
+		// A variadic function or a template reports fewer arguments than the
+		// type has; a default cannot be read for a parameter with no cursor.
+		return
+	}
+	for i := range params {
+		arg := l.f.cursorGetArgument(cursor, uint32(i))
+		if !l.cursorIsValid(arg) {
+			continue
+		}
+		text := l.str(l.f.cursorPrettyPrinted(arg, l.f.cursorPrintingPolicy(arg)))
+		value, ok := defaultArgument(text)
+		if !ok {
+			continue
+		}
+		params[i].HasDefault = true
+		params[i].DefaultText = value
+	}
+}
+
+// defaultArgument splits the default expression out of a parameter's printed
+// declaration. The "=" must be at the top level of the declaration: one inside
+// a template argument list, a pair of parentheses or a lambda is part of the
+// type or of the expression, not the default's separator.
+func defaultArgument(text string) (string, bool) {
+	depth := 0
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '(', '[', '{', '<':
+			depth++
+		case ')', ']', '}', '>':
+			if depth > 0 {
+				depth--
+			}
+		case '=':
+			if depth != 0 {
+				continue
+			}
+			// A "==", "!=", "<=", ">=" or "+=" is part of an expression, never
+			// the separator; require a space-delimited "=".
+			if i > 0 && strings.ContainsRune("=!<>+-*/%&|^", rune(text[i-1])) {
+				continue
+			}
+			if i+1 < len(text) && strings.ContainsRune("=!<>", rune(text[i+1])) {
+				continue
+			}
+			return strings.TrimSpace(text[i+1:]), true
+		}
+	}
+	return "", false
 }
 
 // isUnsignedKind reports whether an integer type kind is unsigned.
