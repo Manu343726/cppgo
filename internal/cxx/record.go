@@ -482,6 +482,11 @@ func (e *recordExtractor) finishRecord(rec *Record, facts ctorFacts) {
 // (it does not for a template with a non-type or template-template parameter).
 func (e *recordExtractor) addTypeSpecialization(field CXCursor) {
 	typ := e.l.f.getTypeDeclaration(e.l.f.getCursorType(field))
+	if !e.tu.selectable(typ) {
+		// The instantiation of a standard-library type reached through a field:
+		// not the API the caller named.
+		return
+	}
 	pattern, ok := e.l.specialization(typ)
 	if !ok {
 		return
@@ -985,6 +990,11 @@ func (e *recordExtractor) enumeratorValue(cursor CXCursor, sub substitution, pre
 
 // sourceText returns the source a cursor covers, read from the file it is in.
 func (e *recordExtractor) sourceText(cursor CXCursor) (string, bool) {
+	if e.tu == nil || e.tu.l == nil {
+		// A record synthesised without a translation unit has no source to read;
+		// the caller treats that as values it cannot see, not as a failure.
+		return "", false
+	}
 	span := e.l.f.getCursorExtent(cursor)
 	path, start, ok := e.offsetOf(e.l.f.getRangeStart(span))
 	if !ok {

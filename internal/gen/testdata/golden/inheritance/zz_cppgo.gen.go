@@ -44,18 +44,18 @@ var (
 	cppgoSym_092dfe86021b uintptr
 	// cppgo_thunk_86bdace08f3f
 	cppgoSym_86bdace08f3f uintptr
-	// _ZN7inherit8Drawable4drawEv
-	cppgoSym_c32b70762403 uintptr
 	// cppgo_thunk_f07bced9b642
 	cppgoSym_f07bced9b642 uintptr
+	// _ZN7inherit8Drawable4drawEv
+	cppgoSym_c32b70762403 uintptr
 	// cppgo_thunk_4bd3141b1613
 	cppgoSym_4bd3141b1613 uintptr
-	// cppgo_thunk_666e3f5db6d1
-	cppgoSym_666e3f5db6d1 uintptr
-	// _ZNK7inherit8Drawable5drawsEv
-	cppgoSym_131d54cf4ae9 uintptr
 	// cppgo_thunk_b0c7a69d2d70
 	cppgoSym_b0c7a69d2d70 uintptr
+	// _ZNK7inherit8Drawable5drawsEv
+	cppgoSym_131d54cf4ae9 uintptr
+	// cppgo_thunk_666e3f5db6d1
+	cppgoSym_666e3f5db6d1 uintptr
 	// _ZN7inherit8DrawableD1Ev
 	cppgoSym_73c2b5c79cc1 uintptr
 	// _ZN7inherit4FlatC1Ev
@@ -88,6 +88,10 @@ var (
 	cppgoSym_48367cee469b uintptr
 	// cppgo_thunk_13ef07162603
 	cppgoSym_13ef07162603 uintptr
+	// cppgo_thunk_40026dd33fdf
+	cppgoSym_40026dd33fdf uintptr
+	// _ZN7inherit4Rect8identityEv
+	cppgoSym_a90e17c810df uintptr
 	// _ZNK7inherit4Rect5widthEv
 	cppgoSym_134794d3cb00 uintptr
 	// cppgo_thunk_839d97ac1158
@@ -112,16 +116,22 @@ var (
 	cppgoSym_0a782609147b uintptr
 	// cppgo_thunk_dd8202a5323f
 	cppgoSym_dd8202a5323f uintptr
-	// cppgo_thunk_2d778d0dc0ff
-	cppgoSym_2d778d0dc0ff uintptr
 	// cppgo_thunk_93c6ad214bbe
 	cppgoSym_93c6ad214bbe uintptr
-	// cppgo_thunk_38f5d27773c8
-	cppgoSym_38f5d27773c8 uintptr
+	// cppgo_thunk_2d778d0dc0ff
+	cppgoSym_2d778d0dc0ff uintptr
 	// cppgo_thunk_fe3a62f29761
 	cppgoSym_fe3a62f29761 uintptr
+	// cppgo_thunk_38f5d27773c8
+	cppgoSym_38f5d27773c8 uintptr
 	// _ZNK7inherit5Shape4nameEv
 	cppgoSym_7ebbc7da6590 uintptr
+	// cppgo_thunk_9786ecc85bec
+	cppgoSym_9786ecc85bec uintptr
+	// cppgo_thunk_ef0755e3a70d
+	cppgoSym_ef0755e3a70d uintptr
+	// cppgo_thunk_829b574f9ac5
+	cppgoSym_829b574f9ac5 uintptr
 	// cppgo_thunk_ee3b35c6b011
 	cppgoSym_ee3b35c6b011 uintptr
 	// cppgo_thunk_cf15e2126378
@@ -148,10 +158,10 @@ var (
 	cppgoSym_d6aed23d7923 uintptr
 	// cppgo_thunk_e0ad18714195
 	cppgoSym_e0ad18714195 uintptr
-	// cppgo_thunk_43be04ceac3a
-	cppgoSym_43be04ceac3a uintptr
 	// _ZNK7inherit6Tagged3tagEv
 	cppgoSym_394701ab986a uintptr
+	// cppgo_thunk_43be04ceac3a
+	cppgoSym_43be04ceac3a uintptr
 	// cppgo_thunk_14830d3c32ab
 	cppgoSym_14830d3c32ab uintptr
 	// cppgo_thunk_8397d5de4295
@@ -199,12 +209,12 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 	}{
 		{name: "_ZN7inherit8DrawableC1Ev", addr: &cppgoSym_092dfe86021b, shim: false},
 		{name: "cppgo_thunk_86bdace08f3f", addr: &cppgoSym_86bdace08f3f, shim: true},
-		{name: "_ZN7inherit8Drawable4drawEv", addr: &cppgoSym_c32b70762403, shim: false},
 		{name: "cppgo_thunk_f07bced9b642", addr: &cppgoSym_f07bced9b642, shim: true},
+		{name: "_ZN7inherit8Drawable4drawEv", addr: &cppgoSym_c32b70762403, shim: false},
 		{name: "cppgo_thunk_4bd3141b1613", addr: &cppgoSym_4bd3141b1613, shim: true},
-		{name: "cppgo_thunk_666e3f5db6d1", addr: &cppgoSym_666e3f5db6d1, shim: true},
-		{name: "_ZNK7inherit8Drawable5drawsEv", addr: &cppgoSym_131d54cf4ae9, shim: false},
 		{name: "cppgo_thunk_b0c7a69d2d70", addr: &cppgoSym_b0c7a69d2d70, shim: true},
+		{name: "_ZNK7inherit8Drawable5drawsEv", addr: &cppgoSym_131d54cf4ae9, shim: false},
+		{name: "cppgo_thunk_666e3f5db6d1", addr: &cppgoSym_666e3f5db6d1, shim: true},
 		{name: "_ZN7inherit8DrawableD1Ev", addr: &cppgoSym_73c2b5c79cc1, shim: false},
 		{name: "_ZN7inherit4FlatC1Ev", addr: &cppgoSym_3cf3bf0edba7, shim: false},
 		{name: "cppgo_thunk_01bb876b054c", addr: &cppgoSym_01bb876b054c, shim: true},
@@ -221,6 +231,8 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "_ZN7inherit4RectC1Ev", addr: &cppgoSym_9f5a2bf5039f, shim: false},
 		{name: "cppgo_thunk_48367cee469b", addr: &cppgoSym_48367cee469b, shim: true},
 		{name: "cppgo_thunk_13ef07162603", addr: &cppgoSym_13ef07162603, shim: true},
+		{name: "cppgo_thunk_40026dd33fdf", addr: &cppgoSym_40026dd33fdf, shim: true},
+		{name: "_ZN7inherit4Rect8identityEv", addr: &cppgoSym_a90e17c810df, shim: false},
 		{name: "_ZNK7inherit4Rect5widthEv", addr: &cppgoSym_134794d3cb00, shim: false},
 		{name: "cppgo_thunk_839d97ac1158", addr: &cppgoSym_839d97ac1158, shim: true},
 		{name: "cppgo_thunk_1cfda544edf1", addr: &cppgoSym_1cfda544edf1, shim: true},
@@ -233,11 +245,14 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_1bac3156974a", addr: &cppgoSym_1bac3156974a, shim: true},
 		{name: "cppgo_thunk_0a782609147b", addr: &cppgoSym_0a782609147b, shim: true},
 		{name: "cppgo_thunk_dd8202a5323f", addr: &cppgoSym_dd8202a5323f, shim: true},
-		{name: "cppgo_thunk_2d778d0dc0ff", addr: &cppgoSym_2d778d0dc0ff, shim: true},
 		{name: "cppgo_thunk_93c6ad214bbe", addr: &cppgoSym_93c6ad214bbe, shim: true},
-		{name: "cppgo_thunk_38f5d27773c8", addr: &cppgoSym_38f5d27773c8, shim: true},
+		{name: "cppgo_thunk_2d778d0dc0ff", addr: &cppgoSym_2d778d0dc0ff, shim: true},
 		{name: "cppgo_thunk_fe3a62f29761", addr: &cppgoSym_fe3a62f29761, shim: true},
+		{name: "cppgo_thunk_38f5d27773c8", addr: &cppgoSym_38f5d27773c8, shim: true},
 		{name: "_ZNK7inherit5Shape4nameEv", addr: &cppgoSym_7ebbc7da6590, shim: false},
+		{name: "cppgo_thunk_9786ecc85bec", addr: &cppgoSym_9786ecc85bec, shim: true},
+		{name: "cppgo_thunk_ef0755e3a70d", addr: &cppgoSym_ef0755e3a70d, shim: true},
+		{name: "cppgo_thunk_829b574f9ac5", addr: &cppgoSym_829b574f9ac5, shim: true},
 		{name: "cppgo_thunk_ee3b35c6b011", addr: &cppgoSym_ee3b35c6b011, shim: true},
 		{name: "cppgo_thunk_cf15e2126378", addr: &cppgoSym_cf15e2126378, shim: true},
 		{name: "cppgo_thunk_47553cbac4bc", addr: &cppgoSym_47553cbac4bc, shim: true},
@@ -251,8 +266,8 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_40eb12864766", addr: &cppgoSym_40eb12864766, shim: true},
 		{name: "_ZN7inherit6TaggedC1Ev", addr: &cppgoSym_d6aed23d7923, shim: false},
 		{name: "cppgo_thunk_e0ad18714195", addr: &cppgoSym_e0ad18714195, shim: true},
-		{name: "cppgo_thunk_43be04ceac3a", addr: &cppgoSym_43be04ceac3a, shim: true},
 		{name: "_ZNK7inherit6Tagged3tagEv", addr: &cppgoSym_394701ab986a, shim: false},
+		{name: "cppgo_thunk_43be04ceac3a", addr: &cppgoSym_43be04ceac3a, shim: true},
 		{name: "cppgo_thunk_14830d3c32ab", addr: &cppgoSym_14830d3c32ab, shim: true},
 		{name: "cppgo_thunk_8397d5de4295", addr: &cppgoSym_8397d5de4295, shim: true},
 	} {
@@ -763,6 +778,30 @@ func (r *Rect) Width() float64 {
 	return cppgoRet
 }
 
+// Identity calls inherit::Rect::identity.
+//
+// A reference to itself through an out-of-line noexcept body: the direct
+// carrier returns the view's address in the result register.
+//
+// C++: inherit::Rect::identity() noexcept, _ZN7inherit4Rect8identityEv (direct, noexcept, out of line, not virtual, register class)
+func (r *Rect) Identity() *Rect {
+	if r == nil || r.obj == nil {
+		panic("cppgo: inherit::Rect::identity() noexcept on a closed Rect")
+	}
+	if err := cppgoOpen(""); err != nil {
+		panic(err)
+	}
+	cppgo.ProbeStack()
+	cppgoRet := cppgoCall_a90e17c810df(cppgoSym_a90e17c810df, r.cppgoAddr())
+	cppgo.KeepAlive(r)
+	// A borrowed record result is a view: the receiver's object, one more reference.
+	if cppgoRet == nil {
+		return nil
+	}
+	r.obj.Retain()
+	return &Rect{obj: r.obj, addr: uintptr(cppgoRet)}
+}
+
 // Name calls inherit::Rect::name.
 //
 // The name every shape shares.
@@ -779,6 +818,29 @@ func (r *Rect) Name() *int8 {
 	cppgoRet := cppgoCall_fe3a62f29761(cppgoSym_fe3a62f29761, r.cppgoAddr())
 	cppgo.KeepAlive(r)
 	return (*int8)(cppgoRet)
+}
+
+// Weight calls inherit::Rect::weight.
+//
+// A value method that is not noexcept: a copy of it needs the status and
+// the out-pointer a direct call never had.
+//
+// C++: inherit::Shape::weight() const, _ZNK7inherit5Shape6weightEv (thunk cppgo_thunk_9786ecc85bec, an inherited method: the shim's cast applies the base offset)
+func (r *Rect) Weight() (float64, error) {
+	if r == nil || r.obj == nil {
+		return 0, cppgo.ErrClosed
+	}
+	if err := cppgoOpen(""); err != nil {
+		return 0, err
+	}
+	cppgo.ProbeStack()
+	var cppgoResult float64
+	cppgoStatus := cppgoCall_9786ecc85bec(cppgoSym_9786ecc85bec, r.cppgoAddr(), unsafe.Pointer(&cppgoResult))
+	cppgo.KeepAlive(r, &cppgoResult)
+	if cppgoStatus != 0 {
+		return 0, cppgoCallError("inherit::Shape::weight")
+	}
+	return cppgoResult, nil
 }
 
 // Id reads inherit::Shape::id.
@@ -1077,6 +1139,29 @@ func (s *Shape) Name() *int8 {
 	return (*int8)(cppgoRet)
 }
 
+// Weight calls inherit::Shape::weight.
+//
+// A value method that is not noexcept: a copy of it needs the status and
+// the out-pointer a direct call never had.
+//
+// C++: inherit::Shape::weight() const, _ZNK7inherit5Shape6weightEv (thunk cppgo_thunk_829b574f9ac5, not noexcept: an exception would unwind into Go)
+func (s *Shape) Weight() (float64, error) {
+	if s == nil || s.obj == nil {
+		return 0, cppgo.ErrClosed
+	}
+	if err := cppgoOpen(""); err != nil {
+		return 0, err
+	}
+	cppgo.ProbeStack()
+	var cppgoResult float64
+	cppgoStatus := cppgoCall_829b574f9ac5(cppgoSym_829b574f9ac5, s.cppgoAddr(), unsafe.Pointer(&cppgoResult))
+	cppgo.KeepAlive(s, &cppgoResult)
+	if cppgoStatus != 0 {
+		return 0, cppgoCallError("inherit::Shape::weight")
+	}
+	return cppgoResult, nil
+}
+
 // Id reads inherit::Shape::id.
 //
 // A public field of the base.
@@ -1278,6 +1363,30 @@ func (s *Square) Width() float64 {
 	return cppgoRet
 }
 
+// Identity calls inherit::Square::identity.
+//
+// A reference to itself through an out-of-line noexcept body: the direct
+// carrier returns the view's address in the result register.
+//
+// C++: inherit::Rect::identity() noexcept, _ZN7inherit4Rect8identityEv (thunk cppgo_thunk_40026dd33fdf, an inherited method: the shim's cast applies the base offset)
+func (s *Square) Identity() *Rect {
+	if s == nil || s.obj == nil {
+		panic("cppgo: inherit::Rect::identity() noexcept on a closed Square")
+	}
+	if err := cppgoOpen(""); err != nil {
+		panic(err)
+	}
+	cppgo.ProbeStack()
+	cppgoRet := cppgoCall_40026dd33fdf(cppgoSym_40026dd33fdf, s.cppgoAddr())
+	cppgo.KeepAlive(s)
+	// A borrowed record result is a view: the receiver's object, one more reference.
+	if cppgoRet == nil {
+		return nil
+	}
+	s.obj.Retain()
+	return &Rect{obj: s.obj, addr: uintptr(cppgoRet)}
+}
+
 // Name calls inherit::Square::name.
 //
 // The name every shape shares.
@@ -1294,6 +1403,29 @@ func (s *Square) Name() *int8 {
 	cppgoRet := cppgoCall_38f5d27773c8(cppgoSym_38f5d27773c8, s.cppgoAddr())
 	cppgo.KeepAlive(s)
 	return (*int8)(cppgoRet)
+}
+
+// Weight calls inherit::Square::weight.
+//
+// A value method that is not noexcept: a copy of it needs the status and
+// the out-pointer a direct call never had.
+//
+// C++: inherit::Shape::weight() const, _ZNK7inherit5Shape6weightEv (thunk cppgo_thunk_ef0755e3a70d, an inherited method: the shim's cast applies the base offset)
+func (s *Square) Weight() (float64, error) {
+	if s == nil || s.obj == nil {
+		return 0, cppgo.ErrClosed
+	}
+	if err := cppgoOpen(""); err != nil {
+		return 0, err
+	}
+	cppgo.ProbeStack()
+	var cppgoResult float64
+	cppgoStatus := cppgoCall_ef0755e3a70d(cppgoSym_ef0755e3a70d, s.cppgoAddr(), unsafe.Pointer(&cppgoResult))
+	cppgo.KeepAlive(s, &cppgoResult)
+	if cppgoStatus != 0 {
+		return 0, cppgoCallError("inherit::Shape::weight")
+	}
+	return cppgoResult, nil
 }
 
 // Id reads inherit::Shape::id.
@@ -1628,23 +1760,23 @@ func cppgoCall_092dfe86021b(fn uintptr, this uintptr)
 // cppgoCall_86bdace08f3f is the NOSPLIT trampoline for cppgo_thunk_86bdace08f3f.
 func cppgoCall_86bdace08f3f(fn uintptr, this uintptr, a1 uintptr) int32
 
-// cppgoCall_c32b70762403 is the NOSPLIT trampoline for _ZN7inherit8Drawable4drawEv.
-func cppgoCall_c32b70762403(fn uintptr, this uintptr)
-
 // cppgoCall_f07bced9b642 is the NOSPLIT trampoline for cppgo_thunk_f07bced9b642.
 func cppgoCall_f07bced9b642(fn uintptr, this uintptr)
+
+// cppgoCall_c32b70762403 is the NOSPLIT trampoline for _ZN7inherit8Drawable4drawEv.
+func cppgoCall_c32b70762403(fn uintptr, this uintptr)
 
 // cppgoCall_4bd3141b1613 is the NOSPLIT trampoline for cppgo_thunk_4bd3141b1613.
 func cppgoCall_4bd3141b1613(fn uintptr, this uintptr)
 
-// cppgoCall_666e3f5db6d1 is the NOSPLIT trampoline for cppgo_thunk_666e3f5db6d1.
-func cppgoCall_666e3f5db6d1(fn uintptr, this uintptr) int64
+// cppgoCall_b0c7a69d2d70 is the NOSPLIT trampoline for cppgo_thunk_b0c7a69d2d70.
+func cppgoCall_b0c7a69d2d70(fn uintptr, this uintptr) int64
 
 // cppgoCall_131d54cf4ae9 is the NOSPLIT trampoline for _ZNK7inherit8Drawable5drawsEv.
 func cppgoCall_131d54cf4ae9(fn uintptr, this uintptr) int64
 
-// cppgoCall_b0c7a69d2d70 is the NOSPLIT trampoline for cppgo_thunk_b0c7a69d2d70.
-func cppgoCall_b0c7a69d2d70(fn uintptr, this uintptr) int64
+// cppgoCall_666e3f5db6d1 is the NOSPLIT trampoline for cppgo_thunk_666e3f5db6d1.
+func cppgoCall_666e3f5db6d1(fn uintptr, this uintptr) int64
 
 // cppgoCall_73c2b5c79cc1 is the NOSPLIT trampoline for _ZN7inherit8DrawableD1Ev.
 func cppgoCall_73c2b5c79cc1(fn uintptr, this uintptr)
@@ -1694,6 +1826,12 @@ func cppgoCall_48367cee469b(fn uintptr, this uintptr, a1 uintptr) int32
 // cppgoCall_13ef07162603 is the NOSPLIT trampoline for cppgo_thunk_13ef07162603.
 func cppgoCall_13ef07162603(fn uintptr, this uintptr) float64
 
+// cppgoCall_40026dd33fdf is the NOSPLIT trampoline for cppgo_thunk_40026dd33fdf.
+func cppgoCall_40026dd33fdf(fn uintptr, this uintptr) unsafe.Pointer
+
+// cppgoCall_a90e17c810df is the NOSPLIT trampoline for _ZN7inherit4Rect8identityEv.
+func cppgoCall_a90e17c810df(fn uintptr, this uintptr) unsafe.Pointer
+
 // cppgoCall_134794d3cb00 is the NOSPLIT trampoline for _ZNK7inherit4Rect5widthEv.
 func cppgoCall_134794d3cb00(fn uintptr, this uintptr) float64
 
@@ -1730,20 +1868,29 @@ func cppgoCall_0a782609147b(fn uintptr, this uintptr) int64
 // cppgoCall_dd8202a5323f is the NOSPLIT trampoline for cppgo_thunk_dd8202a5323f.
 func cppgoCall_dd8202a5323f(fn uintptr, this uintptr, a1 int64)
 
-// cppgoCall_2d778d0dc0ff is the NOSPLIT trampoline for cppgo_thunk_2d778d0dc0ff.
-func cppgoCall_2d778d0dc0ff(fn uintptr, this uintptr, a1 int64)
-
 // cppgoCall_93c6ad214bbe is the NOSPLIT trampoline for cppgo_thunk_93c6ad214bbe.
 func cppgoCall_93c6ad214bbe(fn uintptr, this uintptr, a1 int64)
 
-// cppgoCall_38f5d27773c8 is the NOSPLIT trampoline for cppgo_thunk_38f5d27773c8.
-func cppgoCall_38f5d27773c8(fn uintptr, this uintptr) unsafe.Pointer
+// cppgoCall_2d778d0dc0ff is the NOSPLIT trampoline for cppgo_thunk_2d778d0dc0ff.
+func cppgoCall_2d778d0dc0ff(fn uintptr, this uintptr, a1 int64)
 
 // cppgoCall_fe3a62f29761 is the NOSPLIT trampoline for cppgo_thunk_fe3a62f29761.
 func cppgoCall_fe3a62f29761(fn uintptr, this uintptr) unsafe.Pointer
 
+// cppgoCall_38f5d27773c8 is the NOSPLIT trampoline for cppgo_thunk_38f5d27773c8.
+func cppgoCall_38f5d27773c8(fn uintptr, this uintptr) unsafe.Pointer
+
 // cppgoCall_7ebbc7da6590 is the NOSPLIT trampoline for _ZNK7inherit5Shape4nameEv.
 func cppgoCall_7ebbc7da6590(fn uintptr, this uintptr) unsafe.Pointer
+
+// cppgoCall_9786ecc85bec is the NOSPLIT trampoline for cppgo_thunk_9786ecc85bec.
+func cppgoCall_9786ecc85bec(fn uintptr, this uintptr, out unsafe.Pointer) int32
+
+// cppgoCall_ef0755e3a70d is the NOSPLIT trampoline for cppgo_thunk_ef0755e3a70d.
+func cppgoCall_ef0755e3a70d(fn uintptr, this uintptr, out unsafe.Pointer) int32
+
+// cppgoCall_829b574f9ac5 is the NOSPLIT trampoline for cppgo_thunk_829b574f9ac5.
+func cppgoCall_829b574f9ac5(fn uintptr, this uintptr, out unsafe.Pointer) int32
 
 // cppgoCall_ee3b35c6b011 is the NOSPLIT trampoline for cppgo_thunk_ee3b35c6b011.
 func cppgoCall_ee3b35c6b011(fn uintptr, this uintptr)
@@ -1784,11 +1931,11 @@ func cppgoCall_d6aed23d7923(fn uintptr, this uintptr)
 // cppgoCall_e0ad18714195 is the NOSPLIT trampoline for cppgo_thunk_e0ad18714195.
 func cppgoCall_e0ad18714195(fn uintptr, this uintptr, a1 uintptr) int32
 
-// cppgoCall_43be04ceac3a is the NOSPLIT trampoline for cppgo_thunk_43be04ceac3a.
-func cppgoCall_43be04ceac3a(fn uintptr, this uintptr) int64
-
 // cppgoCall_394701ab986a is the NOSPLIT trampoline for _ZNK7inherit6Tagged3tagEv.
 func cppgoCall_394701ab986a(fn uintptr, this uintptr) int64
+
+// cppgoCall_43be04ceac3a is the NOSPLIT trampoline for cppgo_thunk_43be04ceac3a.
+func cppgoCall_43be04ceac3a(fn uintptr, this uintptr) int64
 
 // cppgoCall_14830d3c32ab is the NOSPLIT trampoline for cppgo_thunk_14830d3c32ab.
 func cppgoCall_14830d3c32ab(fn uintptr, this uintptr) int64

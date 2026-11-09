@@ -52,12 +52,12 @@ extern "C" void cppgo_thunk_4bd3141b1613(void * self) {
 	static_cast<::inherit::Square *>(self)->draw();
 }
 
-extern "C" int32_t cppgo_thunk_666e3f5db6d1(const void * self) {
-	return static_cast<const ::inherit::Square *>(self)->draws();
-}
-
 extern "C" int32_t cppgo_thunk_b0c7a69d2d70(const void * self) {
 	return static_cast<const ::inherit::Rect *>(self)->draws();
+}
+
+extern "C" int32_t cppgo_thunk_666e3f5db6d1(const void * self) {
+	return static_cast<const ::inherit::Square *>(self)->draws();
 }
 
 extern "C" int32_t cppgo_thunk_01bb876b054c(void * self, const void * arg0) {
@@ -130,6 +130,10 @@ extern "C" double cppgo_thunk_13ef07162603(const void * self) {
 	return static_cast<const ::inherit::Rect *>(self)->area();
 }
 
+extern "C" void * cppgo_thunk_40026dd33fdf(void * self) {
+	return static_cast<void *>(&(static_cast<::inherit::Square *>(self)->identity()));
+}
+
 extern "C" double cppgo_thunk_839d97ac1158(const void * self) {
 	return static_cast<const ::inherit::Square *>(self)->width();
 }
@@ -180,20 +184,62 @@ extern "C" void cppgo_thunk_dd8202a5323f(void * self, int32_t id) {
 	static_cast<::inherit::Square *>(self)->id = id;
 }
 
+extern "C" void cppgo_thunk_93c6ad214bbe(void * self, int32_t id) {
+	static_cast<::inherit::Rect *>(self)->id = id;
+}
+
 extern "C" void cppgo_thunk_2d778d0dc0ff(void * self, int32_t id) {
 	static_cast<::inherit::Shape *>(self)->id = id;
 }
 
-extern "C" void cppgo_thunk_93c6ad214bbe(void * self, int32_t id) {
-	static_cast<::inherit::Rect *>(self)->id = id;
+extern "C" const int8_t * cppgo_thunk_fe3a62f29761(const void * self) {
+	return reinterpret_cast<const int8_t *>(static_cast<const ::inherit::Rect *>(self)->name());
 }
 
 extern "C" const int8_t * cppgo_thunk_38f5d27773c8(const void * self) {
 	return reinterpret_cast<const int8_t *>(static_cast<const ::inherit::Square *>(self)->name());
 }
 
-extern "C" const int8_t * cppgo_thunk_fe3a62f29761(const void * self) {
-	return reinterpret_cast<const int8_t *>(static_cast<const ::inherit::Rect *>(self)->name());
+extern "C" int32_t cppgo_thunk_9786ecc85bec(const void * self, double * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::inherit::Rect *>(self)->weight();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_ef0755e3a70d(const void * self, double * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::inherit::Square *>(self)->weight();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_829b574f9ac5(const void * self, double * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::inherit::Shape *>(self)->weight();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
 }
 
 extern "C" void cppgo_thunk_ee3b35c6b011(void * self) {

@@ -26,11 +26,11 @@ void cppgo_thunk_f07bced9b642(void * self);
 /* cppgo_thunk_4bd3141b1613: inherit::Drawable::draw() noexcept */
 void cppgo_thunk_4bd3141b1613(void * self);
 
-/* cppgo_thunk_666e3f5db6d1: inherit::Drawable::draws() const noexcept */
-int32_t cppgo_thunk_666e3f5db6d1(const void * self);
-
 /* cppgo_thunk_b0c7a69d2d70: inherit::Drawable::draws() const noexcept */
 int32_t cppgo_thunk_b0c7a69d2d70(const void * self);
+
+/* cppgo_thunk_666e3f5db6d1: inherit::Drawable::draws() const noexcept */
+int32_t cppgo_thunk_666e3f5db6d1(const void * self);
 
 /* cppgo_thunk_01bb876b054c: inherit::Flat::Flat(const inherit::Flat &) */
 int32_t cppgo_thunk_01bb876b054c(void * self, const void * arg0);
@@ -62,6 +62,9 @@ int32_t cppgo_thunk_48367cee469b(void * self, const void * arg0);
 /* cppgo_thunk_13ef07162603: inherit::Rect::area() const noexcept */
 double cppgo_thunk_13ef07162603(const void * self);
 
+/* cppgo_thunk_40026dd33fdf: inherit::Rect::identity() noexcept */
+void * cppgo_thunk_40026dd33fdf(void * self);
+
 /* cppgo_thunk_839d97ac1158: inherit::Rect::width() const noexcept */
 double cppgo_thunk_839d97ac1158(const void * self);
 
@@ -92,17 +95,26 @@ int32_t cppgo_thunk_0a782609147b(const void * self);
 /* cppgo_thunk_dd8202a5323f: inherit::Shape::id(std::int32_t) noexcept */
 void cppgo_thunk_dd8202a5323f(void * self, int32_t id);
 
+/* cppgo_thunk_93c6ad214bbe: inherit::Shape::id(std::int32_t) noexcept */
+void cppgo_thunk_93c6ad214bbe(void * self, int32_t id);
+
 /* cppgo_thunk_2d778d0dc0ff: inherit::Shape::id(std::int32_t) noexcept */
 void cppgo_thunk_2d778d0dc0ff(void * self, int32_t id);
 
-/* cppgo_thunk_93c6ad214bbe: inherit::Shape::id(std::int32_t) noexcept */
-void cppgo_thunk_93c6ad214bbe(void * self, int32_t id);
+/* cppgo_thunk_fe3a62f29761: inherit::Shape::name() const noexcept */
+const int8_t * cppgo_thunk_fe3a62f29761(const void * self);
 
 /* cppgo_thunk_38f5d27773c8: inherit::Shape::name() const noexcept */
 const int8_t * cppgo_thunk_38f5d27773c8(const void * self);
 
-/* cppgo_thunk_fe3a62f29761: inherit::Shape::name() const noexcept */
-const int8_t * cppgo_thunk_fe3a62f29761(const void * self);
+/* cppgo_thunk_9786ecc85bec: inherit::Shape::weight() const */
+int32_t cppgo_thunk_9786ecc85bec(const void * self, double * cppgo_result);
+
+/* cppgo_thunk_ef0755e3a70d: inherit::Shape::weight() const */
+int32_t cppgo_thunk_ef0755e3a70d(const void * self, double * cppgo_result);
+
+/* cppgo_thunk_829b574f9ac5: inherit::Shape::weight() const */
+int32_t cppgo_thunk_829b574f9ac5(const void * self, double * cppgo_result);
 
 /* cppgo_thunk_ee3b35c6b011: inherit::Shape::~Shape() */
 void cppgo_thunk_ee3b35c6b011(void * self);

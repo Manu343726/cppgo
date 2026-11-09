@@ -20,6 +20,10 @@ public:
     /// The name every shape shares.
     const char *name() const noexcept;
 
+    /// A value method that is not noexcept: a copy of it needs the status and
+    /// the out-pointer a direct call never had.
+    double weight() const;
+
     /// A public field of the base.
     std::int32_t id = 0;
 
@@ -67,6 +71,10 @@ public:
 
     /// Its own method.
     double width() const noexcept;
+
+    /// A reference to itself through an out-of-line noexcept body: the direct
+    /// carrier returns the view's address in the result register.
+    Rect &identity() noexcept;
 
 private:
     double width_;

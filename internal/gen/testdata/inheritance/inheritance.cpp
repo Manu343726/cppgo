@@ -10,6 +10,8 @@ double Shape::area() const noexcept { return 0; }
 
 const char *Shape::name() const noexcept { return "shape"; }
 
+double Shape::weight() const { return 1.5; }
+
 Drawable::Drawable() noexcept : draws_() {}
 
 Drawable::~Drawable() {}
@@ -31,6 +33,8 @@ Rect::~Rect() {}
 double Rect::area() const noexcept { return width_ * width_; }
 
 double Rect::width() const noexcept { return width_; }
+
+Rect &Rect::identity() noexcept { return *this; }
 
 Square::Square() noexcept {}
 

@@ -243,10 +243,8 @@ func firstDiagnostic(output []byte) *diagnostic {
 		if match == nil {
 			continue
 		}
-		number, err := strconv.Atoi(match[2])
-		if err != nil {
-			continue
-		}
+		// The pattern captured digits, so the conversion cannot fail.
+		number, _ := strconv.Atoi(match[2])
 		return &diagnostic{file: match[1], line: number, message: match[3]}
 	}
 	return nil

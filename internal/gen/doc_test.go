@@ -164,3 +164,46 @@ func TestCommentLinesAndIndent(t *testing.T) {
 	assert.Equal(t, "", commentLines(""))
 	assert.Equal(t, "\t// Fast.\n\t// And safe.\n", indentLines(commentLines("/// Fast.\n/// And safe."), "\t"))
 }
+
+// TestDocCommentEdges covers the markers a comment can carry besides the common
+// ones: a bang block, a bare closing marker, a line that is only a star, an
+// unnamed command with no text of its own, and a paragraph ending in a bracket.
+func TestDocCommentEdges(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "a bang block", raw: "/*! Kept. */", want: "Kept."},
+		{name: "a bare closing marker line", raw: "/**\n * Text.\n */", want: "Text."},
+		{name: "a line that is only a star", raw: "/**\n *\n *\n * Text.\n */", want: "Text."},
+		{name: "a command with no text", raw: "/** \\brief */", want: ""},
+		{name: "a word with no command", raw: "/** plain prose. */", want: "plain prose."},
+		{name: "an at-sign that is not a command", raw: "/** @ */", want: "@"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, docComment(tc.raw))
+		})
+	}
+
+	// The paragraph terminator leaves a bracketed ending alone and adds a period
+	// to a sentence that has none.
+	assert.Equal(t, "a [b]", terminate("a [b]"))
+	assert.Equal(t, "no period.", terminate("no period"))
+	assert.Equal(t, "one.\n\ntwo.", terminate("one.\n\ntwo"))
+	assert.Equal(t, "", terminate(""))
+
+	// A doc with no identifier to open it and no fallback is the doc alone.
+	assert.Equal(t, "// Prose.", docBlock("Name", "", "/** Prose. */"))
+	assert.Equal(t, "", firstWord(""))
+	assert.Equal(t, "Word", firstWord("Word: rest"))
+
+	// A command with an unterminated direction marker keeps its text.
+	word, rest, ok := splitCommand("@param[in text")
+	assert.True(t, ok)
+	assert.Equal(t, "param", word)
+	assert.Equal(t, "[in text", rest)
+}

@@ -211,3 +211,14 @@ func TestInheritance(t *testing.T) {
 	}
 }
 `
+
+// TestADirectBorrowedResultCoversTheRegisterPath pins the second view path: a
+// method that is noexcept and defined out of line returns its address in the
+// result register instead of through an out-pointer.
+func TestADirectBorrowedResultCoversTheRegisterPath(t *testing.T) {
+	m := renderMap(t, fixtureConfig("inheritance", "inheritance.hpp"))
+	source := m[GenFileName]
+	assert.Contains(t, source, "func (r *Rect) Identity() *Rect {")
+	assert.Contains(t, source, "cppgoRet := cppgoCall_")
+	assert.Contains(t, source, "return &Rect{obj: r.obj, addr: uintptr(cppgoRet)}")
+}

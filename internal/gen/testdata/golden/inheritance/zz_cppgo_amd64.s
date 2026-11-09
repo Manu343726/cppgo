@@ -24,8 +24,8 @@ TEXT ·cppgoCall_86bdace08f3f(SB), NOSPLIT, $0-28
 	MOVL	AX, ret+24(FP)
 	RET
 
-// func cppgoCall_c32b70762403(fn uintptr, this uintptr)
-TEXT ·cppgoCall_c32b70762403(SB), NOSPLIT, $0-16
+// func cppgoCall_f07bced9b642(fn uintptr, this uintptr)
+TEXT ·cppgoCall_f07bced9b642(SB), NOSPLIT, $0-16
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	SP, R13
@@ -34,8 +34,8 @@ TEXT ·cppgoCall_c32b70762403(SB), NOSPLIT, $0-16
 	MOVQ	R13, SP
 	RET
 
-// func cppgoCall_f07bced9b642(fn uintptr, this uintptr)
-TEXT ·cppgoCall_f07bced9b642(SB), NOSPLIT, $0-16
+// func cppgoCall_c32b70762403(fn uintptr, this uintptr)
+TEXT ·cppgoCall_c32b70762403(SB), NOSPLIT, $0-16
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	SP, R13
@@ -54,8 +54,8 @@ TEXT ·cppgoCall_4bd3141b1613(SB), NOSPLIT, $0-16
 	MOVQ	R13, SP
 	RET
 
-// func cppgoCall_666e3f5db6d1(fn uintptr, this uintptr) int64
-TEXT ·cppgoCall_666e3f5db6d1(SB), NOSPLIT, $0-24
+// func cppgoCall_b0c7a69d2d70(fn uintptr, this uintptr) int64
+TEXT ·cppgoCall_b0c7a69d2d70(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	SP, R13
@@ -76,8 +76,8 @@ TEXT ·cppgoCall_131d54cf4ae9(SB), NOSPLIT, $0-24
 	MOVQ	AX, ret+16(FP)
 	RET
 
-// func cppgoCall_b0c7a69d2d70(fn uintptr, this uintptr) int64
-TEXT ·cppgoCall_b0c7a69d2d70(SB), NOSPLIT, $0-24
+// func cppgoCall_666e3f5db6d1(fn uintptr, this uintptr) int64
+TEXT ·cppgoCall_666e3f5db6d1(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	SP, R13
@@ -262,6 +262,28 @@ TEXT ·cppgoCall_13ef07162603(SB), NOSPLIT, $0-24
 	MOVSD	X0, ret+16(FP)
 	RET
 
+// func cppgoCall_40026dd33fdf(fn uintptr, this uintptr) unsafe.Pointer
+TEXT ·cppgoCall_40026dd33fdf(SB), NOSPLIT, $0-24
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	MOVQ	AX, ret+16(FP)
+	RET
+
+// func cppgoCall_a90e17c810df(fn uintptr, this uintptr) unsafe.Pointer
+TEXT ·cppgoCall_a90e17c810df(SB), NOSPLIT, $0-24
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	MOVQ	AX, ret+16(FP)
+	RET
+
 // func cppgoCall_134794d3cb00(fn uintptr, this uintptr) float64
 TEXT ·cppgoCall_134794d3cb00(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
@@ -393,17 +415,6 @@ TEXT ·cppgoCall_dd8202a5323f(SB), NOSPLIT, $0-24
 	MOVQ	R13, SP
 	RET
 
-// func cppgoCall_2d778d0dc0ff(fn uintptr, this uintptr, a1 int64)
-TEXT ·cppgoCall_2d778d0dc0ff(SB), NOSPLIT, $0-24
-	MOVQ	fn+0(FP), R12
-	MOVQ	this+8(FP), DI
-	MOVQ	a1+16(FP), SI
-	MOVQ	SP, R13
-	ANDQ	$~15, SP
-	CALL	R12
-	MOVQ	R13, SP
-	RET
-
 // func cppgoCall_93c6ad214bbe(fn uintptr, this uintptr, a1 int64)
 TEXT ·cppgoCall_93c6ad214bbe(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
@@ -415,8 +426,19 @@ TEXT ·cppgoCall_93c6ad214bbe(SB), NOSPLIT, $0-24
 	MOVQ	R13, SP
 	RET
 
-// func cppgoCall_38f5d27773c8(fn uintptr, this uintptr) unsafe.Pointer
-TEXT ·cppgoCall_38f5d27773c8(SB), NOSPLIT, $0-24
+// func cppgoCall_2d778d0dc0ff(fn uintptr, this uintptr, a1 int64)
+TEXT ·cppgoCall_2d778d0dc0ff(SB), NOSPLIT, $0-24
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	a1+16(FP), SI
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	RET
+
+// func cppgoCall_fe3a62f29761(fn uintptr, this uintptr) unsafe.Pointer
+TEXT ·cppgoCall_fe3a62f29761(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	SP, R13
@@ -426,8 +448,8 @@ TEXT ·cppgoCall_38f5d27773c8(SB), NOSPLIT, $0-24
 	MOVQ	AX, ret+16(FP)
 	RET
 
-// func cppgoCall_fe3a62f29761(fn uintptr, this uintptr) unsafe.Pointer
-TEXT ·cppgoCall_fe3a62f29761(SB), NOSPLIT, $0-24
+// func cppgoCall_38f5d27773c8(fn uintptr, this uintptr) unsafe.Pointer
+TEXT ·cppgoCall_38f5d27773c8(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	SP, R13
@@ -446,6 +468,42 @@ TEXT ·cppgoCall_7ebbc7da6590(SB), NOSPLIT, $0-24
 	CALL	R12
 	MOVQ	R13, SP
 	MOVQ	AX, ret+16(FP)
+	RET
+
+// func cppgoCall_9786ecc85bec(fn uintptr, this uintptr, out unsafe.Pointer) int32
+TEXT ·cppgoCall_9786ecc85bec(SB), NOSPLIT, $0-28
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	out+16(FP), SI
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	MOVL	AX, ret+24(FP)
+	RET
+
+// func cppgoCall_ef0755e3a70d(fn uintptr, this uintptr, out unsafe.Pointer) int32
+TEXT ·cppgoCall_ef0755e3a70d(SB), NOSPLIT, $0-28
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	out+16(FP), SI
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	MOVL	AX, ret+24(FP)
+	RET
+
+// func cppgoCall_829b574f9ac5(fn uintptr, this uintptr, out unsafe.Pointer) int32
+TEXT ·cppgoCall_829b574f9ac5(SB), NOSPLIT, $0-28
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	out+16(FP), SI
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	MOVL	AX, ret+24(FP)
 	RET
 
 // func cppgoCall_ee3b35c6b011(fn uintptr, this uintptr)
@@ -589,8 +647,8 @@ TEXT ·cppgoCall_e0ad18714195(SB), NOSPLIT, $0-28
 	MOVL	AX, ret+24(FP)
 	RET
 
-// func cppgoCall_43be04ceac3a(fn uintptr, this uintptr) int64
-TEXT ·cppgoCall_43be04ceac3a(SB), NOSPLIT, $0-24
+// func cppgoCall_394701ab986a(fn uintptr, this uintptr) int64
+TEXT ·cppgoCall_394701ab986a(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	SP, R13
@@ -600,8 +658,8 @@ TEXT ·cppgoCall_43be04ceac3a(SB), NOSPLIT, $0-24
 	MOVQ	AX, ret+16(FP)
 	RET
 
-// func cppgoCall_394701ab986a(fn uintptr, this uintptr) int64
-TEXT ·cppgoCall_394701ab986a(SB), NOSPLIT, $0-24
+// func cppgoCall_43be04ceac3a(fn uintptr, this uintptr) int64
+TEXT ·cppgoCall_43be04ceac3a(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	SP, R13
