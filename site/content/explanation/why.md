@@ -113,9 +113,9 @@ Harder, and stated plainly:
   value is the C++ side.
 - A one-off call into one function: writing one `syscall`/`purego` call is less
   work than installing libclang.
-- A library whose API is a macro-only DSL — macros are text substitution done
-  before compilation, not declarations, so there is nothing for cppgo to read: a
-  macro's expansion is not a declaration, and cppgo cannot bind it at all.
+- A library whose API is a set of macros rather than functions: a macro is text
+  substitution the preprocessor performs before compilation, and its expansion is
+  not a declaration, so there is nothing for cppgo to read.
 
 ## Related
 
