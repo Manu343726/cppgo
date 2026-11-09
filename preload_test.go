@@ -64,15 +64,21 @@ func buildChain(t *testing.T) string {
 	}
 
 	dir := t.TempDir()
-	flags := []string{"-O2", "-fPIC", "-shared", "-fvisibility=hidden", "-std=c++17"}
+	// --as-needed is Debian's g++ default and is spelled out here so the
+	// fixture records the same DT_NEEDED entries everywhere.
+	flags := []string{"-O2", "-fPIC", "-shared", "-fvisibility=hidden", "-std=c++17",
+		"-Wl,--as-needed"}
 
 	compile := func(source, name string, extra ...string) {
 		src := filepath.Join(t.TempDir(), "fixture.cc")
 		require.NoError(t, os.WriteFile(src, []byte(source), 0o644))
 
-		args := append(append([]string{}, flags...), "-Wl,-soname,"+name)
+		// The source comes before the -l: inputs: a toolchain that links
+		// --as-needed by default (Debian's g++) drops a library listed before
+		// the object that needs it.
+		args := append(append([]string{}, flags...), "-o", filepath.Join(dir, name), src,
+			"-Wl,-soname,"+name)
 		args = append(args, extra...)
-		args = append(args, "-o", filepath.Join(dir, name), src)
 		runCompiler(t, gxx, args...)
 	}
 
@@ -270,9 +276,10 @@ func compileSource(t *testing.T, gxx, dir, name, source string, extra ...string)
 	require.NoError(t, os.WriteFile(src, []byte(source), 0o644))
 
 	out := filepath.Join(dir, name)
-	args := []string{"-O2", "-fPIC", "-shared", "-fvisibility=hidden", "-std=c++17"}
+	// The source comes before the -l: inputs, as in build().
+	args := []string{"-O2", "-fPIC", "-shared", "-fvisibility=hidden", "-std=c++17",
+		"-Wl,--as-needed", "-o", out, src}
 	args = append(args, extra...)
-	args = append(args, "-o", out, src)
 	runCompiler(t, gxx, args...)
 
 	return out

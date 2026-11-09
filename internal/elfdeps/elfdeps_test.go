@@ -61,9 +61,15 @@ func build(t *testing.T, dir, name, source string, extra ...string) string {
 	require.NoError(t, os.WriteFile(src, []byte(source), 0o644))
 
 	out := filepath.Join(dir, name)
-	args := []string{"-O2", "-fPIC", "-shared", "-fvisibility=hidden", "-std=c++17"}
+	// The source is a linker input, and it goes before the -l: arguments: a
+	// toolchain that links --as-needed by default drops a library listed before
+	// the object that needs it, and Debian's g++ does exactly that.
+	// --as-needed is what Debian's g++ does by default, and spelling it out
+	// keeps a DT_NEEDED list the same on every machine: only the libraries a
+	// symbol was taken from are recorded.
+	args := []string{"-O2", "-fPIC", "-shared", "-fvisibility=hidden", "-std=c++17",
+		"-Wl,--as-needed", "-o", out, src}
 	args = append(args, extra...)
-	args = append(args, "-o", out, src)
 	if output, err := exec.Command(gxx, args...).CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
@@ -169,18 +175,25 @@ func TestTree(t *testing.T) {
 	assert.Equal(t, user, custom.NeededBy)
 	assert.False(t, custom.Runtime)
 
-	// The C/C++ runtime is resolved too, and classified as what a deployment
-	// does not carry.
-	for _, name := range []string{"libstdc++.so.6", "libc.so.6"} {
-		dep, ok := byName[name]
-		require.True(t, ok, "%s is in the closure", name)
-		assert.True(t, dep.Runtime, "%s is runtime", name)
-		assert.NotEmpty(t, dep.Path)
-	}
+	// The C++ runtime is resolved too, and classified as what a deployment does
+	// not carry. The fixture takes a symbol from std::string, so libstdc++ is a
+	// DT_NEEDED entry whatever the linker's --as-needed default is.
+	std, ok := byName["libstdc++.so.6"]
+	require.True(t, ok, "libstdc++ is in the closure")
+	assert.True(t, std.Runtime)
+	assert.NotEmpty(t, std.Path)
 
-	// Load order: libstdc++ is placed after the libc it needs, so a preload can
-	// load it at that point.
-	assert.Less(t, index["libc.so.6"], index["libstdc++.so.6"])
+	// Load order: everything libstdc++ needs is placed before it, so a preload
+	// can map it at that point.
+	subtree, err := elfdeps.Resolver{LibraryPath: []string{dir}}.Tree(std.Path)
+	require.NoError(t, err)
+	for _, dep := range subtree.Order {
+		position, present := index[dep.Name]
+		if !present {
+			continue
+		}
+		assert.Less(t, position, index["libstdc++.so.6"], "%s must be loaded before libstdc++", dep.Name)
+	}
 
 	// The packaging choice reads the two halves apart.
 	assert.Equal(t, []string{depSOName}, names(tree.NonRuntime()))
