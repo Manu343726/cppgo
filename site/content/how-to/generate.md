@@ -221,7 +221,7 @@ The files it writes, in `<out>`:
 | File | Contents |
 |---|---|
 | `zz_cppgo.gen.go` | the Go API, the generated `Open` and the declarations of the trampolines |
-| `zz_cppgo_amd64.s` | one assembly trampoline per binding |
+| `zz_cppgo_amd64.s` | one assembly trampoline per binding — none for a binding that passes a Go function to C++, or for a template binding: those enter C++ through the runtime instead — plus `cppgoFree`, which releases a `std::string` or `std::vector` the shim copied out |
 | `cppgo_shim/zz_cppgo_shim.h` | the `extern "C"` declarations of the thunks |
 | `cppgo_shim/zz_cppgo_shim.cpp` | the thunks themselves — generated C++ that carries what the direct call cannot |
 | `libcppgo_<package>.so` | the shim, compiled by cppgo and linked against your library; the generated Go loads it at run time |
