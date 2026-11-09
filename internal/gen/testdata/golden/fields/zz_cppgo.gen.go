@@ -60,6 +60,10 @@ var (
 	cppgoSym_37889658747b uintptr
 	// cppgo_thunk_3f0d37245ba0
 	cppgoSym_3f0d37245ba0 uintptr
+	// cppgo_thunk_d4a8ac30e3a5
+	cppgoSym_d4a8ac30e3a5 uintptr
+	// cppgo_thunk_03ab9ade98be
+	cppgoSym_03ab9ade98be uintptr
 	// cppgo_thunk_cff769c76eef
 	cppgoSym_cff769c76eef uintptr
 	// cppgo_thunk_224491ddbfbe
@@ -74,6 +78,12 @@ var (
 	cppgoSym_0fe1216633f0 uintptr
 	// cppgo_thunk_e2e995c0f857
 	cppgoSym_e2e995c0f857 uintptr
+	// cppgo_thunk_fd03fa9b2a3c
+	cppgoSym_fd03fa9b2a3c uintptr
+	// cppgo_thunk_10790d2a00a5
+	cppgoSym_10790d2a00a5 uintptr
+	// cppgo_free
+	cppgoFreeSym uintptr
 )
 
 // cppgoOpen loads the two objects and resolves every symbol the generated
@@ -125,6 +135,8 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_9715664ed19f", addr: &cppgoSym_9715664ed19f, shim: true},
 		{name: "cppgo_thunk_37889658747b", addr: &cppgoSym_37889658747b, shim: true},
 		{name: "cppgo_thunk_3f0d37245ba0", addr: &cppgoSym_3f0d37245ba0, shim: true},
+		{name: "cppgo_thunk_d4a8ac30e3a5", addr: &cppgoSym_d4a8ac30e3a5, shim: true},
+		{name: "cppgo_thunk_03ab9ade98be", addr: &cppgoSym_03ab9ade98be, shim: true},
 		{name: "cppgo_thunk_cff769c76eef", addr: &cppgoSym_cff769c76eef, shim: true},
 		{name: "cppgo_thunk_224491ddbfbe", addr: &cppgoSym_224491ddbfbe, shim: true},
 		{name: "cppgo_thunk_24e20ce02d2d", addr: &cppgoSym_24e20ce02d2d, shim: true},
@@ -132,6 +144,9 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_7228c2b4cc86", addr: &cppgoSym_7228c2b4cc86, shim: true},
 		{name: "cppgo_thunk_0fe1216633f0", addr: &cppgoSym_0fe1216633f0, shim: true},
 		{name: "cppgo_thunk_e2e995c0f857", addr: &cppgoSym_e2e995c0f857, shim: true},
+		{name: "cppgo_thunk_fd03fa9b2a3c", addr: &cppgoSym_fd03fa9b2a3c, shim: true},
+		{name: "cppgo_thunk_10790d2a00a5", addr: &cppgoSym_10790d2a00a5, shim: true},
+		{name: "cppgo_free", addr: &cppgoFreeSym, shim: true},
 	} {
 		lib := loaded.user
 		if symbol.shim || lib == nil {
@@ -365,7 +380,7 @@ func NewSettings() (*Settings, error) {
 	}
 	cppgo.ProbeStack()
 	var obj *cppgo.Object
-	obj = cppgo.NewObject(48, 8, nil)
+	obj = cppgo.NewObject(104, 8, nil)
 	cppgoCall_05dc3aa8503b(cppgoSym_05dc3aa8503b, obj.Addr())
 	return &Settings{obj: obj}, nil
 }
@@ -571,6 +586,104 @@ func (s *Settings) SetPayload(payload *Payload) error {
 	return nil
 }
 
+// Label reads fields::Settings::label.
+//
+// A standard-library string field: a Go string, copied in and out.
+//
+// C++: fields::Settings::label() const noexcept, synthesized (thunk cppgo_thunk_d4a8ac30e3a5, a field accessor: the thunk reads or writes the member)
+func (s *Settings) Label() (string, error) {
+	if s == nil || s.obj == nil {
+		return "", cppgo.ErrClosed
+	}
+	var cppgoData unsafe.Pointer
+	var cppgoSize uint64
+	if err := cppgoOpen(""); err != nil {
+		return "", err
+	}
+	cppgo.ProbeStack()
+	cppgoStatus := cppgoCall_d4a8ac30e3a5(cppgoSym_d4a8ac30e3a5, s.cppgoAddr(), unsafe.Pointer(&cppgoData), unsafe.Pointer(&cppgoSize))
+	cppgo.KeepAlive(s, &cppgoData, &cppgoSize)
+	if cppgoStatus != 0 {
+		return "", cppgoCallError("fields::Settings::label")
+	}
+	var cppgoResult string
+	if cppgoSize != 0 {
+		cppgoResult = string(unsafe.Slice((*byte)(cppgoData), int(cppgoSize)))
+	}
+	cppgoFree(cppgoFreeSym, cppgoData)
+	return cppgoResult, nil
+}
+
+// SetLabel sets fields::Settings::label.
+//
+// A standard-library string field: a Go string, copied in and out.
+//
+// C++: fields::Settings::label(std::string) noexcept, synthesized (thunk cppgo_thunk_03ab9ade98be, a field accessor: the thunk reads or writes the member)
+func (s *Settings) SetLabel(label string) error {
+	if s == nil || s.obj == nil {
+		return cppgo.ErrClosed
+	}
+	if err := cppgoOpen(""); err != nil {
+		return err
+	}
+	cppgo.ProbeStack()
+	cppgoStatus := cppgoCall_03ab9ade98be(cppgoSym_03ab9ade98be, s.cppgoAddr(), cppgo.StrPtr(label), uint64(len(label)))
+	cppgo.KeepAlive(s, label)
+	if cppgoStatus != 0 {
+		return cppgoCallError("fields::Settings::label")
+	}
+	return nil
+}
+
+// Weights reads fields::Settings::weights.
+//
+// A standard-library vector field: a Go slice, copied in and out.
+//
+// C++: fields::Settings::weights() const noexcept, synthesized (thunk cppgo_thunk_fd03fa9b2a3c, a field accessor: the thunk reads or writes the member)
+func (s *Settings) Weights() ([]int32, error) {
+	if s == nil || s.obj == nil {
+		return nil, cppgo.ErrClosed
+	}
+	var cppgoData unsafe.Pointer
+	var cppgoSize uint64
+	if err := cppgoOpen(""); err != nil {
+		return nil, err
+	}
+	cppgo.ProbeStack()
+	cppgoStatus := cppgoCall_fd03fa9b2a3c(cppgoSym_fd03fa9b2a3c, s.cppgoAddr(), unsafe.Pointer(&cppgoData), unsafe.Pointer(&cppgoSize))
+	cppgo.KeepAlive(s, &cppgoData, &cppgoSize)
+	if cppgoStatus != 0 {
+		return nil, cppgoCallError("fields::Settings::weights")
+	}
+	var cppgoResult []int32
+	if cppgoSize != 0 {
+		cppgoResult = append(cppgoResult, unsafe.Slice((*int32)(cppgoData), int(cppgoSize))...)
+	}
+	cppgoFree(cppgoFreeSym, cppgoData)
+	return cppgoResult, nil
+}
+
+// SetWeights sets fields::Settings::weights.
+//
+// A standard-library vector field: a Go slice, copied in and out.
+//
+// C++: fields::Settings::weights(std::vector<std::int32_t>) noexcept, synthesized (thunk cppgo_thunk_10790d2a00a5, a field accessor: the thunk reads or writes the member)
+func (s *Settings) SetWeights(weights []int32) error {
+	if s == nil || s.obj == nil {
+		return cppgo.ErrClosed
+	}
+	if err := cppgoOpen(""); err != nil {
+		return err
+	}
+	cppgo.ProbeStack()
+	cppgoStatus := cppgoCall_10790d2a00a5(cppgoSym_10790d2a00a5, s.cppgoAddr(), cppgo.Ptr(weights), uint64(len(weights)))
+	cppgo.KeepAlive(s, weights)
+	if cppgoStatus != 0 {
+		return cppgoCallError("fields::Settings::weights")
+	}
+	return nil
+}
+
 // Version reads fields::Settings::version.
 //
 // A const field: read only.
@@ -603,6 +716,9 @@ const (
 // aligned stack for the C call, restores the Go stack pointer and only then
 // stores the result. They must not be called directly.
 
+// cppgoFree is the NOSPLIT trampoline for cppgo_free.
+func cppgoFree(fn uintptr, block unsafe.Pointer)
+
 // cppgoCall_ba3f29b43753 is the NOSPLIT trampoline for _ZN6fields7PayloadC1Ev.
 func cppgoCall_ba3f29b43753(fn uintptr, this uintptr)
 
@@ -633,6 +749,12 @@ func cppgoCall_37889658747b(fn uintptr, this uintptr) int64
 // cppgoCall_3f0d37245ba0 is the NOSPLIT trampoline for cppgo_thunk_3f0d37245ba0.
 func cppgoCall_3f0d37245ba0(fn uintptr, this uintptr, a1 int64)
 
+// cppgoCall_d4a8ac30e3a5 is the NOSPLIT trampoline for cppgo_thunk_d4a8ac30e3a5.
+func cppgoCall_d4a8ac30e3a5(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 unsafe.Pointer) int32
+
+// cppgoCall_03ab9ade98be is the NOSPLIT trampoline for cppgo_thunk_03ab9ade98be.
+func cppgoCall_03ab9ade98be(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 uint64) int32
+
 // cppgoCall_cff769c76eef is the NOSPLIT trampoline for cppgo_thunk_cff769c76eef.
 func cppgoCall_cff769c76eef(fn uintptr, this uintptr, out unsafe.Pointer)
 
@@ -653,3 +775,9 @@ func cppgoCall_0fe1216633f0(fn uintptr, this uintptr, a1 unsafe.Pointer)
 
 // cppgoCall_e2e995c0f857 is the NOSPLIT trampoline for cppgo_thunk_e2e995c0f857.
 func cppgoCall_e2e995c0f857(fn uintptr, this uintptr) int64
+
+// cppgoCall_fd03fa9b2a3c is the NOSPLIT trampoline for cppgo_thunk_fd03fa9b2a3c.
+func cppgoCall_fd03fa9b2a3c(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 unsafe.Pointer) int32
+
+// cppgoCall_10790d2a00a5 is the NOSPLIT trampoline for cppgo_thunk_10790d2a00a5.
+func cppgoCall_10790d2a00a5(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 uint64) int32

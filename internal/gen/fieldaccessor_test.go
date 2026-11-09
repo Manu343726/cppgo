@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,6 +41,15 @@ func TestOpaqueRecordFieldsAreAccessors(t *testing.T) {
 	assert.Contains(t, shim, "static_cast<const ::fields::Settings *>(self)->count")
 	assert.Contains(t, shim, "static_cast<::fields::Settings *>(self)->count = ")
 	assert.Contains(t, shim, "static_cast<::fields::Settings *>(self)->origin = *static_cast<const ::fields::Point *>(origin)")
+
+	// A standard-library member is a value the type map already crosses: the
+	// thunk copies the member out, and copies the Go value into it. It is never
+	// read through an address, which is what used to be reported as a pointer
+	// to a standard-library type.
+	assert.Contains(t, shim, "auto cppgo_value = static_cast<const ::fields::Settings *>(self)->label;")
+	assert.Contains(t, shim, "static_cast<::fields::Settings *>(self)->label = cppgo_label")
+	assert.Contains(t, shim, "auto cppgo_value = static_cast<const ::fields::Settings *>(self)->weights;")
+	assert.Contains(t, shim, "static_cast<::fields::Settings *>(self)->weights = cppgo_weights")
 
 	// A record field the Go side cannot hold by value is reached as a view of
 	// the field inside the receiver's object.
@@ -121,6 +131,27 @@ func TestFieldAccessorsRunAgainstTheLibrary(t *testing.T) {
 	}
 }
 
+// TestStdMemberFieldsAreAccessors is #62's regression: a public member whose
+// type is a supported std type is a value the type map already crosses, not a
+// declaration nested in the record. It becomes the same Field()/SetField(v)
+// pair as any other member, and generation does not report it as unbound.
+func TestStdMemberFieldsAreAccessors(t *testing.T) {
+	m := renderMap(t, fixtureConfig("fields", "fields.hpp"))
+	source := m[GenFileName]
+
+	assert.Contains(t, source, "func (s *Settings) Label() (string, error) {")
+	assert.Contains(t, source, "func (s *Settings) SetLabel(label string) error {")
+	assert.Contains(t, source, "func (s *Settings) Weights() ([]int32, error) {")
+	assert.Contains(t, source, "func (s *Settings) SetWeights(weights []int32) error {")
+
+	rendered, err := RenderResult(fixtureConfig("fields", "fields.hpp"))
+	require.NoError(t, err)
+	for _, warning := range rendered.Warnings {
+		assert.NotContains(t, warning, "fields::Settings::label")
+		assert.NotContains(t, warning, "fields::Settings::weights")
+	}
+}
+
 // fieldsE2ESource is the program the generated fields package runs.
 const fieldsE2ESource = `package fields
 
@@ -161,6 +192,25 @@ func TestFields(t *testing.T) {
 	s.SetOrigin(Point{X: 1.5, Y: -2.5})
 	if got := s.Origin(); got.X != 1.5 || got.Y != -2.5 {
 		t.Fatalf("Origin = %v", got)
+	}
+
+	// The standard-library fields: a Go string and a Go slice are copied into
+	// the C++ members and read back through the type map's usual shape.
+	if err := s.SetLabel("alpha"); err != nil {
+		t.Fatalf("SetLabel: %v", err)
+	}
+	if got, err := s.Label(); err != nil || got != "alpha" {
+		t.Fatalf("Label = %q, %v", got, err)
+	}
+	if err := s.SetWeights([]int32{1, 2, 3}); err != nil {
+		t.Fatalf("SetWeights: %v", err)
+	}
+	weights, err := s.Weights()
+	if err != nil {
+		t.Fatalf("Weights: %v", err)
+	}
+	if len(weights) != 3 || weights[0] != 1 || weights[1] != 2 || weights[2] != 3 {
+		t.Fatalf("Weights = %v", weights)
 	}
 
 	// The const field has no setter and keeps the declared value.
@@ -210,6 +260,55 @@ func TestFields(t *testing.T) {
 	}
 }
 `
+
+// TestAStandardLibraryViewMemberHasNoSetter is the other half of the rule: a
+// member that does not own its storage (std::string_view, std::span) is read
+// through the type map, but a setter would store a view into Go memory that
+// does not outlive the call, so it is refused with a warning instead.
+func TestAStandardLibraryViewMemberHasNoSetter(t *testing.T) {
+	header := writeHeader(t, "view.hpp", `
+#include <string_view>
+
+namespace view {
+class Holder {
+public:
+    std::string_view text;
+};
+}
+`)
+	rendered, err := RenderResult(Config{Headers: []string{header}, Package: "view", Library: "libview", Out: "."})
+	require.NoError(t, err)
+	var source string
+	for _, out := range rendered.Outputs {
+		if out.Name == GenFileName {
+			source = string(out.Data)
+		}
+	}
+	assert.Contains(t, source, "func (h *Holder) Text() (string, error) {")
+	assert.NotContains(t, source, "SetText")
+	joined := strings.Join(rendered.Warnings, "\n")
+	assert.Contains(t, joined, "view::Holder::text has no setter: a std::string_view does not own its storage")
+}
+
+// TestAnUnsupportedStandardLibraryMemberIsReportedNotGuessed: a std type with
+// no member recipe (the smart pointers, std::function) is reported as unbound
+// instead of producing a thunk that cannot compile.
+func TestAnUnsupportedStandardLibraryMemberIsReportedNotGuessed(t *testing.T) {
+	header := writeHeader(t, "owned.hpp", `
+#include <memory>
+
+namespace owned {
+class Holder {
+public:
+    std::unique_ptr<int> value;
+};
+}
+`)
+	rendered, err := RenderResult(Config{Headers: []string{header}, Package: "owned", Library: "libowned", Out: "."})
+	require.NoError(t, err)
+	joined := strings.Join(rendered.Warnings, "\n")
+	assert.Contains(t, joined, `owned::Holder::value is not bound: "std::unique_ptr<int>" is a standard-library member this build does not cross by value`)
+}
 
 // TestAMirroredRecordFieldIsAMirroredField covers the aggregate-of-aggregates
 // shape: a record whose field is a record Go can mirror stays a Go struct with
