@@ -119,3 +119,57 @@ Applying it:
 - a name with no definition and no link — `cppgo_direct`, a `cppgo_thunk_…`
   symbol, a helper such as `cppgo_last_error`, an arm named only in a table
   cell — is a defect to fix, not a shorthand to allow.
+
+## Rule 5 — A benchmarks page is read one scenario at a time
+
+The benchmarks page is organised per scenario, in the order the scenarios are
+measured, and every scenario has the same four parts: **the scenario** — what is
+measured, the C++ work, and the variants compared; **the code** — the C++
+declaration and the call each arm makes to reach it; **the results** — one row
+per arm with the numbers; **the conclusions** — what this scenario's numbers say
+and why, written for a reader who has not seen the other scenarios. A table
+never appears without the scenario and the code above it.
+
+Applying it:
+
+- the results table has one row per arm, and the row carries the iterations the
+  benchmark executed (the `b.N` of its runs) and the number of runs (`-count`)
+  beside the median ns/op, the min–max range of those runs, B/op and allocs/op:
+  a reader must be able to tell a 5 ns figure from a 8-element loop and a 1 µs
+  figure from a 1024-element one;
+- the column of numbers is a measurement, so the scenario states the fixture the
+  numbers were taken with — the sizes, the arguments, the failing input;
+- the analysis sits under the table it explains, and it explains that table
+  rather than repeating the page's thesis: why this row is where it is, what the
+  allocation count costs, and where two arms are within each other's range and
+  therefore not distinguishable;
+- a fixture measured at two sizes is two scenarios with two tables, not one
+  table with two kinds of row;
+- an arm named in a table is identified by its definition above the table, and
+  the page's preamble defines the arm names once so the first table does not
+  introduce one.
+
+## Rule 6 — A tutorial teaches a person, a how-to answers a task
+
+Every tutorial opens with an introduction (what the reader will build and why),
+states its objective (the concrete result at the end), introduces the example
+scenario it uses — a real, user-facing project, not an internal test fixture —
+and then walks step by step, explaining what each step does and why. Write prose
+for a human who is learning, not feature announcements. A how-to guide is
+task-focused, but it still opens with what the task is, when to use it, and the
+scenario.
+
+Applying it:
+
+- the introduction says what the reader ends up with and what it is good for,
+  before the first command;
+- the objective is a result, not a topic: a program that runs, a file that
+  exists, an output the reader can check — the text names it;
+- the example scenario is introduced as the reader would meet it: a project with
+  a purpose, its C++ header, and the goal the steps pursue. A synthetic fixture
+  from the test suite is not a scenario;
+- every step says what it does and why it is needed, in prose, in the reader's
+  words; a bare sequence of commands with no explanation is a script, not a
+  tutorial;
+- a how-to guide opens with the task, when the reader needs it, and the scenario
+  it assumes, then gives the steps.
