@@ -284,7 +284,7 @@ func cppgoBool(v bool) int64 {
 	return 0
 }
 
-// TermCriteria is cv::TermCriteria. The object belongs to C++; obj is where it lives.
+// TermCriteria is cv::TermCriteria (sizeof 16). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // The class defining termination criteria for iterative algorithms.
 //
@@ -507,7 +507,7 @@ func (t *TermCriteria) SetEpsilon(epsilon float64) {
 	cppgo.KeepAlive(t)
 }
 
-// TickMeter is cv::TickMeter. The object belongs to C++; obj is where it lives.
+// TickMeter is cv::TickMeter (sizeof 24). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // a Class to measure passing time.
 //
