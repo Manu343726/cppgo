@@ -173,8 +173,18 @@ integer, is a generation error.
 
 A record is **mirrorable** when all its fields are public, its layout is the
 natural Go layout, and no field is a bitfield, a reference, a pointer, a union
-member or a non-mirrorable type. Its Go value *is* the C layout, and the
-generated file asserts that at compile time:
+member or a non-mirrorable type. The record in the examples is `mathx::Point`, in
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
+
+```cpp
+struct Point {
+    double x;
+    double y;
+};
+```
+
+Its Go value *is* the C layout, and the generated file asserts that at compile
+time:
 
 ```go
 // The C++ layout is proven at compile time: a wrong size, alignment or
