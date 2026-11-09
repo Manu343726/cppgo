@@ -63,7 +63,7 @@ template struct Box<int>;
 	assert.Equal(t, int64(1), kind.Constants[1].Value)
 }
 
-// TestDefaultArgumentEdgeShapes covers the separator's neighbours: an
+// TestDefaultArgumentEdgeShapes covers the separator's neighbors: an
 // unterminated template argument list, and a comparison that is not the
 // separator.
 func TestDefaultArgumentEdgeShapes(t *testing.T) {

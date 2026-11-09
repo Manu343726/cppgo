@@ -38,7 +38,7 @@ func TestDocFixtureIsEmittedAsGoDoc(t *testing.T) {
 				"//\n" +
 				"// A circle.\n" +
 				"//\n" +
-				"// It has a centre and a radius.\n" +
+				"// It has a center and a radius.\n" +
 				"type Circle struct {",
 		},
 		{

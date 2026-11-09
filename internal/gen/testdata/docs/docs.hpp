@@ -17,7 +17,7 @@ struct Point {
 
 /** A circle.
  *
- * It has a centre and a radius.
+ * It has a center and a radius.
  */
 class Circle {
 public:

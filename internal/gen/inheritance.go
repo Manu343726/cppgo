@@ -144,9 +144,7 @@ const maxHierarchyDepthForBases = 16
 func (b *builder) inheritedMethods(record *recordModel) []*binding {
 	out := append([]*binding(nil), record.Methods...)
 	for _, base := range record.Bases {
-		for _, method := range b.inheritedMethods(base.Record) {
-			out = append(out, method)
-		}
+		out = append(out, b.inheritedMethods(base.Record)...)
 	}
 	return out
 }

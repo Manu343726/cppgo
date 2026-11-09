@@ -96,7 +96,7 @@ namespace narrow { int add(int a, int b) noexcept; }
 		Package: "narrow",
 		Library: "libnarrow",
 		Out:     ".",
-		Bind:    []string{"narrow::mispelled"},
+		Bind:    []string{"narrow::misspelled"},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "names nothing")

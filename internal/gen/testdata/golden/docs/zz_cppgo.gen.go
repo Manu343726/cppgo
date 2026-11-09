@@ -162,7 +162,7 @@ func cppgoCloseError(symbol string) error {
 //
 // A circle.
 //
-// It has a centre and a radius.
+// It has a center and a radius.
 type Circle struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.

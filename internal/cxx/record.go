@@ -991,7 +991,7 @@ func (e *recordExtractor) enumeratorValue(cursor CXCursor, sub substitution, pre
 // sourceText returns the source a cursor covers, read from the file it is in.
 func (e *recordExtractor) sourceText(cursor CXCursor) (string, bool) {
 	if e.tu == nil || e.tu.l == nil {
-		// A record synthesised without a translation unit has no source to read;
+		// A record synthesized without a translation unit has no source to read;
 		// the caller treats that as values it cannot see, not as a failure.
 		return "", false
 	}
