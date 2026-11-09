@@ -17,6 +17,36 @@ extern "C" {
  * stays valid until the next thunk call on the same thread. */
 const char *cppgo_last_error(void);
 
+/* cppgo_thunk_6dc2ae8a866b: af::array::array() */
+int32_t cppgo_thunk_6dc2ae8a866b(void * self);
+
+/* cppgo_thunk_e7c5621124f1: af::array::array(dim_t, dim_t, dtype) */
+int32_t cppgo_thunk_e7c5621124f1(void * self, int64_t dim0, int64_t dim1, uint32_t ty);
+
+/* cppgo_thunk_f8a6855dfc92: af::array::array(dim_t, dtype) */
+int32_t cppgo_thunk_f8a6855dfc92(void * self, int64_t dim0, uint32_t ty);
+
+/* cppgo_thunk_f8b21d7c68a9: af::array::as(dtype) const */
+int32_t cppgo_thunk_f8b21d7c68a9(const void * self, uint32_t arg0, void * cppgo_result);
+
+/* cppgo_thunk_a711992cf690: af::array::dims() const */
+int32_t cppgo_thunk_a711992cf690(const void * self, void * cppgo_result);
+
+/* cppgo_thunk_cc1609dd0972: af::array::dims(unsigned int) const */
+int32_t cppgo_thunk_cc1609dd0972(const void * self, uint32_t dim, int64_t * cppgo_result);
+
+/* cppgo_thunk_fb31eda257aa: af::array::elements() const */
+int32_t cppgo_thunk_fb31eda257aa(const void * self, int64_t * cppgo_result);
+
+/* cppgo_thunk_44cc5b315a94: af::array::isempty() const */
+int32_t cppgo_thunk_44cc5b315a94(const void * self, bool * cppgo_result);
+
+/* cppgo_thunk_3b5399b8f903: af::array::type() const */
+int32_t cppgo_thunk_3b5399b8f903(const void * self, uint32_t * cppgo_result);
+
+/* cppgo_thunk_e28ab727b6a5: af::dim4::dim4(dim_t, dim_t, dim_t, dim_t) */
+int32_t cppgo_thunk_e28ab727b6a5(void * self, int64_t first, int64_t second, int64_t third, int64_t fourth);
+
 /* cppgo_thunk_357aaf090e93: af::getDevice() */
 int32_t cppgo_thunk_357aaf090e93(int32_t * cppgo_result);
 
@@ -29,11 +59,92 @@ int32_t cppgo_thunk_b4d2e58ce60b(uint64_t * cppgo_result);
 /* cppgo_thunk_20ceac09288a: af::getSizeOf(af::dtype) */
 int32_t cppgo_thunk_20ceac09288a(uint32_t arg0, uint64_t * cppgo_result);
 
+/* cppgo_thunk_34922b32838e: af::identity(const dim_t, const dim_t, const dtype) */
+int32_t cppgo_thunk_34922b32838e(int64_t d0, int64_t d1, uint32_t ty, void * cppgo_result);
+
 /* cppgo_thunk_c03708c6be2b: af::isDoubleAvailable(const int) */
 int32_t cppgo_thunk_c03708c6be2b(int32_t device, bool * cppgo_result);
 
 /* cppgo_thunk_211589553e43: af::isHalfAvailable(const int) */
 int32_t cppgo_thunk_211589553e43(int32_t device, bool * cppgo_result);
+
+/* cppgo_thunk_de46a5c0f065: af::matmul(const array &, const array &, const matProp, const matProp) */
+int32_t cppgo_thunk_de46a5c0f065(const void * lhs, const void * rhs, uint32_t optLhs, uint32_t optRhs, void * cppgo_result);
+
+/* cppgo_thunk_e5676214bfc9: af::max(const array &, const int) */
+int32_t cppgo_thunk_e5676214bfc9(const void * in, int32_t dim, void * cppgo_result);
+
+/* cppgo_thunk_4ab1e78dcbd3: af::min(const array &, const int) */
+int32_t cppgo_thunk_4ab1e78dcbd3(const void * in, int32_t dim, void * cppgo_result);
+
+/* cppgo_thunk_1d1aa94f7a76: af::norm(const array &, const normType, const double, const double) */
+int32_t cppgo_thunk_1d1aa94f7a76(const void * in, uint32_t arg1, double p, double q, double * cppgo_result);
+
+/* cppgo_thunk_56e082941c04: af::range(const dim4 &, const int, const dtype) */
+int32_t cppgo_thunk_56e082941c04(const void * dims, int32_t seq_dim, uint32_t ty, void * cppgo_result);
+
+/* cppgo_thunk_267fe48bf8b9: af::seq::m_gfor() const noexcept */
+bool cppgo_thunk_267fe48bf8b9(const void * self);
+
+/* cppgo_thunk_c61887825788: af::seq::m_gfor(bool) noexcept */
+void cppgo_thunk_c61887825788(void * self, bool m_gfor);
+
+/* cppgo_thunk_8f0b54527300: af::seq::operator array() const */
+int32_t cppgo_thunk_8f0b54527300(const void * self, void * cppgo_result);
+
+/* cppgo_thunk_3fc11b20fcdd: af::seq::operator*(double) */
+int32_t cppgo_thunk_3fc11b20fcdd(void * self, double x, void * cppgo_result);
+
+/* cppgo_thunk_24e371dab952: af::seq::operator+(double) */
+int32_t cppgo_thunk_24e371dab952(void * self, double x, void * cppgo_result);
+
+/* cppgo_thunk_1d74eca5c177: af::seq::operator-() */
+int32_t cppgo_thunk_1d74eca5c177(void * self, void * cppgo_result);
+
+/* cppgo_thunk_5c381270cd30: af::seq::operator-(double) */
+int32_t cppgo_thunk_5c381270cd30(void * self, double x, void * cppgo_result);
+
+/* cppgo_thunk_07c98215f3b3: af::seq::operator=(const af_seq &) */
+int32_t cppgo_thunk_07c98215f3b3(void * self, const void * s_2, void ** cppgo_result);
+
+/* cppgo_thunk_bf8d5334f18c: af::seq::s() const noexcept */
+void cppgo_thunk_bf8d5334f18c(const void * self, void * cppgo_result);
+
+/* cppgo_thunk_4ad9d23d2da2: af::seq::s(af_seq) noexcept */
+void cppgo_thunk_4ad9d23d2da2(void * self, void * s_2);
+
+/* cppgo_thunk_bcf56354fd3e: af::seq::seq(const af::seq &) */
+int32_t cppgo_thunk_bcf56354fd3e(void * self, const void * arg0);
+
+/* cppgo_thunk_27ece2c96807: af::seq::seq(const af_seq &) */
+int32_t cppgo_thunk_27ece2c96807(void * self, const void * s_);
+
+/* cppgo_thunk_3da42610edb4: af::seq::seq(double) */
+int32_t cppgo_thunk_3da42610edb4(void * self, double length);
+
+/* cppgo_thunk_6d7a1f8062d0: af::seq::seq(double, double) */
+int32_t cppgo_thunk_6d7a1f8062d0(void * self, double begin, double end);
+
+/* cppgo_thunk_acb48920e15c: af::seq::seq(double, double, double) */
+int32_t cppgo_thunk_acb48920e15c(void * self, double begin, double end, double step);
+
+/* cppgo_thunk_960d7cb126ba: af::seq::seq(seq, bool) */
+int32_t cppgo_thunk_960d7cb126ba(void * self, void * other, bool is_gfor);
+
+/* cppgo_thunk_fdb104227286: af::seq::size() const noexcept */
+uint64_t cppgo_thunk_fdb104227286(const void * self);
+
+/* cppgo_thunk_7b0b38c0d9c1: af::seq::size(size_t) noexcept */
+void cppgo_thunk_7b0b38c0d9c1(void * self, uint64_t size);
+
+/* cppgo_thunk_723e0d57132c: af::sum(const array &, const int) */
+int32_t cppgo_thunk_723e0d57132c(const void * in, int32_t dim, void * cppgo_result);
+
+/* cppgo_thunk_c548dec162c4: af::sum(const array &, const int, const double) */
+int32_t cppgo_thunk_c548dec162c4(const void * in, int32_t dim, double nanval, void * cppgo_result);
+
+/* cppgo_thunk_8741aeb8624b: af::transpose(const array &, const bool) */
+int32_t cppgo_thunk_8741aeb8624b(const void * in, bool conjugate, void * cppgo_result);
 
 #ifdef __cplusplus
 }

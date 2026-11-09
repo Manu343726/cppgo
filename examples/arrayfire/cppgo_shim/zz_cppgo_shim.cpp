@@ -6,6 +6,10 @@
 #include "zz_cppgo_shim.h"
 
 #include "/usr/local/include/af/array.h"
+#include "/usr/local/include/af/data.h"
+#include "/usr/local/include/af/algorithm.h"
+#include "/usr/local/include/af/blas.h"
+#include "/usr/local/include/af/lapack.h"
 
 #include <array>
 #include <cstdint>
@@ -28,6 +32,146 @@ thread_local std::string cppgo_error_message;
 
 extern "C" const char *cppgo_last_error(void) {
 	return cppgo_error_message.c_str();
+}
+
+extern "C" int32_t cppgo_thunk_6dc2ae8a866b(void * self) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::array();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_e7c5621124f1(void * self, int64_t dim0, int64_t dim1, uint32_t ty) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::array(dim0, dim1, static_cast<::af_dtype>(ty));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_f8a6855dfc92(void * self, int64_t dim0, uint32_t ty) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::array(dim0, static_cast<::af_dtype>(ty));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_f8b21d7c68a9(const void * self, uint32_t arg0, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(static_cast<const ::af::array *>(self)->as(static_cast<::af_dtype>(arg0)));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_a711992cf690(const void * self, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::dim4(static_cast<const ::af::array *>(self)->dims());
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_cc1609dd0972(const void * self, uint32_t dim, int64_t * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::af::array *>(self)->dims(dim);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_fb31eda257aa(const void * self, int64_t * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::af::array *>(self)->elements();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_44cc5b315a94(const void * self, bool * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::af::array *>(self)->isempty();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_3b5399b8f903(const void * self, uint32_t * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<uint32_t>(static_cast<const ::af::array *>(self)->type());
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_e28ab727b6a5(void * self, int64_t first, int64_t second, int64_t third, int64_t fourth) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::dim4(first, second, third, fourth);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
 }
 
 extern "C" int32_t cppgo_thunk_357aaf090e93(int32_t * cppgo_result) {
@@ -86,6 +230,20 @@ extern "C" int32_t cppgo_thunk_20ceac09288a(uint32_t arg0, uint64_t * cppgo_resu
 	}
 }
 
+extern "C" int32_t cppgo_thunk_34922b32838e(int64_t d0, int64_t d1, uint32_t ty, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(::af::identity(d0, d1, static_cast<::af_dtype>(ty)));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
 extern "C" int32_t cppgo_thunk_c03708c6be2b(int32_t device, bool * cppgo_result) {
 	cppgo_error_message.clear();
 	try {
@@ -104,6 +262,310 @@ extern "C" int32_t cppgo_thunk_211589553e43(int32_t device, bool * cppgo_result)
 	cppgo_error_message.clear();
 	try {
 		*cppgo_result = ::af::isHalfAvailable(device);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_de46a5c0f065(const void * lhs, const void * rhs, uint32_t optLhs, uint32_t optRhs, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(::af::matmul(*static_cast<const ::af::array *>(lhs), *static_cast<const ::af::array *>(rhs), static_cast<::af_mat_prop>(optLhs), static_cast<::af_mat_prop>(optRhs)));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_e5676214bfc9(const void * in, int32_t dim, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(::af::max(*static_cast<const ::af::array *>(in), dim));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_4ab1e78dcbd3(const void * in, int32_t dim, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(::af::min(*static_cast<const ::af::array *>(in), dim));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_1d1aa94f7a76(const void * in, uint32_t arg1, double p, double q, double * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = ::af::norm(*static_cast<const ::af::array *>(in), static_cast<::af_norm_type>(arg1), p, q);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_56e082941c04(const void * dims, int32_t seq_dim, uint32_t ty, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(::af::range(*static_cast<const ::af::dim4 *>(dims), seq_dim, static_cast<::af_dtype>(ty)));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" bool cppgo_thunk_267fe48bf8b9(const void * self) {
+	return static_cast<const ::af::seq *>(self)->m_gfor;
+}
+
+extern "C" void cppgo_thunk_c61887825788(void * self, bool m_gfor) {
+	static_cast<::af::seq *>(self)->m_gfor = m_gfor;
+}
+
+extern "C" int32_t cppgo_thunk_8f0b54527300(const void * self, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(static_cast<::af::array>(*(static_cast<const ::af::seq *>(self))));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_3fc11b20fcdd(void * self, double x, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::seq(static_cast<::af::seq *>(self)->operator*(x));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_24e371dab952(void * self, double x, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::seq(static_cast<::af::seq *>(self)->operator+(x));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_1d74eca5c177(void * self, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::seq(static_cast<::af::seq *>(self)->operator-());
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_5c381270cd30(void * self, double x, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::seq(static_cast<::af::seq *>(self)->operator-(x));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_07c98215f3b3(void * self, const void * s_2, void ** cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<void *>(&(static_cast<::af::seq *>(self)->operator=(*static_cast<const ::af_seq *>(s_2))));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" void cppgo_thunk_bf8d5334f18c(const void * self, void * cppgo_result) {
+	*static_cast<::af_seq *>(cppgo_result) = static_cast<const ::af::seq *>(self)->s;
+}
+
+extern "C" void cppgo_thunk_4ad9d23d2da2(void * self, void * s_2) {
+	static_cast<::af::seq *>(self)->s = *static_cast<const ::af_seq *>(s_2);
+}
+
+extern "C" int32_t cppgo_thunk_bcf56354fd3e(void * self, const void * arg0) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::seq(*static_cast<const ::af::seq *>(arg0));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_27ece2c96807(void * self, const void * s_) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::seq(*static_cast<const ::af_seq *>(s_));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_3da42610edb4(void * self, double length) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::seq(length);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_6d7a1f8062d0(void * self, double begin, double end) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::seq(begin, end);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_acb48920e15c(void * self, double begin, double end, double step) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::seq(begin, end, step);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_960d7cb126ba(void * self, void * other, bool is_gfor) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::af::seq(*static_cast<const ::af::seq *>(other), is_gfor);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" uint64_t cppgo_thunk_fdb104227286(const void * self) {
+	return static_cast<const ::af::seq *>(self)->size;
+}
+
+extern "C" void cppgo_thunk_7b0b38c0d9c1(void * self, uint64_t size) {
+	static_cast<::af::seq *>(self)->size = size;
+}
+
+extern "C" int32_t cppgo_thunk_723e0d57132c(const void * in, int32_t dim, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(::af::sum(*static_cast<const ::af::array *>(in), dim));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_c548dec162c4(const void * in, int32_t dim, double nanval, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(::af::sum(*static_cast<const ::af::array *>(in), dim, nanval));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_8741aeb8624b(const void * in, bool conjugate, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		new (cppgo_result) af::array(::af::transpose(*static_cast<const ::af::array *>(in), conjugate));
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();
