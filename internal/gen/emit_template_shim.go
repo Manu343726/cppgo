@@ -160,6 +160,16 @@ func genericArguments(inst *templateInstantiation) string {
 // isReferenceParam reports whether the C++ parameter is a reference. The C
 // prototype carries a pointer either way; only the call site differs.
 func isReferenceParam(mapped *goType) bool {
-	return mapped.Param.Kind == cxx.TypePointer &&
-		strings.HasSuffix(strings.TrimSpace(mapped.Param.Spelling), "&")
+	return mapped.Param.Kind == cxx.TypePointer && referenceParam(mapped.Param)
+}
+
+// referenceParam reports whether a C++ parameter is a reference. libclang
+// spells a reference to a named type through its alias (`InputArray` for
+// `const _InputArray &`), so the canonical kind is the reliable half and the
+// written spelling is the other.
+func referenceParam(p cxx.Param) bool {
+	if p.ClangKind == "LValueReference" || p.ClangKind == "RValueReference" {
+		return true
+	}
+	return p.Kind == cxx.TypePointer && strings.HasSuffix(strings.TrimSpace(p.Spelling), "&")
 }

@@ -2,6 +2,7 @@ package gen
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -169,4 +170,29 @@ func TestBindNamesOneOverload(t *testing.T) {
 	assert.Contains(t, generated, "func Plain(value int32)")
 	assert.NotContains(t, generated, "type Value")
 	assert.NotContains(t, joinWarnings(rendered.Warnings), "void pointer", "the overloads the manifest did not name are not lowered")
+}
+
+// TestReferenceToRecordParametersCarryInTheShim is item 2 of #112: a reference
+// to a record is a parameter the shim dereferences, whatever libclang spells
+// it. The alias spelling (`WidgetRef` for `const Widget &`, which is OpenCV's
+// `InputArray`) used to be read as a plain pointer, so the generated call did
+// not compile; the fixture proves the translation unit does.
+func TestReferenceToRecordParametersCarryInTheShim(t *testing.T) {
+	gxx, err := exec.LookPath("g++")
+	if err != nil {
+		t.Skip("g++ is not in PATH")
+	}
+	dir := t.TempDir()
+	cfg := fixtureConfig("selection", "reference.hpp")
+	cfg.Package = "refs"
+	cfg.Library = "librefs"
+	cfg.Out = dir
+	require.NoError(t, Generate(cfg))
+
+	shim := readFileString(t, ShimPath(dir, ShimSourceFileName))
+	assert.Contains(t, shim, "*static_cast<const ::refs::Widget *>(widget)",
+		"both the written reference and its alias are dereferenced at the call")
+	output, err := exec.Command(gxx, "-std=c++17", "-fsyntax-only", "-I.",
+		ShimPath(dir, ShimSourceFileName)).CombinedOutput()
+	require.NoErrorf(t, err, "g++ rejected the shim:\n%s", output)
 }
