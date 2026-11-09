@@ -10,4 +10,7 @@ assumes you write Go and know nothing about foreign function interfaces, so it
 defines each term the first time it uses one.
 
 Start with [Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}})
-if you have not run `cppgo` before.
+if you have not run `cppgo` before. Then take
+[Build a complete Go + C++ project]({{< ref "tutorials/full-project.md" >}}): the
+same lesson carried through an ordinary CMake-built library, its generated
+package, and a program with tests.
