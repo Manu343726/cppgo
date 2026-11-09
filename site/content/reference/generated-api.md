@@ -288,8 +288,11 @@ identifier, is a generation error naming both declarations, and
 ([Command line]({{< ref "reference/cli.md" >}})).
 
 A **default argument** — a parameter the C++ declaration gives a value, so a C++
-caller may omit it — is **not** expanded by this build: the Go function takes
-every parameter of the declaration and the caller passes the value.
+caller may omit it — becomes one binding per allowed prefix of the parameter
+list: the full signature keeps the bare Go name, and a shorter prefix takes the
+overload suffix. The default is applied by the shim's compiler, not by Go. A
+prefix with no parameter at all is dropped with a warning, because it would take
+the full signature's name.
 
 ## Values: the type map
 
@@ -343,7 +346,9 @@ the Go slice and the C++ vector do not share storage.
 | `std::size_t`, `std::ptrdiff_t` | `uint64`, `int64` | |
 | `float`, `double` | `float32`, `float64` | |
 | `T *`, `T &` | `*T` | borrowed; a lone pointer or reference, with no paired count |
+| `const char *` | `string` | copied in and out, NUL-terminated |
 | `(const T *p, std::size_t n)` | `[]T` | borrowed for the call, nothing copied. `T` other than `char`; `n` is the count that follows the pointer |
+| `(const char *p, std::size_t n)` | `[]int8` | borrowed; the pointer-and-length pair rule wins over the `string` mapping above |
 | a `T *` followed by its count | `[]T` | borrowed, and writes in the callee reach the caller's slice |
 | `std::string` | `string` | copied in and out |
 | `std::string_view` | `string` | borrowed for the call |
@@ -355,18 +360,17 @@ the Go slice and the C++ vector do not share storage.
 | `T[N]` as a record field | `[N]T` | fixed-size array |
 | function pointer, `std::function<R(Args…)>` | `func(…) R` | see *Callbacks* |
 
-Some shapes are refused rather than guessed — `long double`, `__int128`,
+Some shapes are not bound rather than guessed — `long double`, `__int128`,
 `nullptr_t`, `void *`, the owning smart pointers
 `std::unique_ptr`/`std::shared_ptr`, a `non-const` reference to a
-standard-library value, and every enum (a C++ named set of integer constants).
-The [limits page]({{< ref "explanation/limits.md" >}}) has the messages and the
-tests.
+standard-library value, and a standard-library type outside the table. Each is
+named in a warning with a workaround. The
+[limits page]({{< ref "explanation/limits.md" >}}) has the messages.
 
-**A `char *` parameter does not bind in this build.** `const char *` is mapped to
-`*int8`, and generation fails with `invalid conversion from 'const int8_t*
-{aka 'const signed char*'} to 'const char*'` — with or without a paired length.
-Use `std::string` or `std::string_view` at the boundary until the mapping is
-fixed.
+**A non-`const` `char *` parameter does not bind.** The callee would write into
+an immutable Go `string`, so the warning asks for `const char *`, which crosses
+as a `string` in both directions. Use `std::string` or `std::string_view` when
+the C++ side needs one object to own or view the bytes.
 
 ## Callbacks
 
@@ -396,11 +400,11 @@ binding that passes no Go function does not need it.
 The limits:
 
 - the call carries at most **six integer and eight floating-point arguments**,
-  and one result. A callback that needs more is a generation error naming the
-  argument;
+  and one result. A callback that needs more is left out with a warning naming
+  the argument;
 - argument and result types are integers, `bool`, `double` and pointers to them;
-  a `float32` argument is refused (use `double`), and a `std::string`, a record,
-  a slice or an array is a generation error;
+  a `float32` argument is not bound (use `double`), and a `std::string`, a
+  record, a slice or an array is left out with a warning;
 - a panic inside the callback does not reach C++: the result is zeroed and the
   panic is re-raised in Go when the foreign call returns;
 - a callback that has to report a failure writes a status and the C++ side checks

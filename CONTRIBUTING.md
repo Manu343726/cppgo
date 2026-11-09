@@ -206,9 +206,11 @@ own pull request, and never push to `main`.
   separate objects and assert which one exports what: an inline body is absent
   from the user's library and present in the shim.
 - **A construct is either emitted or refused.** There is no pass-through guess.
-  `rejectUnimplemented` in [`internal/gen/reject.go`](internal/gen/reject.go) is
-  the single list of what the build does not emit, and each entry names the
-  declaration and the fix.
+  A declaration the build cannot carry is reported by `unbound` in
+  [`internal/gen/reject.go`](internal/gen/reject.go) as a warning that names it
+  and the fix; a template pattern or a manifest entry the build cannot satisfy is
+  a `declError` or a `manifestError` that stops the run. Every message goes
+  through `pending`, which renders `<what is wrong>; <fix>`.
 
 ## Where things live
 

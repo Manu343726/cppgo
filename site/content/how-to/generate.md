@@ -339,20 +339,24 @@ a scratch directory first. These are the ones you are most likely to meet:
 
 | Message contains | What happened | What to do |
 |---|---|---|
-| `it names nothing this header declares` | a `-bind`, `-exclude`, `-rename` or `-status` entry matches no declaration | fix the qualified name or the signature |
-| `operators and conversion operators are not emitted by this build yet` | the declaration is an operator | give it a named member or free function |
-| `enums are not emitted by this build yet` | the header declares an enum | pass the value as its underlying integer at the C++ boundary |
-| `inherited members and base views are not emitted by this build yet` | a class has base classes | bind the base directly, or expose the derived members through a wrapper |
-| `the call needs N INTEGER and M SSE argument registers` | more arguments than the call can carry | take a pointer to a struct |
+| `it names nothing this header declares` | a `-bind`, `-exclude`, `-rename`, `-status` or `-instantiate` entry matches no declaration | fix the qualified name or the signature |
+| `both map to Go name` / `map to Go type` | two declarations, or two types, would get one Go identifier and no overload suffix separates them | rename one with `-rename '<signature>=<GoName>'` |
+| `the public field ... of a template is not emitted by this build yet` | a class template declares public data | make the field private with an accessor, or bind one concrete instantiation with `-instantiate` |
+| `is not a type this build classifies` | a function template's signature names a dependent type — `std::vector<T>`, `Eigen::NoAlias`, a parameter pack expansion | write the parameter as a scalar, a pointer or a reference |
+| `is not a type or an integer` | a template parameter is a template-template or another non-integral non-type parameter | expose a concrete type at the C++ boundary |
+| `a class template with no parameters` | the form has no parameter to make generic | name a concrete instantiation with `-instantiate` |
 | `no Go value type` | `long double`, `__int128`, or an integer width the type map does not carry, in a signature | widen or narrow it at the C++ boundary, or wrap it |
 | `and a status is a 32-bit integer` | a `-status` entry names a declaration that does not return a 32-bit integer | drop the flag, or bind the declaration without it |
+| `returns nothing, so there is no status to read` | a `-status` entry names a `void` declaration | drop the flag |
 | `the generated shim does not compile` | the generated C++ failed to compile with your flags | the error carries the compiler's diagnostic |
 
-The full list, with a workaround for each, is
+A declaration the build cannot carry is not one of these errors: it is a
+`cppgo: warning:` line naming the declaration and the fix, and the rest of the
+package is written. The warnings, with the exact message for each, are in
 [Limits]({{< ref "explanation/limits.md" >}}).
 
-If a construct you need is in that list, it is not a flag you have missed: it is
-work this build has not done yet.
+If a construct you need appears in the limits page, it is not a flag you have
+missed: it is work this build has not done yet.
 
 ## Related
 

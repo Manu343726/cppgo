@@ -123,10 +123,14 @@ throws, so it takes a thunk. The other three `noexcept` functions in the header,
 
 ## The construct table
 
-"Supported" means a generated package does it today. "Refused" means generation
-stops with a message naming the declaration and the fix. "Designed" means the
-mechanism is stated in the design and is not in this build. A row that adds a
-clause of its own says exactly how far the construct has been carried:
+"Supported" means a generated package does it today. "Refused" means the
+construct does not bind: a declaration is named in a warning and left out of an
+otherwise complete package, and a template pattern the generic API cannot model
+stops the run. Either way the message names the declaration and the fix, and
+[Limits]({{< ref "explanation/limits.md" >}}) carries the full list. "Designed"
+means the mechanism is stated in the design and is not in this build. A row
+that adds a clause of its own says exactly how far the construct has been
+carried:
 **measured** means the test fixture for the carrier calls it against a real
 compiler, **generated and compiled, not executed** means the code is emitted and
 built but never called, and **emitted, not exercised by an example** means no
@@ -141,7 +145,7 @@ pointers in, and **SSE**, the eight floating-point registers beside them.
 | inline / header-only body | thunk | supported |
 | virtual member function | thunk (real vtable dispatch: the table of function pointers a virtual call reads the address from) | supported |
 | virtual destructor | thunk | supported |
-| multiple / virtual inheritance | thunk (`static_cast`/`dynamic_cast` for `this`) | measured, **refused by the generator**: base classes are not emitted yet |
+| multiple / virtual inheritance | thunk (`static_cast`/`dynamic_cast` for `this`) | supported: inherited methods, and `As<Base>()` / `As<Derived>()` views |
 | `std::string` | thunk (constructed and copied in the C++ side) | supported |
 | `std::string_view`, `std::span` | thunk (borrowed, valid for the call) | supported |
 | `std::vector<T>` | thunk | supported |
@@ -150,14 +154,15 @@ pointers in, and **SSE**, the eight floating-point registers beside them.
 | `std::unique_ptr`, `std::shared_ptr` | — | **refused**: they are owning pointers, which free their object |
 | POD ≤ 16 bytes by value | thunk | supported |
 | POD > 16 bytes / MEMORY class by value | thunk, through an sret pointer (a hidden first argument through which the callee writes a large result) | generated and compiled, not executed |
-| non-POD by value | thunk | measured, **refused by the generator** |
-| more than 6 INTEGER / 8 SSE arguments | — | **refused**: the argument block is not implemented |
+| non-POD by value | thunk, copied into Go's storage (a *T the Go side owns) | measured, supported: `Close` runs the destructor once |
+| a record Go cannot mirror: a bitfield, a packed struct, a union, a private or mixed-access field | thunk, one getter and setter per public field | supported as an opaque record: Go holds the pointer and the fields are methods |
+| more than 6 INTEGER / 8 SSE arguments | thunk, through an argument block both sides assert | supported |
 | exception-throwing call | thunk (`try`/`catch`) | supported |
 | callback parameter, `std::function` (C++'s wrapper around any callable) | reentrant | emitted, not exercised by an example |
-| class / function template | thunk, called reentrantly | supported |
+| class / function template | thunk, called reentrantly | supported for scalar type arguments and non-type dimensions; a public field, a dependent signature and a parameter pack stop the run |
 | static member | thunk, no `this` (the object a method was called on) | supported |
-| enum | — | **refused** |
-| operators, conversion operators (an operator that converts the object to another type) | — | **refused** |
+| enum | — | supported: a named Go integer type over the underlying width |
+| operators, conversion operators (an operator that converts the object to another type) | the carrier the call needs | supported: named methods and functions from the naming table |
 | function-like macro that is the API (a macro is a text substitution performed before compilation) | — | not bindable: a macro's expansion is not a declaration |
 
 ## Related
