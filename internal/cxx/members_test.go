@@ -79,7 +79,13 @@ func TestNestedTypes(t *testing.T) {
 	require.Len(t, inner.Fields, 1)
 	assert.Equal(t, "inner", inner.Fields[0].Name)
 	assert.Equal(t, TypeInteger, inner.Fields[0].Type.Kind, "the outer argument is substituted")
-	assert.False(t, inner.LayoutKnown, "the instantiated layout is deferred")
+	// libclang exposes no definition cursor for the instantiated nested type, so
+	// it answers nothing about its layout. The substituted pattern field is the
+	// layout, and the model completes it (issue #102, 4c): one int at offset 0.
+	assert.True(t, inner.LayoutKnown, "the layout is completed from the pattern's substituted field")
+	assert.Equal(t, int64(4), inner.SizeBytes, "sizeof(Box<int>::Inner) is sizeof(int)")
+	assert.Equal(t, int64(4), inner.AlignBytes, "alignof(Box<int>::Inner) is alignof(int)")
+	assert.Equal(t, int64(0), inner.Fields[0].OffsetBytes, "the single field starts at offset 0")
 }
 
 func TestMemberTemplateInstantiation(t *testing.T) {
