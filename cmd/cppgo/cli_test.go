@@ -301,7 +301,7 @@ func mustGen(t *testing.T, args ...string) int {
 // declaration is named and omitted, not guessed.
 var stdDequeHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "errors", "stddeque.hpp")
 
-// classTemplateHeader is a construct that cannot be modelled at all: a class
+// classTemplateHeader is a construct that cannot be modeled at all: a class
 // template with a public field, which the generic API has no shape for.
 var classTemplateHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "errors", "classtemplate.hpp")
 

@@ -10,7 +10,7 @@ import (
 )
 
 // TestGenerationErrors covers the input the contract says is an error: a
-// construct that cannot be modelled at all, because the generic API itself has
+// construct that cannot be modeled at all, because the generic API itself has
 // no shape for it. A declaration the build cannot carry is a warning instead
 // (see TestDeclarationsTheBuildCannotCarryAreWarnings): that distinction is the
 // whole point of declaration-level selection — one unusable declaration must
