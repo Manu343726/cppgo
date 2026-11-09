@@ -305,8 +305,9 @@ library they can use.
 ## Rule 7 — Write for the reader who does not know the topic
 
 The reader is the one § *Who the documentation is for* defines, and rule 7 makes that reader
-the test of every sentence: a competent Go developer who has never built an FFI and, on an
-explanation page, has never looked at the Go runtime's internals. Every term the page needs —
+the test of every sentence: a competent Go developer who has never built an FFI (a foreign
+function interface: Go calling code that was not compiled as Go) and, on an explanation page,
+has never looked at the Go runtime's internals. Every term the page needs —
 C++, FFI or Go-runtime — is defined the first time the page uses it, in the sentence that
 needs it. The page builds from what the reader already knows, so no sentence requires a term
 or mechanism the page defines later, and no step is skipped because it is obvious to someone
@@ -316,7 +317,8 @@ explained.
 
 That is the operator's rule, from
 [#83](https://git.manu343726.com/manu343726/cppgo/issues/83), and it ends on the sentence
-that decides most arguments about a page:
+that decides most arguments about a page — the trampoline it names being the generated
+assembly that performs the call into C++:
 
 > Each line of a code block the reader cannot parse is named and explained: "the trampoline"
 > is not an explanation of the trampoline.
@@ -332,8 +334,9 @@ Applying it:
   (rule 1), and the sentence here must still stand alone: "the carrier is defined in
   *Carriers*" is not a definition of the carrier.
 - **This is rule 4 extended to assembly and to runtime internals.** Naming a mechanism is not
-  explaining it: `NOSPLIT`, a safepoint, `runtime.cgocall` and `MOVQ SP, R13` are names until
-  the page says what each one does and why it is there.
+  explaining it: an assembler flag, a single instruction, a runtime entry point and a
+  scheduling term are all names until the page says what each one does and why it is there.
+  The worked example below is four places where a page named them and moved on.
 - **An analogy earns its place only where it removes a leap**, and the precise statement
   follows it: "a P is the permission an M holds while it runs Go code" is allowed, and the
   local run queue, the allocator cache and the hand-off between threads come next. An
@@ -362,20 +365,27 @@ rule:
    see: no call, no stack, no frame has been shown, and the paragraph that follows promises
    "the trampoline, the probe, the callback table" as the sources each section starts from —
    "the trampoline" named before the page has said what a trampoline is, and never defined
-   anywhere on it.
-2. **`g`, `M` and `P` arrive before the words their definitions use.** The page defines `g`
-   as "the stack, the frame chain and the saved registers of one lightweight thread" — three
-   terms it has not established, and "frame" is never defined anywhere on the page. "The
-   scheduler" and "the collector" appear in the first paragraph in the same position, as
-   things the reader is assumed to know.
-3. **Runtime terms carry the argument before they are defined.** `stack maps` decide the
-   whole consequence in § *The stack is copied, not extended*, and the section that says what
-   a stack map is, § *Safepoints, preemption, and what the runtime cannot see*, comes two
-   sections later. `NOSPLIT` is in the page's first assembly snippet, before the page has said
-   what the assembler does with a flag, and the section that explains it, § *What `NOSPLIT`
-   is*, comes only after the stack-copy and safepoint arguments have used it as a premise.
-   `cgocall` enters as "the runtime's own entry" with `g0`, `m.incgo` and "the C ABI" in the
-   same comment, none of them defined there.
+   anywhere on the page.
+2. **`g`, `M` and `P` arrive before the words their definitions use.** The runtime's three
+   scheduling words are its names for a goroutine (`g`), an operating-system thread (`M`) and
+   the permission a thread must hold to run Go code (`P`, with the local run queue and the
+   allocator cache inside it). The page defines `g` as "the stack, the frame chain and the
+   saved registers of one lightweight thread" — three terms it has not established, and
+   "frame" is never defined anywhere on the page. "The scheduler" and "the collector" appear
+   in the first paragraph in the same position, as things the reader is assumed to know.
+3. **Runtime terms carry the argument before they are defined.** `stack maps` — the per-frame
+   lists that say which words hold pointers, and therefore what the collector and the copier
+   must adjust — decide the whole consequence in § *The stack is copied, not extended*, and
+   the section that says what a stack map is, § *Safepoints, preemption, and what the runtime
+   cannot see* (a safepoint is a point where the runtime may stop a goroutine because every
+   frame there can be described), comes two sections later. `NOSPLIT`, the assembler flag
+   that forbids the stack-growth preamble in a function, is in the page's first assembly
+   snippet before the page has said what the assembler does with a flag, and the section
+   that explains it, § *What `NOSPLIT` is*, comes only after the stack-copy and safepoint
+   arguments have used it as a premise. `cgocall` — the runtime's own entry point for a call
+   into foreign code, which parks the goroutine on the system stack (`g0`) and releases its P
+   — enters as "the runtime's own entry" with `g0`, `m.incgo` and "the C ABI" in the same
+   comment, none of them defined there.
 4. **Seven assembly instructions are shown before the reader can parse one.** The generated
    `cppgoCall_…` block is followed by the sentence "Four things in those seven instructions
    are the whole mechanism", so the block is not explained until after it has been read. The
@@ -394,8 +404,9 @@ previous layer established:
    the analogy for `P` and the precise statement after it;
 3. why a Go stack grows by copying, and what a stack map is — the point at which a pointer in
    a register, in a `uintptr` or in a C++ frame stops following the stack;
-4. the heap and the collector: what pinning is, why an object keeps its storage reachable, and
-   why a frame address cannot be pinned at all;
+4. the heap and the collector: what pinning is — telling the collector that an address must
+   not move — why an object keeps its storage reachable, and why a frame address cannot be
+   pinned at all;
 5. safepoints and preemption, and the state a foreign frame puts the runtime in;
 6. entering a foreign call: `runtime.cgocall`, the `g0` stack, and what the P does meanwhile;
 7. the trampoline, line by line: the real assembly, then every instruction and register named —
