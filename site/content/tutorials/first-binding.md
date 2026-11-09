@@ -197,7 +197,7 @@ compiler command that builds it — pass it instead with
 cppgo reads the entry for each header from it.
 
 Do not skip this because the header compiles: with the wrong include path the
-parser sees a different type and the binding is wrong rather than failed. When
+parser sees a different type, and the binding is wrong instead of failing. When
 cppgo finds no configuration at all it says so and assumes one, in a warning
 that begins `the compilation flags for include/mathx/vector.hpp are an
 assumption`, names the flags it assumed in the parenthesis, and then parses with
