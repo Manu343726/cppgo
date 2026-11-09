@@ -67,7 +67,7 @@ func (b *builder) defaultPrefixes(variant *binding) []*binding {
 		// The default lives in C++, so the call is written there: a prefix can
 		// never be a transparent trampoline.
 		b.forceThunk(built, "default arguments: the caller's compiler applies them, so the call is written in C++")
-		if err := b.checkRegisters(built); err != nil {
+		if err := b.routeRegisters(built); err != nil {
 			b.warnings = append(b.warnings, fmt.Sprintf(
 				"%s with %d argument(s) is not bound: %v", displaySignature(sym), arity, err))
 			continue

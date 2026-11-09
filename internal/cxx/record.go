@@ -175,6 +175,12 @@ type Record struct {
 	// IsAbstract is true when the record has a pure virtual function and
 	// cannot be instantiated.
 	IsAbstract bool
+	// rawSize and rawAlign are libclang's answer for this record before
+	// finishRecord decided whether it could be trusted. A record finished
+	// before a member type it names is not untrustworthy for that reason for
+	// ever: completeLayouts retries it once the whole translation unit has been
+	// read, and the retry needs the size libclang gave.
+	rawSize, rawAlign int64
 	// Fields are the non-static data members in declaration order.
 	Fields []Field
 	// Bases are the base classes in declaration order.
@@ -321,10 +327,62 @@ func (tu *TU) extractRecords() {
 	// same translation unit cannot fail for a different reason, so its error is
 	// the same "the handle is closed" answer the symbol walk already returned.
 	_ = tu.l.visit(tu.l.f.getTranslationUnitCursor(tu.tu), ex.visit)
+	ex.completeLayouts()
 	tu.records = ex.records
 	tu.byRecord = ex.byName
 	tu.enums = ex.enums
 	tu.byEnum = ex.byEnum
+}
+
+// completeLayouts retries every record finishRecord had to call unknown, once
+// the whole translation unit has been read. A record can be finished before the
+// nested or instantiated type a field names exists in the model — the field is
+// visited with its parent, and the type it names may be added after — so the
+// derived layout is a fixpoint: each pass repairs the field sizes that are now
+// answerable and re-derives the records that depend on them. The passes are
+// bounded by the record count, and a record that cannot be completed stays
+// unknown, which is the answer the model reports rather than a size it guessed.
+func (e *recordExtractor) completeLayouts() {
+	for pass := 0; pass < len(e.records); pass++ {
+		changed := false
+		for i := range e.records {
+			if e.reconsiderLayout(&e.records[i]) {
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+// reconsiderLayout is one retry of a record finishRecord left unknown.
+func (e *recordExtractor) reconsiderLayout(rec *Record) bool {
+	if rec.LayoutKnown {
+		return false
+	}
+	for i := range rec.Fields {
+		e.completeFieldSize(rec, &rec.Fields[i])
+	}
+	// libclang gave no offset, or gave the placeholder of a record it could not
+	// finish; the substituted fields are the whole layout when nothing else can
+	// contribute to it.
+	if e.completeLayout(rec) {
+		rec.LayoutKnown = true
+		return true
+	}
+	// A record libclang did lay out: its offsets are real, and the only reason
+	// it was distrusted was a member type whose layout had not been derived yet.
+	if rec.rawSize <= 0 || rec.rawAlign <= 0 {
+		return false
+	}
+	for _, field := range rec.Fields {
+		if field.Type.SizeBytes < 0 || (field.OffsetBytes < 0 && !field.IsBitField) {
+			return false
+		}
+	}
+	rec.SizeBytes, rec.AlignBytes, rec.LayoutKnown = rec.rawSize, rec.rawAlign, true
+	return true
 }
 
 // visit is the clang_visitChildren callback for records and enums.
@@ -463,6 +521,13 @@ func (e *recordExtractor) finishRecord(rec *Record, facts ctorFacts) {
 		}
 	}
 	rec.IsDefaultConstructible, rec.IsCopyConstructible = e.constructible(facts, rec.Fields)
+	// A field whose type is a nested or instantiated record may be spelled
+	// dependently, with no size of its own; the record the substitution names
+	// carries the size. Filling it in is what lets the record's own layout be
+	// trusted, and what completeLayout below needs to know.
+	for i := range rec.Fields {
+		e.completeFieldSize(rec, &rec.Fields[i])
+	}
 	rec.LayoutKnown = rec.SizeBytes > 0 && rec.AlignBytes > 0
 	for _, field := range rec.Fields {
 		if field.Type.SizeBytes < 0 || field.OffsetBytes < 0 && !field.IsBitField {
@@ -472,9 +537,235 @@ func (e *recordExtractor) finishRecord(rec *Record, facts ctorFacts) {
 		}
 	}
 	if !rec.LayoutKnown {
+		// A specialization synthesized from its pattern has no definition
+		// cursor of its own, so libclang may answer nothing about its layout.
+		// The substituted fields are the layout in that case, and the record is
+		// only completed when nothing can make the derivation wrong.
+		rec.LayoutKnown = e.completeLayout(rec)
+	}
+	if !rec.LayoutKnown {
+		rec.rawSize, rec.rawAlign = rec.SizeBytes, rec.AlignBytes
 		rec.SizeBytes = -1
 		rec.AlignBytes = -1
+		return
 	}
+	if rec.Synthesized && !rec.IsPOD {
+		// libclang classified the pattern, whose dependent members make it say
+		// no. The substituted record is a POD when its own declarations and
+		// fields say so, and saying it is what lets Go mirror a plain nested
+		// record instead of handing out accessors to a value nobody can own.
+		rec.IsPOD = e.derivedPOD(rec, facts)
+	}
+}
+
+// completeLayout derives a synthesized record's layout from its fields. It is
+// the standard layout rule — each field at the next offset its own alignment
+// allows, the record rounded up to its largest alignment — and it is applied
+// only where that rule is the whole rule:
+//
+//   - no base class (an empty base, multiple bases and virtual bases all change
+//     the offsets in ways only the compiler knows);
+//   - no virtual function or virtual base (the vptr is part of the layout);
+//   - no bit-field (its allocation unit is not a field offset);
+//   - every field of the same access, because a class whose members differ in
+//     access is not standard-layout and an implementation may reorder them;
+//   - every field's type of a known size and alignment.
+//
+// Anything else leaves LayoutKnown false, which is the answer the generator
+// states rather than a size it guessed. A synthesized record needs this for its
+// whole layout; a record libclang laid out only partly needs it for the fields
+// whose substituted type it could not complete (a nested type of a
+// specialization is the shape that happens to).
+func (e *recordExtractor) completeLayout(rec *Record) bool {
+	if rec.LayoutKnown {
+		return false
+	}
+	if len(rec.Bases) > 0 || rec.IsPolymorphic || rec.HasVirtualBase || rec.HasVirtualFunction || rec.IsAbstract {
+		return false
+	}
+	if !sameAccess(rec.Fields) {
+		return false
+	}
+	if rec.Kind == Union {
+		var size, align int64
+		for i := range rec.Fields {
+			field := &rec.Fields[i]
+			e.completeFieldSize(rec, field)
+			if field.IsBitField || field.Type.SizeBytes < 0 {
+				return false
+			}
+			fieldAlign, ok := e.alignOf(field.Type)
+			if !ok {
+				return false
+			}
+			field.OffsetBytes = 0
+			if field.Type.SizeBytes > size {
+				size = field.Type.SizeBytes
+			}
+			if fieldAlign > align {
+				align = fieldAlign
+			}
+		}
+		if align == 0 {
+			size, align = 1, 1
+		}
+		rec.SizeBytes = roundUp(size, align)
+		rec.AlignBytes = align
+		return true
+	}
+	var offset, align int64
+	for i := range rec.Fields {
+		field := &rec.Fields[i]
+		e.completeFieldSize(rec, field)
+		if field.IsBitField || field.Type.SizeBytes < 0 {
+			return false
+		}
+		fieldAlign, ok := e.alignOf(field.Type)
+		if !ok {
+			return false
+		}
+		offset = roundUp(offset, fieldAlign)
+		field.OffsetBytes = offset
+		offset += field.Type.SizeBytes
+		if fieldAlign > align {
+			align = fieldAlign
+		}
+	}
+	if align == 0 {
+		// An empty class is one byte, which is the size the compiler gives it.
+		rec.SizeBytes, rec.AlignBytes = 1, 1
+		return true
+	}
+	rec.SizeBytes = roundUp(offset, align)
+	rec.AlignBytes = align
+	return true
+}
+
+// derivedPOD reports whether a synthesized record is a POD after substitution.
+// libclang classified the pattern, where a dependent member is enough to make
+// the answer no; here the substituted fields and the pattern's own declarations
+// are the whole question: standard layout (no base, no virtual function, no
+// bit-field, every member public) and trivial (no user-provided constructor,
+// copy or move constructor, and no declared destructor), with every field
+// itself of a type the model can vouch for.
+func (e *recordExtractor) derivedPOD(rec *Record, facts ctorFacts) bool {
+	if rec.IsPolymorphic || rec.HasVirtualBase || rec.HasVirtualFunction || rec.IsAbstract {
+		return false
+	}
+	if rec.Kind == Union || len(rec.Bases) > 0 {
+		return false
+	}
+	if facts.userDeclared || facts.copyCtor || facts.moveCtor || facts.userDestructor {
+		return false
+	}
+	for _, field := range rec.Fields {
+		if field.Access != AccessPublic || field.IsBitField {
+			return false
+		}
+		if !e.trivialType(field.Type, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameAccess reports whether every field has the same access, which is what
+// keeps the standard layout rule applicable: members of differing access may be
+// reordered by the implementation.
+func sameAccess(fields []Field) bool {
+	if len(fields) < 2 {
+		return true
+	}
+	first := fields[0].Access
+	for _, field := range fields[1:] {
+		if field.Access != first {
+			return false
+		}
+	}
+	return true
+}
+
+// completeFieldSize fills in a field type the substitution left with no size,
+// which is what a dependent nested type looks like from the pattern. The
+// pattern spells its own nested type against itself (Box::Slot), so the name is
+// resolved to the specialization's own (Box<int>::Slot) before the model is
+// asked; the record or enum that answers is the field's type.
+func (e *recordExtractor) completeFieldSize(rec *Record, field *Field) {
+	if field.Type.SizeBytes >= 0 || field.Type.RecordName == "" {
+		return
+	}
+	name := e.resolveNestedType(rec, field.Type.RecordName)
+	if index, ok := e.byName[name]; ok {
+		if inner := e.records[index]; inner.LayoutKnown && inner.SizeBytes > 0 {
+			field.Type.SizeBytes = inner.SizeBytes
+			field.Type.RecordName = name
+		}
+		return
+	}
+	if index, ok := e.byEnum[name]; ok {
+		if enum := e.enums[index]; enum.Underlying.SizeBytes > 0 {
+			field.Type.SizeBytes = enum.Underlying.SizeBytes
+			field.Type.RecordName = name
+		}
+	}
+}
+
+// resolveNestedType maps a type name the pattern spelled against itself
+// (Box::Slot, Box::Kind) to the specialization's own nested type
+// (Box<int>::Slot). A name the model already holds is returned unchanged.
+func (e *recordExtractor) resolveNestedType(rec *Record, name string) string {
+	if _, ok := e.byName[name]; ok {
+		return name
+	}
+	if _, ok := e.byEnum[name]; ok {
+		return name
+	}
+	if name == "" || !strings.Contains(rec.QualifiedName, "<") {
+		return name
+	}
+	simple := name
+	if i := strings.LastIndex(simple, "::"); i >= 0 {
+		simple = simple[i+2:]
+	}
+	return rec.QualifiedName + "::" + simple
+}
+
+// alignOf is the alignment of a field's C++ type. It is the size for every
+// scalar the model carries, the pointee's for an array, and the record's own
+// alignof for a record. A type whose alignment is not known makes the
+// derivation unavailable.
+func (e *recordExtractor) alignOf(p Param) (int64, bool) {
+	switch {
+	case p.Ptr:
+		return 8, true
+	case p.Kind == TypeArray && p.Element != nil:
+		return e.alignOf(*p.Element)
+	case p.Kind == TypeRecord:
+		index, ok := e.byName[p.RecordName]
+		if !ok {
+			return 0, false
+		}
+		inner := e.records[index]
+		if !inner.LayoutKnown || inner.AlignBytes <= 0 {
+			return 0, false
+		}
+		return inner.AlignBytes, true
+	case p.Kind == TypeInteger || p.Kind == TypeFloat || p.Kind == TypeEnum:
+		if p.SizeBytes <= 0 {
+			return 0, false
+		}
+		return p.SizeBytes, true
+	default:
+		return 0, false
+	}
+}
+
+// roundUp rounds offset up to the next multiple of align.
+func roundUp(offset, align int64) int64 {
+	if align <= 1 {
+		return offset
+	}
+	return (offset + align - 1) / align * align
 }
 
 // addTypeSpecialization records a specialization that is reachable through a
@@ -695,8 +986,11 @@ func (e *recordExtractor) collectChildren(rec *Record, decl CXCursor, typ CXType
 				rec.HasVirtualFunction = true
 				rec.IsPolymorphic = true
 			}
-			if e.l.f.getCursorKind(child) == cursorConstructor {
+			switch e.l.f.getCursorKind(child) {
+			case cursorConstructor:
 				facts.add(e.l, child)
+			case cursorDestructor:
+				facts.userDestructor = true
 			}
 		case cursorFunctionTemplate:
 			e.registerMemberTemplate(rec.QualifiedName, child, substitution{})
@@ -744,6 +1038,9 @@ func (e *recordExtractor) synthesizeSpecialization(rec *Record, pattern CXCursor
 			}
 			if kind == Constructor {
 				facts.add(e.l, child)
+			}
+			if kind == Destructor {
+				facts.userDestructor = true
 			}
 			rec.Members = append(rec.Members, e.synthesizeMember(child, rec, sub))
 		case cursorFunctionTemplate:
@@ -883,6 +1180,10 @@ func (e *recordExtractor) synthesizeNestedRecord(outer *Record, cursor CXCursor,
 		Kind:          e.recordKind(cursor),
 		SizeBytes:     -1,
 		AlignBytes:    -1,
+		// It is built from the pattern, not from a definition cursor of its
+		// own: its layout is completed from the substituted fields when
+		// libclang defers it.
+		Synthesized: true,
 	}
 	nested.DeclFile, nested.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
 	if _, exists := e.byName[nested.QualifiedName]; exists {
@@ -1088,12 +1389,16 @@ func (l *Libclang) typeFieldOffset(typ CXType, name string) int64 {
 // promise New<Type>() and Clone().
 type ctorFacts struct {
 	userDeclared bool
-	zeroArg      bool
-	zeroDeleted  bool
-	copyCtor     bool
-	copyDeleted  bool
-	moveCtor     bool
-	moveDeleted  bool
+	// userDestructor is true when the record declares a destructor. It is what
+	// keeps a completed specialization from being called a POD: POD needs a
+	// trivial destructor, and libclang's answer is about the pattern.
+	userDestructor bool
+	zeroArg        bool
+	zeroDeleted    bool
+	copyCtor       bool
+	copyDeleted    bool
+	moveCtor       bool
+	moveDeleted    bool
 }
 
 // add records one constructor cursor.
@@ -1482,6 +1787,7 @@ func mergeRecord(into *Record, from Record) {
 		into.SizeBytes = from.SizeBytes
 		into.AlignBytes = from.AlignBytes
 		into.LayoutKnown = from.LayoutKnown
+		into.rawSize, into.rawAlign = from.rawSize, from.rawAlign
 		into.IsPOD = from.IsPOD
 		into.IsTrivial = from.IsTrivial
 		into.IsPolymorphic = from.IsPolymorphic

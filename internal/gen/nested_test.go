@@ -77,9 +77,15 @@ func TestNestedTypesTakeTheirOuterName(t *testing.T) {
 	// and the generic API says what it omitted instead of guessing.
 	assert.Contains(t, source, "func (o *Outer) Make(x int32, y int32) OuterInner {")
 	assert.Contains(t, source, "func (o *Outer) Mode() OuterMode {")
-	// libclang completes no layout for a specialization synthesized from a
-	// pattern, so the emitter generates no factory for it and says why.
-	assert.NotContains(t, source, "func NewBoxInt()")
+	// libclang exposes no definition cursor for a specialization synthesized
+	// from a pattern, so it answers nothing about the layout of the type or of
+	// its nested types. The model completes both from the substituted fields
+	// (issue #102, 4c), so the factory exists and the plain nested record is a
+	// Go struct rather than an opaque value with accessors.
+	assert.Contains(t, source, "func NewBoxInt() (*BoxInt, error) {")
+	assert.Contains(t, source, "type BoxIntSlot struct {")
+	assert.Contains(t, source, "func NewBoxIntSlot() (*BoxIntSlot, error) { return &BoxIntSlot{}, nil }")
+	assert.NotContains(t, source, "no layout the Go side can allocate")
 }
 
 // TestGenericAPIOmitsAMemberNamingANestedType is the report half: the generic

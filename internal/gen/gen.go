@@ -2,7 +2,10 @@
 // headers through internal/cxx and writes, for one Go package,
 //
 //   - zz_cppgo.gen.go, the only API a caller sees;
-//   - zz_cppgo_amd64.s, one NOSPLIT trampoline per direct symbol;
+//   - zz_cppgo_amd64.s, one NOSPLIT trampoline per binding, whether it reaches
+//     the user's symbol directly or the generated thunk — a reentrant binding
+//     has none, because it enters C through runtime.cgocall — plus cppgoFree
+//     when a result is a heap copy the Go side releases;
 //   - zz_cppgo_shim.h and zz_cppgo_shim.cpp, one extern "C" thunk per binding
 //     the direct ABI cannot call, which cppgo compiles itself into
 //     libcppgo_<pkg>.so.

@@ -246,7 +246,7 @@ func (p *Point) Clone() (*Point, error) {
 	return &clone, nil
 }
 
-// Vector is mathx::Vector. The object belongs to C++; obj is where it lives.
+// Vector is mathx::Vector (sizeof 16). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 type Vector struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.

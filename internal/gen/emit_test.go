@@ -22,7 +22,7 @@ func TestGeneratedGoShape(t *testing.T) {
 		"type Point struct {\n\tX float64\n\tY float64\n}",
 		"var _ [16]byte = [unsafe.Sizeof(Point{})]byte{}",
 		"var _ [8]byte = [unsafe.Offsetof(Point{}.Y)]byte{}",
-		"// Vector is mathx::Vector. The object belongs to C++; obj is where it lives.",
+		"// Vector is mathx::Vector (sizeof 16). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.",
 		"type Vector struct {\n\tobj *cppgo.Object\n\t// view is the address of this value inside the object, 0 for the object itself.\n\taddr uintptr\n}",
 		"func (v *Vector) cppgoAddr() uintptr",
 		"func NewVector(",

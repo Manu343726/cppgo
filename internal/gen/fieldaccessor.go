@@ -20,7 +20,19 @@ import (
 // a view of the field inside the object: the thunk returns the member's
 // address, and the Go value shares the object exactly like a borrowed result
 // does.
+//
+// The manifest has already pruned the model when this runs, so a field whose
+// type is a record or enum the selection did not keep is skipped and reported:
+// the accessor's Go signature would name a type this package does not emit.
 func (b *builder) buildFieldAccessors() {
+	emitted := make(map[string]bool, len(b.order))
+	for _, name := range b.order {
+		emitted[name] = true
+	}
+	emittedEnums := make(map[string]bool, len(b.enumOrder))
+	for _, name := range b.enumOrder {
+		emittedEnums[name] = true
+	}
 	for _, name := range b.order {
 		owner := b.records[name]
 		if owner.Mirrored {
@@ -29,6 +41,21 @@ func (b *builder) buildFieldAccessors() {
 		for _, field := range b.rawRecord(owner.CxxName).Fields {
 			if field.Access != cxx.AccessPublic || field.IsAnonymous {
 				continue
+			}
+			if _, isStd := stdTypeName(field.Type); !isStd {
+				typeEmitted := true
+				switch field.Type.Kind {
+				case cxx.TypeRecord:
+					typeEmitted = emitted[field.Type.RecordName]
+				case cxx.TypeEnum:
+					typeEmitted = emittedEnums[field.Type.RecordName]
+				}
+				if !typeEmitted {
+					b.warnings = append(b.warnings, fmt.Sprintf(
+						"%s::%s is not bound: its type, %s, is not part of the generated API",
+						owner.CxxName, field.Name, field.Type.RecordName))
+					continue
+				}
 			}
 			getter, err := b.newFieldBinding(owner, field, false)
 			if err != nil {
@@ -223,7 +250,7 @@ func (b *builder) newFieldBinding(owner *recordModel, field cxx.Field, write boo
 // vtable for a virtual base), and a dynamic_cast for As<Derived>, which is the
 // only cast that can report that the object is not the type asked for.
 func (m *packageModel) castTarget(binding *binding) (string, error) {
-	from := "static_cast<::" + binding.Owner.CxxName + " *>(self)"
+	from := "static_cast<::" + binding.Owner.CxxName + " *>(" + m.receiver(binding) + ")"
 	to := "::" + binding.castTo.CxxName
 	if binding.dynamicCast {
 		return "dynamic_cast<" + to + " *>(" + from + ")", nil
@@ -240,7 +267,7 @@ func (m *packageModel) fieldTarget(binding *binding, args []string) (string, err
 		// A getter is a const member: the receiver arrives as const void *.
 		qualifier = "const "
 	}
-	member := "static_cast<" + qualifier + "::" + binding.Owner.CxxName + " *>(self)->" + field.Name
+	member := "static_cast<" + qualifier + "::" + binding.Owner.CxxName + " *>(" + m.receiver(binding) + ")->" + field.Name
 	if !binding.fieldWrite {
 		return member, nil
 	}

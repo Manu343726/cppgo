@@ -2,22 +2,10 @@
 
 #include "textflag.h"
 
-// func cppgoCall_69caaf1ac697(fn uintptr, this uintptr) float64
-TEXT ·cppgoCall_69caaf1ac697(SB), NOSPLIT, $0-24
+// func cppgoCall_4258c40f37a8(fn uintptr, this uintptr)
+TEXT ·cppgoCall_4258c40f37a8(SB), NOSPLIT, $0-16
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
-	MOVQ	SP, R13
-	ANDQ	$~15, SP
-	CALL	R12
-	MOVQ	R13, SP
-	MOVSD	X0, ret+16(FP)
-	RET
-
-// func cppgoCall_b7515a44159b(fn uintptr, this uintptr, a1 float64)
-TEXT ·cppgoCall_b7515a44159b(SB), NOSPLIT, $0-24
-	MOVQ	fn+0(FP), R12
-	MOVQ	this+8(FP), DI
-	MOVSD	a1+16(FP), X0
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12
@@ -58,15 +46,15 @@ TEXT ·cppgoCall_2d3c65cca5e0(SB), NOSPLIT, $0-24
 	MOVQ	R13, SP
 	RET
 
-// func cppgoCall_2ab08dcc1fb8(fn uintptr, this uintptr, out unsafe.Pointer)
+// func cppgoCall_2ab08dcc1fb8(fn uintptr, this uintptr) unsafe.Pointer
 TEXT ·cppgoCall_2ab08dcc1fb8(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
-	MOVQ	out+16(FP), SI
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12
 	MOVQ	R13, SP
+	MOVQ	AX, ret+16(FP)
 	RET
 
 // func cppgoCall_cd198751f776(fn uintptr, this uintptr) int32
@@ -80,22 +68,10 @@ TEXT ·cppgoCall_cd198751f776(SB), NOSPLIT, $0-20
 	MOVL	AX, ret+16(FP)
 	RET
 
-// func cppgoCall_6acbf582c31d(fn uintptr, this uintptr) int64
-TEXT ·cppgoCall_6acbf582c31d(SB), NOSPLIT, $0-24
+// func cppgoCall_8c92f829796a(fn uintptr, this uintptr)
+TEXT ·cppgoCall_8c92f829796a(SB), NOSPLIT, $0-16
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
-	MOVQ	SP, R13
-	ANDQ	$~15, SP
-	CALL	R12
-	MOVQ	R13, SP
-	MOVQ	AX, ret+16(FP)
-	RET
-
-// func cppgoCall_ace9ca410133(fn uintptr, this uintptr, a1 int64)
-TEXT ·cppgoCall_ace9ca410133(SB), NOSPLIT, $0-24
-	MOVQ	fn+0(FP), R12
-	MOVQ	this+8(FP), DI
-	MOVQ	a1+16(FP), SI
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12
@@ -136,15 +112,15 @@ TEXT ·cppgoCall_74fbfe7307c2(SB), NOSPLIT, $0-24
 	MOVQ	R13, SP
 	RET
 
-// func cppgoCall_c446c210d48e(fn uintptr, this uintptr, out unsafe.Pointer)
+// func cppgoCall_c446c210d48e(fn uintptr, this uintptr) unsafe.Pointer
 TEXT ·cppgoCall_c446c210d48e(SB), NOSPLIT, $0-24
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
-	MOVQ	out+16(FP), SI
 	MOVQ	SP, R13
 	ANDQ	$~15, SP
 	CALL	R12
 	MOVQ	R13, SP
+	MOVQ	AX, ret+16(FP)
 	RET
 
 // func cppgoCall_ce57d3d272b8(fn uintptr, this uintptr) int32

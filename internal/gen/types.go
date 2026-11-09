@@ -81,6 +81,11 @@ type goType struct {
 	// Callback is the signature of a function-pointer or std::function
 	// parameter, nil for everything else.
 	Callback *callbackType
+	// ByValue is true when the type is a non-POD record that the C++ side takes
+	// or returns by value. The Go value is *T, an opaque value owning the
+	// storage, and the copy into or out of the call is made by the shim: it is
+	// the only place the type's copy constructor exists.
+	ByValue bool
 }
 
 // callbackType is the signature of a Go function handed to C++. The carrier
@@ -590,20 +595,38 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 	}, nil
 }
 
-// mapRecord maps a record by value. Only a mirrored aggregate can be a Go
-// value; an opaque one has no layout Go may copy, and crosses by pointer.
+// mapRecord maps a record by value.
 //
-// A mirrored record in Go *is* its C layout, so the Go value is the record
-// itself and the shim receives a pointer to it: the thunk copies it into the
-// call, which is where the C++ copy constructor lives and where a value above
-// 16 bytes is materialized without any Go-side stack knowledge.
+// A mirrored aggregate is a Go struct whose layout *is* the C++ layout, so the
+// Go value is the record itself and the thunk copies it into the call — the
+// place the C++ copy constructor lives, and the place a value above 16 bytes is
+// materialized without any Go-side stack knowledge.
+//
+// A record Go cannot mirror (a non-POD one: a user-declared constructor, a
+// destructor, private members) has no layout Go may copy, so it crosses as *T,
+// the opaque Go value that owns storage aligned for the C++ type. The shim
+// copies it into the call, or constructs the result into Go's storage, which is
+// why such a binding is always shim-carried. The Go side owns both directions:
+// Close destroys the object.
 func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
 	record, ok := m.recordFor(p.RecordName)
 	if !ok {
 		return nil, missingRecord(p)
 	}
 	if !record.Mirrored {
-		return nil, pending(fmt.Sprintf("%q is passed by value but is not a POD", p.Spelling), "take it by const reference, or make it a POD that Go can mirror")
+		if record.Size <= 0 || record.Align <= 0 {
+			return nil, pending(fmt.Sprintf("%q is passed by value but its layout is unknown", p.Spelling),
+				"make the type complete in the header, or take it by reference at the C++ boundary")
+		}
+		return &goType{
+			Kind:    goPointer,
+			Go:      "*" + record.GoName,
+			C:       "void *",
+			Cxx:     "::" + record.CxxName,
+			Record:  record,
+			Param:   p,
+			ByValue: true,
+		}, nil
 	}
 	return &goType{
 		Kind:   goRecord,
