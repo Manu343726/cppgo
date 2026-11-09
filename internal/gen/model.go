@@ -318,6 +318,12 @@ type builder struct {
 	synthMembers []cxx.Symbol
 	// instantiateMatched tracks the -instantiate entries a record matched.
 	instantiateMatched []bool
+	// bindMatched and excludeMatched track the -bind and -exclude entries a
+	// declaration matched, which the pre-selection records before anything is
+	// lowered: an entry that names a declaration outside what this build can
+	// lower is still an entry that named something.
+	bindMatched    []bool
+	excludeMatched []bool
 	// statusMatched tracks the -status entries a binding matched.
 	statusMatched []bool
 	verified      string
@@ -351,6 +357,8 @@ func build(cfg Config) (*packageModel, error) {
 		enums:              map[string]*enumModel{},
 		instantiateMatched: make([]bool, len(cfg.Instantiate)),
 		statusMatched:      make([]bool, len(cfg.Status)),
+		bindMatched:        make([]bool, len(cfg.Bind)),
+		excludeMatched:     make([]bool, len(cfg.Exclude)),
 	}
 	if err := b.load(); err != nil {
 		return nil, err
@@ -592,12 +600,18 @@ func (b *builder) mirrorFieldType(p cxx.Param) *goType {
 }
 
 // buildBindings turns every public declaration into a binding, before
-// selection and naming.
+// selection and naming. A declaration the manifest does not select is not
+// lowered at all: -bind and -exclude narrow what is emitted, and a construct
+// outside the selection cannot fail the run for a signature nobody asked to
+// bind.
 func (b *builder) buildBindings() error {
 	symbols := append(append([]cxx.Symbol(nil), b.symbols...), b.synthMembers...)
 	for _, sym := range symbols {
 		if sym.IsTemplate {
 			// A template is the generic API's input; buildTemplates binds it.
+			continue
+		}
+		if !b.symbolSelected(sym) {
 			continue
 		}
 		owner := b.records[sym.Parent]
@@ -699,6 +713,30 @@ func (b *builder) buildBindings() error {
 		b.bindings = append(b.bindings, clone)
 	}
 	return nil
+}
+
+// symbolSelected reports whether the manifest asks for this declaration, before
+// anything is lowered. With no -bind every declaration is a root; an entry
+// selects a declaration or everything inside it, so naming a record selects its
+// members. -exclude wins, as it does in applySelection.
+func (b *builder) symbolSelected(sym cxx.Symbol) bool {
+	keep := len(b.cfg.Bind) == 0
+	for i, entry := range b.cfg.Bind {
+		if matchesName(entry, sym.QualifiedName) || (sym.Parent != "" && matchesName(entry, sym.Parent)) {
+			b.bindMatched[i] = true
+			keep = true
+		}
+	}
+	if !keep {
+		return false
+	}
+	for i, entry := range b.cfg.Exclude {
+		if matchesName(entry, sym.QualifiedName) {
+			b.excludeMatched[i] = true
+			return false
+		}
+	}
+	return true
 }
 
 // defaultConstructible reports whether the implicit default constructor can be

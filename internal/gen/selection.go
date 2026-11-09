@@ -10,8 +10,10 @@ import (
 // With no -bind every declaration is a root. A type named by a kept binding is
 // kept even when it is not a root: that is the type closure.
 func (b *builder) applySelection() error {
-	bindMatched := make([]bool, len(b.cfg.Bind))
-	excludeMatched := make([]bool, len(b.cfg.Exclude))
+	// The pre-selection already recorded the entries that named a declaration,
+	// including the declarations it did not lower.
+	bindMatched := b.bindMatched
+	excludeMatched := b.excludeMatched
 
 	for _, binding := range b.bindings {
 		keep := len(b.cfg.Bind) == 0
