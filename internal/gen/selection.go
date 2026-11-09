@@ -54,6 +54,9 @@ func (b *builder) applySelection() error {
 			needed[record] = true
 		}
 	}
+	// The enums are selected here, before the unmatched-entry check, because an
+	// entry may name an enum and nothing else.
+	b.selectEnums(bindMatched)
 	for i, entry := range b.cfg.Bind {
 		if !bindMatched[i] {
 			return fmt.Errorf("cppgo: -bind %s: it names nothing this header declares", entry)
@@ -95,7 +98,6 @@ func (b *builder) applySelection() error {
 	}
 	b.bindings = kept
 	b.reattach()
-	b.selectEnums(bindMatched)
 	return nil
 }
 
@@ -108,9 +110,14 @@ func bindingMatches(entry string, binding *binding) bool {
 	return binding.Owner != nil && matchesName(entry, binding.Owner.CxxName)
 }
 
-// matchesName reports whether qualified is entry or lives inside it.
+// matchesName reports whether qualified is entry or lives inside it. Template
+// argument lists are compared with their spaces removed, because libclang spells
+// the same instantiation with and without them depending on where it read it,
+// and a manifest entry is written the way a reader writes it.
 func matchesName(entry, qualified string) bool {
-	return qualified == entry || strings.HasPrefix(qualified, entry+"::")
+	e := strings.ReplaceAll(entry, " ", "")
+	q := strings.ReplaceAll(qualified, " ", "")
+	return q == e || strings.HasPrefix(q, e+"::")
 }
 
 // addReferenced records every record a binding's signature names.
@@ -243,14 +250,20 @@ func (b *builder) applyOverloadSuffixes() {
 		// A group made of one declaration and its default-argument prefixes
 		// keeps the bare name for the full signature: that is the declaration a
 		// reader called, and each prefix is a shorter spelling of it.
+		// A genuine zero-argument declaration keeps the bare name when there is
+		// one; otherwise, in a group that holds one declaration and its
+		// default-argument prefixes, the full signature keeps it.
 		primary := ""
 		hasPrefix := false
+		zeroArity := false
 		for _, binding := range group {
 			if binding.defaultPrefix {
 				hasPrefix = true
+			} else if len(binding.Params) == 0 {
+				zeroArity = true
 			}
 		}
-		if hasPrefix {
+		if hasPrefix && !zeroArity {
 			for _, binding := range group {
 				if binding.defaultPrefix || len(binding.Params) == 0 {
 					continue
