@@ -4,6 +4,13 @@ description: "How cppgo works: the artefacts it produces, and one call from Go t
 weight: 20
 ---
 
+**Before this page, read
+[The Go runtime and a native call]({{< ref "explanation/go-runtime.md" >}}).**
+The design below — a `NOSPLIT` trampoline, a generated C++ shim, three carriers
+— is what it is because a goroutine's stack moves, a foreign call is invisible to
+the scheduler and the collector, and a callback is the one way back into Go.
+Without that model the choices on this page read as arbitrary.
+
 This is the how-it-works page: it explains the mechanism behind the API. What
 you need in order to *use* cppgo is on the other pages — start with
 [Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}}), use the
@@ -75,7 +82,9 @@ Take `mathx::Vector::at(std::size_t) const`, generated as `At`, carrier
 **thunk** because it may throw.
 
 1. **Go calls `At(2)`.** The generated method checks the receiver, calls
-   `cppgo.ProbeStack()`, and forms a pointer to its result local.
+   `cppgo.ProbeStack()`
+   ([runtime reference]({{< ref "reference/runtime.md" >}}#stack-headroom)), and
+   forms a pointer to its result local.
 2. **The trampoline runs.** `cppgoCall_79aeb346bd10` is a NOSPLIT assembly
    function with no Go frame:
 
@@ -110,9 +119,10 @@ A **direct** binding is the same path with step 3 replaced by the C++ symbol
 itself and no status: `scale` is `noexcept`, so the call goes straight to
 `_ZN5mathx6Vector5scaleEd` and there is nothing to map.
 
-A **reentrant** binding differs at step 2: `cppgo.CallReentrant` fills an
-argument block and enters through `runtime.cgocall`, so the thread is inside a
-foreign call and a callback can re-enter Go.
+A **reentrant** binding differs at step 2: `cppgo.CallReentrant`
+([runtime reference]({{< ref "reference/runtime.md" >}}#calls-and-callbacks))
+fills an argument block and enters through `runtime.cgocall`, so the thread is
+inside a foreign call and a callback can re-enter Go.
 
 In the `mathx` example, `scale` is the one direct binding: it is `noexcept`, not
 virtual, defined out of line, and the library exports its mangled name. `x()` is
@@ -148,8 +158,9 @@ extern "C" int32_t cppgo_thunk_49993cda6560(const void * self, double * cppgo_re
 
 The mechanism in four sentences: each thunk clears a thread-local message on
 entry; a caught exception copies `what()` into it; the shim exports it through
-`cppgo_last_error`; the generated binding reads it after a non-zero status and
-returns it.
+`cppgo_last_error`
+([the function in the same shim](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/cppgo_shim/zz_cppgo_shim.cpp));
+the generated binding reads it after a non-zero status and returns it.
 
 **No exception can be supported without a C++ frame above the call.** A direct
 binding is `noexcept` by construction, and a C++ exception thrown with no C++
@@ -173,8 +184,18 @@ integer, is a generation error.
 
 A record is **mirrorable** when all its fields are public, its layout is the
 natural Go layout, and no field is a bitfield, a reference, a pointer, a union
-member or a non-mirrorable type. Its Go value *is* the C layout, and the
-generated file asserts that at compile time:
+member or a non-mirrorable type. The record in the examples is `mathx::Point`, in
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
+
+```cpp
+struct Point {
+    double x;
+    double y;
+};
+```
+
+Its Go value *is* the C layout, and the generated file asserts that at compile
+time:
 
 ```go
 // The C++ layout is proven at compile time: a wrong size, alignment or

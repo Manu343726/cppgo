@@ -9,6 +9,55 @@ The C++ side (`include/mathx/vector.hpp`, `src/vector.cpp`) knows nothing about
 by this directory's `Makefile` into `build/libmathx.so`, with its own flags and
 its own soname, and that build compiles no generated file.
 
+## The header
+
+[`include/mathx/vector.hpp`](include/mathx/vector.hpp) is the input of the whole
+example. These are the declarations `make gen` reads:
+
+```cpp
+namespace mathx {
+
+struct Point {
+    double x;
+    double y;
+};
+
+class Vector {
+public:
+    Vector(double x, double y);
+
+    Vector(const Vector &other);
+
+    ~Vector();
+
+    double x() const { return x_; }
+
+    double y() const;
+
+    double norm() const;
+
+    double dot(const double *ys, std::size_t n) const;
+
+    double at(std::size_t index) const;
+
+    void validate() const;
+
+    void scale(double k) noexcept;
+
+    static int dims();
+
+private:
+    double x_;
+    double y_;
+};
+
+Point midpoint(Point a, Point b);
+
+void saxpy(double a, const double *x, double *y, std::size_t n);
+
+} // namespace mathx
+```
+
 ## Commands
 
 ```console
@@ -51,10 +100,10 @@ declaration reads `direct`, is in
 
 ## The generated API
 
-```go
-func Open(path string) error
-var CppgoLibraryPath string
+`make gen` turned the header above into
+[`zz_cppgo.gen.go`](zz_cppgo.gen.go). Its declarations are:
 
+```go
 type Point struct {
 	X float64
 	Y float64
@@ -62,7 +111,9 @@ type Point struct {
 func NewPoint() (*Point, error)
 func (p *Point) Clone() (*Point, error)
 
-type Vector struct{ /* unexported storage owned by C++ */ }
+type Vector struct {
+	obj *cppgo.Object
+}
 func NewVector(x float64, y float64) (*Vector, error)
 func (v *Vector) Clone() (*Vector, error)
 func (v *Vector) Close() error
@@ -88,6 +139,25 @@ and the slice is borrowed for the call.
 copied into the call and the result is a new value. `Saxpy` checks before the
 call that its two slices have the same length, because the C++ side has one
 length for both.
+
+## The call
+
+A call from [`mathx_test.go`](mathx_test.go), where `scale` is the direct carrier
+and `X` reads the result back:
+
+```go
+v, err := NewVector(3, 4)
+if err != nil {
+	t.Fatalf("NewVector(3, 4): %v", err)
+}
+defer v.Close()
+
+v.Scale(2)
+
+if got, err := v.X(); err != nil || got != 6 {
+	t.Errorf("X() after Scale(2) = %v, %v, want 6, nil", got, err)
+}
+```
 
 ## Loading
 

@@ -83,7 +83,11 @@ func TestDiscoverExplicitCompileCommandsPath(t *testing.T) {
 
 	// The database is not an ancestor of the header any more: only the
 	// explicit path can find it.
-	header := filepath.Join(dir, "mathx.hpp")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "include"), 0o755))
+	header := filepath.Join(dir, "include", "mathx.hpp")
+	data, err := os.ReadFile(filepath.Join(dir, "mathx.hpp"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(header, data, 0o644))
 	flags, err := Discover(DiscoverOptions{File: header})
 	require.NoError(t, err)
 	assert.Equal(t, SourceFallback, flags.Source)
@@ -96,6 +100,16 @@ func TestDiscoverExplicitCompileCommandsPath(t *testing.T) {
 
 	// A direct path to the file works as well.
 	flags, err = Discover(DiscoverOptions{File: header, CompileCommands: filepath.Join(build, "compile_commands.json")})
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(build, "compile_commands.json"), flags.CompileDatabase)
+
+	// A relative path is the command line's own path: it resolves against the
+	// working directory, like -header, -library and -out, not against the
+	// header's directory. A project spells its database
+	// "build/compile_commands.json" from its root, whichever directory its
+	// header happens to live under.
+	t.Chdir(dir)
+	flags, err = Discover(DiscoverOptions{File: header, CompileCommands: filepath.Join("build", "compile_commands.json")})
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(build, "compile_commands.json"), flags.CompileDatabase)
 }

@@ -17,8 +17,8 @@ There are three kinds of limit, and they behave differently:
 
 | Limit | Why | What you can do |
 |---|---|---|
-| An exception with no C++ frame terminates the process | the direct path has no handler above it, and unwinding through Go frames is not supported | give the library a `noexcept` entry point that reports failure as a status |
-| A callback cannot be called from a direct binding | the runtime only accepts a callback on a thread already inside a foreign call | none: bindings that take a Go function use the callback-capable carrier automatically |
+| An exception with no C++ frame terminates the process | the [direct path]({{< ref "explanation/carriers.md" >}}#direct) has no handler above it, and unwinding through Go frames is not supported | give the library a `noexcept` entry point that reports failure as a status |
+| A callback cannot be called from a direct binding | the runtime only accepts a callback on a thread already inside a foreign call | none: bindings that take a Go function use the [reentrant carrier]({{< ref "explanation/carriers.md" >}}#reentrant) automatically |
 | A callback carries at most 6 integer and 8 floating-point arguments, and one result | the callback entry receives the register file and nothing else | take a pointer to a struct |
 | A `std::` layout appears only in C++ | constructing a `std::string` or `std::function` from a Go-side layout works only for instantiations the library happens to export | let cppgo construct it (it does, for a parameter or a result) |
 | A function-like macro that *is* the API cannot be bound | a macro's expansion is not a declaration | ask the library for a function |
