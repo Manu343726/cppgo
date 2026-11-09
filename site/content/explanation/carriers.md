@@ -35,7 +35,9 @@ hold:
 A generated `extern "C"` function that cppgo compiles into the C++ side it
 builds, and that calls the declaration as C++. Everything the direct path cannot
 express goes here: inline bodies, virtual members, `std::` types, by-value
-records, constructors and destructors, and every call that may throw.
+records, constructors and destructors, and every call that may throw. One such
+translation unit is
+[`examples/mathx/cppgo_shim/zz_cppgo_shim.cpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/cppgo_shim/zz_cppgo_shim.cpp).
 
 The thunk is where exceptions are caught: each one clears a thread-local message,
 runs the call inside `try`/`catch`, and returns a status. That is why a
@@ -50,9 +52,11 @@ way kills the process. A binding whose signature passes a Go function to C++
 therefore gets this carrier.
 
 Template calls go through this carrier as well: the generated generic code calls
-`cppgo.CallReentrant`, so a template binding costs what the reentrant carrier
-costs. That is one implementation detail the generated package exposes in its
-source, not in its API.
+`cppgo.CallReentrant`
+([runtime reference]({{< ref "reference/runtime.md" >}}#calls-and-callbacks)),
+so a template binding costs what the reentrant carrier costs. That is one
+implementation detail the generated package exposes in its source, not in its
+API.
 
 ## The report
 
@@ -61,6 +65,9 @@ mathx::Vector::scale(double) noexcept        direct _ZN5mathx6Vector5scaleEd    
 mathx::Vector::norm() const                  thunk  cppgo_thunk_49993cda6560     not noexcept: an exception would unwind into Go
 mathx::midpoint(Point, Point)                thunk  cppgo_thunk_a66614728a62     a record passed or returned by value: the thunk copies it
 ```
+
+The thunk names in that report are functions in the shim above, one per
+non-direct binding.
 
 In `examples/stats`, four `noexcept` functions take the direct carrier and
 `histogram` takes a thunk: that is the whole difference the header makes.
