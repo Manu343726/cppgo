@@ -106,13 +106,18 @@ func (m *packageModel) compileFlags(dir string) []string {
 			out = append(out, arg)
 		}
 	}
-	out = append(out, "-x", "c++", "-I", dir)
+	// The shim includes the bound headers by path, and nothing else: -iquote
+	// searches these directories for a quoted include only. -I would put them
+	// on the angle-bracket path too, where a library that ships a header named
+	// after a system one shadows it — ArrayFire's af/features.h is reached that
+	// way and breaks <bits/os_defines.h>.
+	out = append(out, "-x", "c++", "-iquote", dir)
 	if cwd, err := os.Getwd(); err == nil && cwd != "" {
-		out = append(out, "-I", cwd)
+		out = append(out, "-iquote", cwd)
 	}
 	for _, header := range m.headers {
 		if abs, err := filepath.Abs(header); err == nil {
-			out = append(out, "-I", filepath.Dir(abs))
+			out = append(out, "-iquote", filepath.Dir(abs))
 		}
 	}
 	if !hasLanguageStandard(out) {
