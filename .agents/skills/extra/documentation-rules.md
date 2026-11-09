@@ -93,3 +93,29 @@ Applying it:
   to the C++ excerpt beside it. A target library whose headers are not in the
   repository shows its real header when the slice lands; until then the page
   says the slice is designed.
+
+## Rule 4 — Show the code before talking about it
+
+Documentation does not mention a thing assuming the reader knows what it is.
+Show the code first — the C++ declaration and the Go binding/call, or the
+relevant snippet — then discuss it. A page that talks about `cppgo_direct`, a
+carrier, a helper or a function without showing or linking its definition fails
+this rule. Benchmarks are the clear case: every arm and every measured function
+shows the C++ it calls and the Go call that reaches it (and the cgo/Go
+equivalent where compared) before the table; a reader must be able to read the
+table from the code above it.
+
+Applying it:
+
+- a measured row, an arm, a carrier, a helper or a generated type is introduced
+  by its definition — the C++ declaration or the Go function, copied from the
+  tree and linked — before the text explains or measures it;
+- a benchmarks page puts the header and the call of each arm above the tables,
+  so the table is a summary of code the reader has already seen, never the first
+  appearance of a name;
+- a page whose subject is not code (a conceptual explanation, a comparison, a
+  decision record) may link the definition instead of inlining it, and such a
+  page is not reordered to satisfy this rule;
+- a name with no definition and no link — `cppgo_direct`, a `cppgo_thunk_…`
+  symbol, a helper such as `cppgo_last_error`, an arm named only in a table
+  cell — is a defect to fix, not a shorthand to allow.
