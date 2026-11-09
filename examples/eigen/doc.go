@@ -9,7 +9,11 @@
 // the shim cppgo compiles holds the bound functions itself, which makes it the
 // only object a caller loads.
 //
-// The bound declarations are Eigen's configuration enums and the functions that
-// report and set the thread count its parallel algorithms use. The matrix types
-// are not bound yet; the module's README names the declaration that stops them.
+// The bound declarations are Eigen's configuration enums, the functions that
+// report and set the thread count its parallel algorithms use, the IOFormat
+// record, and the Matrix class template as the generic two-phase API. Eigen's
+// matrix arithmetic is not bound: its members are inherited from
+// MatrixBase/DenseBase and return dependent expression types, and a
+// specialization's inherited members are not copied. The module's README names
+// each declaration and the message that stops it.
 package eigen

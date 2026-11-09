@@ -16,6 +16,95 @@ extern "C" {
  * on this thread, or an empty string when there is none. The pointer
  * stays valid until the next thunk call on the same thread. */
 const char *cppgo_last_error(void);
+/* cppgo_free releases a result copy the Go side has read. */
+void cppgo_free(void *block);
+
+/* cppgo_thunk_530141100ab2: Eigen::IOFormat::IOFormat(int) */
+int32_t cppgo_thunk_530141100ab2(void * self, int32_t _precision);
+
+/* cppgo_thunk_602badd225d4: Eigen::IOFormat::IOFormat(int, int) */
+int32_t cppgo_thunk_602badd225d4(void * self, int32_t _precision, int32_t _flags);
+
+/* cppgo_thunk_8e6caaf08772: Eigen::IOFormat::IOFormat(int, int, const std::string &) */
+int32_t cppgo_thunk_8e6caaf08772(void * self, int32_t _precision, int32_t _flags, const char * _coeffSeparator_data, size_t _coeffSeparator_size);
+
+/* cppgo_thunk_2ae6cc2b74cc: Eigen::IOFormat::IOFormat(int, int, const std::string &, const std::string &) */
+int32_t cppgo_thunk_2ae6cc2b74cc(void * cppgo_block);
+
+/* cppgo_thunk_589a97fe5e12: Eigen::IOFormat::IOFormat(int, int, const std::string &, const std::string &, const std::string &) */
+int32_t cppgo_thunk_589a97fe5e12(void * cppgo_block);
+
+/* cppgo_thunk_a26848600dbc: Eigen::IOFormat::IOFormat(int, int, const std::string &, const std::string &, const std::string &, const std::string &) */
+int32_t cppgo_thunk_a26848600dbc(void * cppgo_block);
+
+/* cppgo_thunk_135f5cd5a832: Eigen::IOFormat::IOFormat(int, int, const std::string &, const std::string &, const std::string &, const std::string &, const std::string &) */
+int32_t cppgo_thunk_135f5cd5a832(void * cppgo_block);
+
+/* cppgo_thunk_2f60234c7f24: Eigen::IOFormat::IOFormat(int, int, const std::string &, const std::string &, const std::string &, const std::string &, const std::string &, const std::string &) */
+int32_t cppgo_thunk_2f60234c7f24(void * cppgo_block);
+
+/* cppgo_thunk_1b416b025213: Eigen::IOFormat::IOFormat(int, int, const std::string &, const std::string &, const std::string &, const std::string &, const std::string &, const std::string &, const char) */
+int32_t cppgo_thunk_1b416b025213(void * cppgo_block);
+
+/* cppgo_thunk_b7d45dbd191e: Eigen::IOFormat::coeffSeparator() const noexcept */
+int32_t cppgo_thunk_b7d45dbd191e(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_f77b2ed8a1ff: Eigen::IOFormat::coeffSeparator(std::string) noexcept */
+int32_t cppgo_thunk_f77b2ed8a1ff(void * self, const char * coeffSeparator_data, size_t coeffSeparator_size);
+
+/* cppgo_thunk_6b1596e090d5: Eigen::IOFormat::fill() const noexcept */
+int8_t cppgo_thunk_6b1596e090d5(const void * self);
+
+/* cppgo_thunk_77a405b5ca18: Eigen::IOFormat::fill(char) noexcept */
+void cppgo_thunk_77a405b5ca18(void * self, int8_t fill);
+
+/* cppgo_thunk_b5115f3e5947: Eigen::IOFormat::flags() const noexcept */
+int32_t cppgo_thunk_b5115f3e5947(const void * self);
+
+/* cppgo_thunk_e773ba0a4385: Eigen::IOFormat::flags(int) noexcept */
+void cppgo_thunk_e773ba0a4385(void * self, int32_t flags);
+
+/* cppgo_thunk_f98f4a962cd8: Eigen::IOFormat::matPrefix() const noexcept */
+int32_t cppgo_thunk_f98f4a962cd8(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_c4db7d8b4ec9: Eigen::IOFormat::matPrefix(std::string) noexcept */
+int32_t cppgo_thunk_c4db7d8b4ec9(void * self, const char * matPrefix_data, size_t matPrefix_size);
+
+/* cppgo_thunk_dcae46693e63: Eigen::IOFormat::matSuffix() const noexcept */
+int32_t cppgo_thunk_dcae46693e63(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_78d28887d234: Eigen::IOFormat::matSuffix(std::string) noexcept */
+int32_t cppgo_thunk_78d28887d234(void * self, const char * matSuffix_data, size_t matSuffix_size);
+
+/* cppgo_thunk_179001d9ec8e: Eigen::IOFormat::precision() const noexcept */
+int32_t cppgo_thunk_179001d9ec8e(const void * self);
+
+/* cppgo_thunk_14fbc1cc0f06: Eigen::IOFormat::precision(int) noexcept */
+void cppgo_thunk_14fbc1cc0f06(void * self, int32_t precision);
+
+/* cppgo_thunk_0c99f8877012: Eigen::IOFormat::rowPrefix() const noexcept */
+int32_t cppgo_thunk_0c99f8877012(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_3ab36ee4297b: Eigen::IOFormat::rowPrefix(std::string) noexcept */
+int32_t cppgo_thunk_3ab36ee4297b(void * self, const char * rowPrefix_data, size_t rowPrefix_size);
+
+/* cppgo_thunk_662dc87b3037: Eigen::IOFormat::rowSeparator() const noexcept */
+int32_t cppgo_thunk_662dc87b3037(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_b3a9faafc9a0: Eigen::IOFormat::rowSeparator(std::string) noexcept */
+int32_t cppgo_thunk_b3a9faafc9a0(void * self, const char * rowSeparator_data, size_t rowSeparator_size);
+
+/* cppgo_thunk_843cd364f802: Eigen::IOFormat::rowSpacer() const noexcept */
+int32_t cppgo_thunk_843cd364f802(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_08c44ac3daeb: Eigen::IOFormat::rowSpacer(std::string) noexcept */
+int32_t cppgo_thunk_08c44ac3daeb(void * self, const char * rowSpacer_data, size_t rowSpacer_size);
+
+/* cppgo_thunk_79468e818709: Eigen::IOFormat::rowSuffix() const noexcept */
+int32_t cppgo_thunk_79468e818709(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size);
+
+/* cppgo_thunk_ed3cc149aaea: Eigen::IOFormat::rowSuffix(std::string) noexcept */
+int32_t cppgo_thunk_ed3cc149aaea(void * self, const char * rowSuffix_data, size_t rowSuffix_size);
 
 /* cppgo_thunk_54b1814a5d61: Eigen::initParallel() */
 int32_t cppgo_thunk_54b1814a5d61(void);
@@ -25,6 +114,36 @@ int32_t cppgo_thunk_a31bc433fb13(int32_t * cppgo_result);
 
 /* cppgo_thunk_fc8637e263a2: Eigen::setNbThreads(int) */
 int32_t cppgo_thunk_fc8637e263a2(int32_t v);
+
+/* cppgo_tmpl_3bcfbe3dad78: layout of Eigen::Matrix<float64,eigen.D2,eigen.D2,eigen.D1,eigen.D2,eigen.D2> */
+size_t cppgo_tmpl_3bcfbe3dad78(void);
+
+/* cppgo_tmpl_60147b380c60: layout of Eigen::Matrix<float64,eigen.D2,eigen.D2,eigen.D1,eigen.D2,eigen.D2> */
+size_t cppgo_tmpl_60147b380c60(void);
+
+/* cppgo_tmpl_ab61e90c8515: Eigen::Matrix::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>() */
+int32_t cppgo_tmpl_ab61e90c8515(void *self);
+
+/* cppgo_tmpl_9f47185e2552: Eigen::Matrix::innerStride() const noexcept */
+int32_t cppgo_tmpl_9f47185e2552(void *self, void *cppgo_result);
+
+/* cppgo_tmpl_4432d8737012: Eigen::Matrix::outerStride() const noexcept */
+int32_t cppgo_tmpl_4432d8737012(void *self, void *cppgo_result);
+
+/* cppgo_tmpl_b30b0e2b0d20: layout of Eigen::Matrix<float64,eigen.Dynamic,eigen.Dynamic,eigen.D1,eigen.Dynamic,eigen.Dynamic> */
+size_t cppgo_tmpl_b30b0e2b0d20(void);
+
+/* cppgo_tmpl_0ff8452be9a8: layout of Eigen::Matrix<float64,eigen.Dynamic,eigen.Dynamic,eigen.D1,eigen.Dynamic,eigen.Dynamic> */
+size_t cppgo_tmpl_0ff8452be9a8(void);
+
+/* cppgo_tmpl_8c729860743d: Eigen::Matrix::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>() */
+int32_t cppgo_tmpl_8c729860743d(void *self);
+
+/* cppgo_tmpl_29e138c50e02: Eigen::Matrix::innerStride() const noexcept */
+int32_t cppgo_tmpl_29e138c50e02(void *self, void *cppgo_result);
+
+/* cppgo_tmpl_5594f08d3bc2: Eigen::Matrix::outerStride() const noexcept */
+int32_t cppgo_tmpl_5594f08d3bc2(void *self, void *cppgo_result);
 
 #ifdef __cplusplus
 }
