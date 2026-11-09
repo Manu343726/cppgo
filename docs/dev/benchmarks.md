@@ -1,13 +1,66 @@
 # Benchmarks
 
-The manual has a [Performance page](../../site/content/explanation/benchmarks.md)
-that publishes the measured comparison. The suite itself lives in
-[`benchmarks/`](../../benchmarks/README.md): its README documents every arm and
-carries the generated tables, and [`results/`](../../benchmarks/results/) is the
-committed `go test` output they are built from.
+How the performance figures the manual (the user documentation under
+[`site/`](../../site)) publishes were measured, so a later contributor can re-run
+them, judge whether a change moved one, or argue with a number from the command
+and the machine rather than from memory. The subject is cppgo: a generator that
+writes a Go package from a C++ header, and the runtime that package calls. Read this if you
+are changing the generator or the runtime and need to know whether you made a
+call faster or slower, or if you are writing the manual's
+[Performance](../../site/content/explanation/benchmarks.md) page and need to know
+where a figure comes from.
 
-This page is the methodology behind the manual page, plus the state of the work:
-what the numbers mean for the code, and what is known to be wrong with it.
+The suite itself lives in [`benchmarks/`](../../benchmarks/README.md): its README
+documents every arm, carries the generated tables and links the code of each
+scenario. [`results/`](../../benchmarks/results) is the committed `go test`
+output those tables are built from. This page is the method behind both, the
+state of the work, and the defects the numbers exposed.
+
+## The words this page uses
+
+| Term | What it means here |
+|---|---|
+| **FFI** | foreign function interface: Go calling code that was not compiled as Go, through the platform's C calling convention |
+| **arm** | one implementation the same C++ work is reached through: plain Go, cgo, or a cppgo carrier. An arm is a Go package, linked into its own benchmark binary |
+| **carrier** | the route the generator chose for one declaration: a direct trampoline, a thunk in the shim, or the reentrant call. The arms named `cppgo_direct` and `cppgo_thunk` are two carriers of the same C++ arithmetic |
+| **trampoline** | a few instructions of Go assembly that put the arguments in the C argument registers and call the C++ symbol directly |
+| **thunk** | a generated C++ function that calls a declaration the trampoline cannot carry and returns a status instead |
+| **shim** | the C++ library cppgo generates from the thunks and compiles itself: `libcppgo_<package>.so` |
+| **cgo** | Go's built-in way to call C; it needs `CGO_ENABLED=1` and a C compiler at build time |
+| **shared object, `soname`** | a compiled library file (`.so` on Linux) that the loader opens at run time, and the name recorded inside it that the loader resolves for the objects that depend on it |
+| **`b.N`** | the iteration count the benchmark framework chose for one run: how many times the benchmarked operation ran in that measurement. It is printed in the first column of the raw output |
+| **ns/op** | nanoseconds per operation — wall time divided by `b.N` |
+| **B/op** | bytes allocated on the Go heap per operation |
+| **allocs/op** | allocations on the Go heap per operation |
+| **median** | the middle value of the runs, after sorting; used instead of the mean so one noisy run cannot move the figure |
+| **min–max** | the smallest and largest value the runs produced, printed beside the median |
+| **`GOMAXPROCS`** | the maximum number of Go threads that execute Go code at the same time. The suite leaves it at the runtime's default |
+| **governor** | the kernel's CPU frequency policy; `performance` means the CPU is allowed to stay at the top of its range. **Boost** is the CPU's turbo mode, which runs above the nominal frequency when power and temperature allow |
+| **kHz** | kilohertz, the unit `/sys` reports a CPU frequency in: 3 602 458 kHz is 3.6 GHz |
+
+## The harness flags
+
+Every figure below comes from `go test`'s benchmark mode, and each flag changes
+what the run measures:
+
+| Flag | What it does |
+|---|---|
+| `-run '^$'` | runs no tests. The argument is a regular expression, and `^$` matches only the empty name, which no test has; without it the package's tests run first |
+| `-bench .` | runs every benchmark in the package. The `.` is again a regular expression, matching every name |
+| `-benchmem` | adds the `B/op` and `allocs/op` columns to the output. Without it, only `ns/op` and the iteration count are measured |
+| `-count=6` | runs each benchmark six times and prints six lines. The table's median and min–max are computed from those six |
+| `-timeout=30m` | the longest the whole test binary may run before it is killed. A benchmark can take minutes; the default ten minutes is too short for the whole matrix |
+
+`go test -bench` prints one line per run:
+
+```
+BenchmarkCall/cppgo_direct-16 	100000000	        10.65 ns/op	       0 B/op	       0 allocs/op
+```
+
+`BenchmarkCall` is the benchmark function, `cppgo_direct` the sub-benchmark (the
+arm), and `-16` the value of `GOMAXPROCS` the run used. `100000000` is `b.N`:
+the benchmark ran the call a hundred million times. The remaining three fields
+are the per-operation figures above.
 
 ## Method
 
@@ -18,6 +71,7 @@ what the numbers mean for the code, and what is known to be wrong with it.
 2. **Every arm computes the same values.**
    [`internal/benchdata`](../../benchmarks/internal/benchdata/benchdata.go) is the
    plain-Go reference, and each FFI arm's tests compare its answers against it.
+   A benchmark cannot price a call that returns garbage.
 3. **Each arm is its own process**, with the cgo mode it needs, so the cgo
    runtime cannot inflate a measurement that does not use it.
 4. **`-benchmem` and `-count=6` on every arm.** The table shows the median ns/op,
@@ -31,6 +85,11 @@ what the numbers mean for the code, and what is known to be wrong with it.
    rewrites the generated block in
    [`benchmarks/README.md`](../../benchmarks/README.md). No number in that file
    is typed by hand.
+
+The arms themselves — what each package is, which function it calls and what it
+pays for — are defined once, with their code, in
+[Performance § The arms](../../site/content/explanation/benchmarks.md). The suite's
+own README carries the same definition for someone who will not read the manual.
 
 ## Environment of the published run
 
@@ -69,9 +128,10 @@ $ make -C benchmarks bench         # the same, from the suite's directory
 $ make -C benchmarks table         # re-render benchmarks/README.md from results/
 ```
 
-`make -C benchmarks table` does not run anything: it re-renders the generated
-block from the committed `results/*.txt`. Use it after reviewing a results
-change, and use the full run after a change that could move a number.
+`make -C benchmarks table` does not run anything: `-C` runs `make` in that
+directory, and the target re-renders the generated block from the committed
+`results/*.txt`. Use it after reviewing a results change, and use the full run
+after a change that could move a number.
 
 A single arm by hand:
 
@@ -82,6 +142,10 @@ $ CGO_ENABLED=0 go test -run '^$' -bench . -benchmem -count=6 ./gobase ./cppgo
 # the cgo arm: needs cgo, and the library built first
 $ CGO_ENABLED=1 go test -run '^$' -bench . -benchmem -count=6 ./cgo
 ```
+
+The two commands run from [`benchmarks/`](../../benchmarks), where the module and
+the arm packages live; `make -C benchmarks gen` builds `build/libbench.so` and
+the generated package first.
 
 The full run wants an idle machine. The suite is not part of the CI gate
 (`make benchmarks` is explicit about that): a shared runner cannot produce a
@@ -114,7 +178,8 @@ number worth publishing.
   on the run at 964830 kHz that preceded it. Compare ratios, or re-run.
 - The cgo arm is the fastest correct wrapper for this work — borrowed Go memory
   as `(pointer, length)`, results copied out once. It is not a `CString`-based
-  wrapper, which would pay an allocation and a copy per string.
+  wrapper (`CString` is cgo's helper that copies a Go string into memory C
+  allocated), which would pay an allocation and a copy per string.
 - The cppgo numbers are the generated API as shipped, entry point included, not
   the bare trampoline. [`DESIGN.md`](../../DESIGN.md) prices the trampoline alone
   at 15.9 ns, measured at 964 MHz: that figure and this run's 10.5 ns are not
@@ -131,9 +196,9 @@ The suite is the oracle for the performance work. Each item below is visible in
 the table and is a code defect, not a measurement artefact:
 
 1. **A symbol lookup per failure, and per `Close` — fixed.** `LastError` called
-   `Library.Symbol`, which called `dlsym` uncached. `BenchmarkStatusFailure` was
-   tens of times `BenchmarkStatusOK` with only the status changed, and the
-   generated `Close` always called `cppgoCloseError`, so
+   `Library.Symbol`, which called `dlsym` — the loader's symbol lookup — uncached.
+   `BenchmarkStatusFailure` was tens of times `BenchmarkStatusOK` with only the
+   status changed, and the generated `Close` always called `cppgoCloseError`, so
    `BenchmarkObjectNewClose` was far slower than the cgo arm (2974 ns against
    467 ns, 12 allocations against 1). The fix is a per-`Library` symbol cache
    holding the address or the loader's error for every name asked for
@@ -142,21 +207,24 @@ the table and is a code defect, not a measurement artefact:
    cgo's 119.8 ns: the failure path is now 5.3 times its own success row instead
    of 35, and the lifecycle is 1.7 times cgo instead of 6.4. What remains on the
    lifecycle row is the handle's six allocations, not a lookup.
-2. **Generated entry-point overhead.** Every call runs `cppgoOpen` and
-   `ProbeStack` before the trampoline; measured separately at 964 MHz, the lock
-   and the probe cost about as much as the `asm.Call` they guard. That
+2. **Generated entry-point overhead.** Every call runs `cppgoOpen` (the
+   generated load check) and `ProbeStack` (the stack probe) before the
+   trampoline; measured separately at 964 MHz, the lock and the probe cost about
+   as much as the `asm.Call` (the runtime's trampoline entry) they guard. That
    decomposition has not been repeated at the performance clock, so the 15.9 ns
    trampoline figure cannot be subtracted from this run's 10.5 ns; what the row
    does say is that `cppgo_direct` is seven times a Go call, and the boundary
    around the call is about 9 ns. Emitter work.
 3. **By-value POD arguments escape.** The generated code takes the address of
-   every by-value parameter and also passes it to `KeepAlive`; `go build
-   -gcflags=-m` reports `moved to heap: a`, `moved to heap: b` and `moved to
-   heap: cppgoResult` for `Midpoint`. Three allocations per call against cgo's
-   one, on both the 16- and the 24-byte row. Emitter work.
+   every by-value parameter and also passes it to `KeepAlive` (the runtime's
+   helper that tells the collector the argument is still in use); `go build
+   -gcflags=-m` reports `moved to heap: a`, `moved to heap: b` and
+   `moved to heap: cppgoResult` for `Midpoint`. Three allocations per call
+   against cgo's one, on both the 16- and the 24-byte row. Emitter work.
 4. **The reentrant binding registers per call.** `RegisterCallback` copies the
-   64-slot table under its lock before every call, and `ReleaseCallback` after
-   it: 1200 B and 6 allocations per call, 499.2 ns against cgo's 90.4 ns — 5.5
+   callback table's 64 slots under its lock before every call, and
+   `ReleaseCallback` after it: 1200 B and 6 allocations per call, 499.2 ns
+   against cgo's 90.4 ns — 5.5
    times cgo's callback. A registration at binding time is what the row asks
    for. Emitter work.
 
