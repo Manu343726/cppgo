@@ -509,7 +509,7 @@ func (b *BoxIntSlot) Clone() (*BoxIntSlot, error) {
 	return &clone, nil
 }
 
-// Outer is nested::Outer (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// Outer is nested::Outer (sizeof 4). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 //
 // The outer type.
 type Outer struct {
@@ -650,7 +650,7 @@ func (o *Outer) SetValue(value int32) {
 	cppgo.KeepAlive(o)
 }
 
-// OuterHolder is nested::Outer::Holder (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// OuterHolder is nested::Outer::Holder (sizeof 4). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 //
 // A nested opaque type.
 type OuterHolder struct {

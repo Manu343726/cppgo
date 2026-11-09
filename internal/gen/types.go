@@ -643,7 +643,8 @@ func isCString(p cxx.Param) bool {
 // the opaque Go value that owns storage aligned for the C++ type. The shim
 // copies it into the call, or constructs the result into Go's storage, which is
 // why such a binding is always shim-carried. The Go side owns both directions:
-// Close destroys the object.
+// Close destroys the object when the record declares a destructor, and releases
+// its storage alone when it declares none.
 func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
 	record, ok := m.recordFor(p.RecordName)
 	if !ok {

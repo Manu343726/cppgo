@@ -164,7 +164,7 @@ func cppgoCloseError(symbol string) error {
 	return nil
 }
 
-// Counter is statics::Counter (sizeof 1). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// Counter is statics::Counter (sizeof 1). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 //
 // A counter shared by every instance.
 type Counter struct {
