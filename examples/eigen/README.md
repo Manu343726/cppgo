@@ -19,9 +19,9 @@ Three enums from
 ```cpp
 enum StorageOptions {
   ColMajor = 0,
-  RowMajor = 1,
+  RowMajor = 0x1,
   AutoAlign = 0,
-  DontAlign = 2
+  DontAlign = 0x2
 };
 
 enum ComputationInfo {
@@ -32,16 +32,16 @@ enum ComputationInfo {
 };
 
 enum UpLoType {
-  Lower           = 0x1,
-  Upper           = 0x2,
-  UnitDiag        = 0x4,
-  ZeroDiag        = 0x8,
-  UnitLower       = 0x5,
-  UnitUpper       = 0x6,
-  StrictlyLower   = 0x9,
-  StrictlyUpper   = 0xa,
-  SelfAdjoint     = 0x10,
-  Symmetric       = 0x20
+  Lower=0x1,
+  Upper=0x2,
+  UnitDiag=0x4,
+  ZeroDiag=0x8,
+  UnitLower=UnitDiag|Lower,
+  UnitUpper=UnitDiag|Upper,
+  StrictlyLower=ZeroDiag|Lower,
+  StrictlyUpper=ZeroDiag|Upper,
+  SelfAdjoint=0x10,
+  Symmetric=0x20
 };
 ```
 
