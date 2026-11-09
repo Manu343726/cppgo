@@ -167,6 +167,8 @@ func cppgoCloseError(symbol string) error {
 // Thing is over::Thing. The object belongs to C++; obj is where it lives.
 type Thing struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -174,6 +176,9 @@ type Thing struct {
 func (t *Thing) cppgoAddr() uintptr {
 	if t == nil || t.obj == nil {
 		return 0
+	}
+	if t.addr != 0 {
+		return t.addr
 	}
 	return t.obj.Addr()
 }

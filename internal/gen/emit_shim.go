@@ -160,7 +160,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		if binding.Result.Kind == goRecord {
 			return fmt.Sprintf("*static_cast<%s *>(cppgo_result) = %s;", binding.Result.Cxx, call)
 		}
-		return fmt.Sprintf("*cppgo_result = %s;", m.shimResultExpr(binding.Result, call))
+		return fmt.Sprintf("*cppgo_result = %s;", m.shimValue(binding, call))
 	}
 	var b strings.Builder
 	if !binding.Status {
@@ -171,7 +171,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		case binding.Out != nil:
 			fmt.Fprintf(&b, "\t%s\n", store())
 		case binding.Result != nil:
-			fmt.Fprintf(&b, "\treturn %s;\n", m.shimResultExpr(binding.Result, call))
+			fmt.Fprintf(&b, "\treturn %s;\n", m.shimValue(binding, call))
 		default:
 			fmt.Fprintf(&b, "\t%s;\n", call)
 		}
@@ -247,6 +247,12 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 		if binding.sym.IsConst {
 			cast = "static_cast<const ::" + owner + " *>(self)"
 		}
+		if binding.sym.IsConversion {
+			// A conversion operator is called by casting the object to its
+			// target type: libclang's spelling of the member name is not
+			// something a call site can write.
+			return "static_cast<" + conversionTarget(binding) + ">(*(" + cast + "))", nil
+		}
 		return cast + "->" + simpleName(binding.sym.QualifiedName) + "(" + list + ")", nil
 	default:
 		return "::" + binding.sym.QualifiedName + "(" + list + ")", nil
@@ -294,6 +300,29 @@ func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
 		return "*" + name, nil
 	}
 	return name, nil
+}
+
+// conversionTarget is the C++ type a conversion operator converts to, spelled
+// so the shim can name it: the mapped type's qualified name when it has one, and
+// the declaration's own spelling otherwise (std::string, double).
+func conversionTarget(binding *binding) string {
+	if binding.Result != nil && binding.Result.Cxx != "" {
+		return binding.Result.Cxx
+	}
+	return binding.sym.Result.Spelling
+}
+
+// shimValue renders a call's value as the thunk's C result type.
+func (m *packageModel) shimValue(binding *binding, call string) string {
+	if binding.ViewResult {
+		// A borrowed record is a reference or a pointer, and the thunk hands
+		// out its address: a reference has no pointer conversion of its own.
+		if strings.HasSuffix(strings.TrimSpace(binding.sym.Result.Spelling), "&") {
+			return "static_cast<void *>(&(" + call + "))"
+		}
+		return "static_cast<void *>(" + call + ")"
+	}
+	return m.shimResultExpr(binding.Result, call)
 }
 
 // shimResultExpr renders a call's value as the thunk's C result type. An enum

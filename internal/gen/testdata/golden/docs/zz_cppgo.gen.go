@@ -165,6 +165,8 @@ func cppgoCloseError(symbol string) error {
 // It has a centre and a radius.
 type Circle struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -172,6 +174,9 @@ type Circle struct {
 func (c *Circle) cppgoAddr() uintptr {
 	if c == nil || c.obj == nil {
 		return 0
+	}
+	if c.addr != 0 {
+		return c.addr
 	}
 	return c.obj.Addr()
 }

@@ -166,7 +166,11 @@ func (b *builder) reattach() {
 // -rename, then the collision check.
 func (b *builder) assignNames() error {
 	for _, binding := range b.bindings {
-		binding.GoName = b.baseName(binding)
+		name, err := b.baseName(binding)
+		if err != nil {
+			return symbolError(binding.sym, err)
+		}
+		binding.GoName = name
 	}
 	b.applyOverloadSuffixes()
 	if err := b.applyRenames(); err != nil {
@@ -176,21 +180,21 @@ func (b *builder) assignNames() error {
 }
 
 // baseName is the name a binding gets before overloads are told apart.
-func (b *builder) baseName(binding *binding) string {
+func (b *builder) baseName(binding *binding) (string, error) {
 	if binding.IsDestructor {
-		return "Close"
+		return "Close", nil
 	}
 	if binding.IsClone {
-		return "Clone"
+		return "Clone", nil
 	}
 	if binding.IsConstructor {
-		return "New" + binding.Owner.GoName
+		return "New" + binding.Owner.GoName, nil
 	}
 	name := exportName(simpleName(binding.sym.QualifiedName))
 	if binding.IsStatic {
-		return binding.Owner.GoName + name
+		return binding.Owner.GoName + name, nil
 	}
-	return name
+	return name, nil
 }
 
 // nameScope is where a Go name lives: package level for functions,
@@ -249,8 +253,14 @@ func paramSuffix(params []*goParam) string {
 // nothing, or matches several declarations by qualified name, is an error.
 func (b *builder) applyRenames() error {
 	for _, entry := range b.cfg.Rename {
-		name, goName, ok := strings.Cut(entry, "=")
-		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(goName) == "" {
+		// The separator is the last "=", because a signature can contain one:
+		// operator=, operator== and operator<=> all do.
+		cut := strings.LastIndex(entry, "=")
+		name, goName := "", ""
+		if cut >= 0 {
+			name, goName = entry[:cut], entry[cut+1:]
+		}
+		if cut < 0 || strings.TrimSpace(name) == "" || strings.TrimSpace(goName) == "" {
 			return fmt.Errorf("cppgo: -rename %q: it must be <qualified signature>=<GoName>", entry)
 		}
 		name = strings.TrimSpace(name)

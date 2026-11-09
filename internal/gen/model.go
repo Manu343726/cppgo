@@ -236,6 +236,11 @@ type binding struct {
 	// StdResult is true when the result is a standard-library value, which the
 	// thunk copies out through out-parameters.
 	StdResult bool
+	// ViewResult is true when the result is a borrowed pointer to a record:
+	// the Go value is a view of the receiver's object, one reference more, at
+	// the address C++ returned. It is how a method that returns `T&` (`T *`)
+	// is exposed without handing Go an address nobody owns.
+	ViewResult bool
 	// stdDecls are the Go locals the out-parameters point at.
 	stdDecls []string
 	// usesFree is true when the binding's result is a heap copy that the Go
@@ -845,7 +850,13 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				binding.hasByValue = true
 			}
 			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored {
-				return nil, pending(fmt.Sprintf("%q is a pointer to an opaque record", sym.Result.Spelling), "return it through a reference at the C++ boundary")
+				// A method's borrowed pointer is a view of the receiver: the
+				// object is Go's, and the returned address is inside it. A free
+				// function's is an address nobody owns, which Go cannot hold.
+				if owner == nil || owner.Mirrored {
+					return nil, pending(fmt.Sprintf("%q is a pointer to an opaque record", sym.Result.Spelling), "return it through a reference at the C++ boundary")
+				}
+				binding.ViewResult = true
 			}
 			binding.Result = result
 			if result.Std != stdNone {
@@ -873,7 +884,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		switch {
 		case binding.StdResult:
 			b.addStdResult(binding)
-		case binding.Status || binding.Result.Kind == goRecord:
+		case binding.Status || binding.Result.Kind == goRecord || binding.ViewResult:
 			binding.Out = binding.Result
 			binding.OutLocal = outLocalType(binding.Result)
 			out := &wireArg{
@@ -1430,6 +1441,15 @@ func displaySignature(sym cxx.Symbol) string {
 		params[i] = p.Spelling
 	}
 	list := "(" + strings.Join(params, ", ") + ")"
+	if sym.IsConversion {
+		// libclang spells the conversion's name as "operator basic_string";
+		// the declaration a reader wrote is "operator std::string".
+		parent := sym.QualifiedName
+		if i := strings.LastIndex(parent, "::"); i >= 0 {
+			parent = parent[:i]
+		}
+		return parent + "::operator " + sym.Result.Spelling + "()" + constSuffix(sym)
+	}
 	switch sym.Kind {
 	case cxx.Constructor:
 		return sym.QualifiedName + list
@@ -1437,6 +1457,18 @@ func displaySignature(sym cxx.Symbol) string {
 		return sym.QualifiedName + "()"
 	}
 	out := sym.QualifiedName + list
+	if sym.IsConst {
+		out += " const"
+	}
+	if sym.IsNoExcept {
+		out += " noexcept"
+	}
+	return out
+}
+
+// constSuffix renders the qualifiers displaySignature appends.
+func constSuffix(sym cxx.Symbol) string {
+	out := ""
 	if sym.IsConst {
 		out += " const"
 	}
