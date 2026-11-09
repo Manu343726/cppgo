@@ -397,13 +397,23 @@ func runTargetSmoke(t *testing.T, root string, smoke smokeHeader, realHeader str
 	// The wrapper's own directory is where the quoted include it writes is
 	// found; the library's headers stay reachable through the root's -I.
 	args = append(args, "-I"+filepath.Dir(header))
+	// Exactly one `parsed <library>:` line per library is the report CI counts,
+	// so the real header is the one that carries it. The wrapper's own parse is
+	// logged separately: a library whose headers live under a compiler's system
+	// prefix is only part of the API through the real header's parse, and the
+	// wrapper is read for the functions it declares.
 	for _, each := range smokeHeaders(header, realHeader) {
 		project, err := cxx.Open(cxx.Options{Header: each, Args: args})
 		if err != nil {
 			t.Fatalf("%s: parse %s: %v", smoke.name, each, err)
 		}
-		t.Logf("%s: parsed %s: %d symbols, %d records, %d enums", smoke.name, filepath.Base(each),
-			len(project.Symbols()), len(project.Records()), len(project.Enums()))
+		if each == realHeader {
+			t.Logf("%s: parsed %s: %d symbols, %d records, %d enums", smoke.name, smoke.header,
+				len(project.Symbols()), len(project.Records()), len(project.Enums()))
+		} else {
+			t.Logf("%s: the smoke's wrapper %s parsed %d symbols, %d records, %d enums: what the library's own header cannot say",
+				smoke.name, filepath.Base(each), len(project.Symbols()), len(project.Records()), len(project.Enums()))
+		}
 		_ = project.Close()
 	}
 
