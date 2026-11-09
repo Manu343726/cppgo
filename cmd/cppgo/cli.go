@@ -314,15 +314,20 @@ func flagDocs(m mode) map[string]flagDoc {
 			meta: "qualified",
 			lines: []string{
 				"add a root: the namespace, class, member or function to start",
-				"selecting from; repeatable. A root is one declaration and",
-				"everything below it",
+				"selecting from, or one overload by its full signature,",
+				"e.g. 'cv::Mat::Mat(int, int, int)'; repeatable. A root is one",
+				"declaration and everything below it",
 			},
 			def: "everything in the header",
 		},
 		"exclude": {
-			meta:  "qualified",
-			lines: []string{"remove a root; repeatable. An entry that matches nothing is an error"},
-			def:   "none",
+			meta: "qualified",
+			lines: []string{
+				"remove a root: a qualified name, or one overload by its full",
+				"signature, e.g. 'cv::Mat::Mat(int, int, int, void *)'; repeatable.",
+				"An entry that matches nothing is an error",
+			},
+			def: "none",
 		},
 		"instantiate": {
 			meta: "specialization",

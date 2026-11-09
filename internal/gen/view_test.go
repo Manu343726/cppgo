@@ -48,9 +48,10 @@ private:
 	assert.Contains(t, source, "return &Chain{obj: c.obj, addr: uintptr(cppgoResult)}")
 }
 
-// TestAFreeFunctionBorrowingARecordIsRefused is the other half: a raw pointer
-// out of a free function is an address nobody owns, and Go cannot hold it.
-func TestAFreeFunctionBorrowingARecordIsRefused(t *testing.T) {
+// TestAFreeFunctionBorrowingARecordIsDropped is the other half: a raw pointer
+// out of a free function is an address nobody owns, and Go cannot hold it. The
+// declaration is named and omitted; the class it returned is not refused.
+func TestAFreeFunctionBorrowingARecordIsDropped(t *testing.T) {
 	header := writeHeader(t, "borrow.hpp", `
 namespace borrow {
 class Node {
@@ -64,7 +65,15 @@ private:
 Node *global_node();
 } // namespace borrow
 `)
-	_, err := Render(Config{Headers: []string{header}, Package: "borrow", Library: "libborrow", Out: "."})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pointer to an opaque record")
+	rendered, err := RenderResult(Config{Headers: []string{header}, Package: "borrow", Library: "libborrow", Out: "."})
+	require.NoError(t, err)
+	assert.Contains(t, joinWarnings(rendered.Warnings), "pointer to an opaque record")
+	generated := ""
+	for _, output := range rendered.Outputs {
+		if output.Name == GenFileName {
+			generated = string(output.Data)
+		}
+	}
+	assert.NotContains(t, generated, "func GlobalNode", "a pointer nobody owns is never handed to Go")
+	assert.Contains(t, generated, "type Node struct {", "the record itself still binds")
 }

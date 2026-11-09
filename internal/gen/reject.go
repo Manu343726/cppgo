@@ -39,38 +39,32 @@ func symbolError(sym cxx.Symbol, err error) error {
 	return declError(sym.DeclFile, sym.DeclLine, displaySignature(sym), err)
 }
 
-// rejectUnimplemented is the single list of constructs this build does not
-// emit yet. It runs before anything is classified, so a construct that would
-// otherwise be omitted silently, or emitted as the wrong type because
-// libclang's canonical form of it is wrong, is a generation error naming the
-// declaration and the fix.
-//
-// Adding a construct means implementing it and removing its entry here; a
-// construct must never fall through to a guess.
-func (b *builder) rejectUnimplemented() error {
-	for _, rec := range b.rawRecords {
-		switch {
-		case rec.IsTemplate:
-			// A class template is the generic API's input, not a record: the
-			// two-phase model in template.go decides what it can emit, and it
-			// names the construct it cannot.
-		}
-	}
+// manifestError is the invocation's mistake rather than a construct the build
+// cannot carry: a -status entry naming a declaration whose return is not a
+// status. A declaration the build cannot carry is a warning; a flag that asks
+// for something the declaration cannot express is the user's to fix, so it
+// stays fatal.
+type manifestError struct{ err error }
 
-	for _, sym := range b.symbols {
-		switch {
-		case sym.IsTemplate:
-			// A template is the generic API's input. A member of a class
-			// template pattern is read from the pattern's own symbols, and a
-			// member function template of a concrete record is named by
-			// Record.MemberTemplates above.
-			continue
-		case sym.IsVariadic && b.symbolSelected(sym):
-			return symbolError(sym, pending(
-				"a variadic function has no fixed argument list to lay out",
-				"replace the ellipsis with a fixed parameter list or a span"))
-		}
+// Error implements error.
+func (e manifestError) Error() string { return e.err.Error() }
+
+// Unwrap exposes the underlying error.
+func (e manifestError) Unwrap() error { return e.err }
+
+// unbound records a declaration the model cannot carry. The record or the
+// overload set keeps every declaration it can, and the one it cannot is a
+// warning naming the declaration and the reason — never a refusal of the
+// declaration's owner. That is the difference between one uncarryable
+// constructor and an unbindable class.
+//
+// A manifestError propagates instead, because it is the invocation that is
+// wrong: the caller formats it against the declaration and stops.
+func (b *builder) unbound(sym cxx.Symbol, err error) error {
+	if _, ok := err.(manifestError); ok {
+		return symbolError(sym, err)
 	}
+	b.warnings = append(b.warnings, fmt.Sprintf("%s is not bound: %v", displaySignature(sym), err))
 	return nil
 }
 

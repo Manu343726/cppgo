@@ -424,9 +424,6 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.loadExporteds(); err != nil {
 		return nil, err
 	}
-	if err := b.rejectUnimplemented(); err != nil {
-		return nil, err
-	}
 	// Type names come first: an enum nested in a record is named after it, and
 	// a field's Go type needs the enum model the name produces.
 	b.assignTypeNames()
@@ -725,6 +722,16 @@ func (b *builder) buildBindings() error {
 		if !b.symbolSelected(sym) {
 			continue
 		}
+		if sym.IsVariadic {
+			// The ellipsis has no fixed argument list to lay out, so there is
+			// no thunk to write. The overloads beside it still bind.
+			if fatal := b.unbound(sym, pending(
+				"a variadic function has no fixed argument list to lay out",
+				"replace the ellipsis with a fixed parameter list or a span")); fatal != nil {
+				return fatal
+			}
+			continue
+		}
 		owner := b.records[sym.Parent]
 		if owner == nil {
 			if sym.Kind != cxx.FreeFunc {
@@ -734,7 +741,10 @@ func (b *builder) buildBindings() error {
 			}
 			binding, err := b.newBinding(sym, nil)
 			if err != nil {
-				return symbolError(sym, err)
+				if fatal := b.unbound(sym, err); fatal != nil {
+					return fatal
+				}
+				continue
 			}
 			b.bindings = append(b.bindings, binding)
 			continue
@@ -754,7 +764,10 @@ func (b *builder) buildBindings() error {
 			case sym.IsCopyConstructor:
 				clone, err := b.newBinding(sym, owner)
 				if err != nil {
-					return symbolError(sym, err)
+					if fatal := b.unbound(sym, err); fatal != nil {
+						return fatal
+					}
+					continue
 				}
 				clone.IsConstructor = false
 				clone.IsClone = true
@@ -767,7 +780,10 @@ func (b *builder) buildBindings() error {
 			default:
 				ctor, err := b.newBinding(sym, owner)
 				if err != nil {
-					return symbolError(sym, err)
+					if fatal := b.unbound(sym, err); fatal != nil {
+						return fatal
+					}
+					continue
 				}
 				owner.Ctors = append(owner.Ctors, ctor)
 				b.bindings = append(b.bindings, ctor)
@@ -787,7 +803,10 @@ func (b *builder) buildBindings() error {
 			}
 			method, err := b.newBinding(sym, owner)
 			if err != nil {
-				return symbolError(sym, err)
+				if fatal := b.unbound(sym, err); fatal != nil {
+					return fatal
+				}
+				continue
 			}
 			if sym.Kind == cxx.StaticMethod {
 				owner.Statics = append(owner.Statics, method)
@@ -832,11 +851,12 @@ func (b *builder) buildBindings() error {
 // symbolSelected reports whether the manifest asks for this declaration, before
 // anything is lowered. With no -bind every declaration is a root; an entry
 // selects a declaration or everything inside it, so naming a record selects its
-// members. -exclude wins, as it does in applySelection.
+// members, and a full signature selects one overload of a set. -exclude wins, as
+// it does in applySelection.
 func (b *builder) symbolSelected(sym cxx.Symbol) bool {
 	keep := len(b.cfg.Bind) == 0
 	for i, entry := range b.cfg.Bind {
-		if matchesName(entry, sym.QualifiedName) || (sym.Parent != "" && matchesName(entry, sym.Parent)) {
+		if matchesSignature(entry, sym) || matchesName(entry, sym.QualifiedName) || (sym.Parent != "" && matchesName(entry, sym.Parent)) {
 			b.bindMatched[i] = true
 			keep = true
 		}
@@ -845,7 +865,7 @@ func (b *builder) symbolSelected(sym cxx.Symbol) bool {
 		return false
 	}
 	for i, entry := range b.cfg.Exclude {
-		if matchesName(entry, sym.QualifiedName) {
+		if matchesSignature(entry, sym) || matchesName(entry, sym.QualifiedName) {
 			b.excludeMatched[i] = true
 			return false
 		}
@@ -1061,7 +1081,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		// the error and loses the integer, and the thunk returns the callee's
 		// own code so a non-zero one is the failure.
 		if err := b.applyStatus(binding); err != nil {
-			return nil, err
+			return nil, manifestError{err}
 		}
 	}
 	if err := b.checkReentrant(binding); err != nil {

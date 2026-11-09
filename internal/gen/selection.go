@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
 // applySelection filters the bindings and records named by -bind and -exclude.
@@ -102,12 +104,52 @@ func (b *builder) applySelection() error {
 }
 
 // bindingMatches reports whether a manifest entry names the binding: the
-// declaration itself, or the record it is a member of.
+// declaration itself — by qualified name or by full signature — or the record
+// it is a member of.
 func bindingMatches(entry string, binding *binding) bool {
+	if matchesSignature(entry, binding.sym) {
+		return true
+	}
 	if matchesName(entry, binding.sym.QualifiedName) {
 		return true
 	}
 	return binding.Owner != nil && matchesName(entry, binding.Owner.CxxName)
+}
+
+// matchesSignature reports whether a manifest entry spells one declaration's
+// full signature, which is how a single overload of a set is named:
+//
+//	-exclude 'cv::Mat::Mat(int, int, int, void *)'
+//
+// Whitespace is ignored on both sides, because a reader writes the signature
+// with or without the spaces libclang puts around a pointer's star, and the
+// trailing qualifiers are optional: an entry matches the declaration as it is
+// written (without `const` or `noexcept`) as well as the full signature the
+// report shows. Only an entry that looks like a signature (it names a parameter
+// list) is compared this way; a plain qualified name stays a prefix selection.
+func matchesSignature(entry string, sym cxx.Symbol) bool {
+	if !strings.Contains(entry, "(") {
+		return false
+	}
+	want := normalizeSignature(entry)
+	return want == normalizeSignature(displaySignature(sym)) ||
+		want == normalizeSignature(bareSignature(sym))
+}
+
+// bareSignature is the declaration without the trailing const and noexcept
+// qualifiers: the way a reader writes it in a manifest entry.
+func bareSignature(sym cxx.Symbol) string {
+	params := make([]string, len(sym.Params))
+	for i, param := range sym.Params {
+		params[i] = param.Spelling
+	}
+	return sym.QualifiedName + "(" + strings.Join(params, ", ") + ")"
+}
+
+// normalizeSignature removes the whitespace libclang and a reader spell
+// differently.
+func normalizeSignature(signature string) string {
+	return strings.Join(strings.Fields(signature), "")
 }
 
 // matchesName reports whether qualified is entry or lives inside it. Template
@@ -291,11 +333,20 @@ func (b *builder) applyOverloadSuffixes() {
 	}
 }
 
-// paramSuffix concatenates the Go type suffixes of a parameter list.
+// paramSuffix concatenates the Go type suffixes of a parameter list. A pointer
+// and a reference cross as the same Go type, so the C++ distinction is spelled
+// in the name: two overloads of one set that differ only there are still two
+// declarations, and the Go side can call both.
 func paramSuffix(params []*goParam) string {
 	var b strings.Builder
 	for _, param := range params {
 		b.WriteString(typeSuffix(param.Type.Go))
+		// A reference crosses as a Go pointer only when its target is one: a
+		// record reference is *T and needs the marker, a std::string reference
+		// is a string and does not.
+		if isReferenceParam(param.Type) && strings.HasPrefix(param.Type.Go, "*") {
+			b.WriteString("Ref")
+		}
 	}
 	return b.String()
 }

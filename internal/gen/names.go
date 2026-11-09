@@ -49,7 +49,9 @@ func typeSuffix(goType string) string {
 	case strings.HasPrefix(goType, "[]"):
 		return typeSuffix(goType[2:]) + "Slice"
 	case strings.HasPrefix(goType, "*"):
-		return typeSuffix(goType[1:])
+		// A pointer is its own shape: an overload set with T and T* is two
+		// declarations, and their Go names must say so.
+		return typeSuffix(goType[1:]) + "Ptr"
 	}
 	var b strings.Builder
 	capitalise := true

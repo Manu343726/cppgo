@@ -11,9 +11,9 @@ import (
 
 // TestManifestNarrowsLowering is the property that makes a large header
 // bindable: a declaration the manifest does not select is never lowered, so a
-// signature this build cannot represent outside the selection cannot fail the
-// run. Without -bind the same header is a generation error that names the
-// declaration, which is the contract's "what remains a generation error" row.
+// signature this build cannot represent outside the selection cannot even be
+// reported. Without -bind the same header binds, and the declaration it cannot
+// carry is a warning that names itself.
 func TestManifestNarrowsLowering(t *testing.T) {
 	dir := t.TempDir()
 	header := filepath.Join(dir, "narrow.hpp")
@@ -44,17 +44,18 @@ struct Point { std::int32_t x; std::int32_t y; };
 	require.NoError(t, err)
 	require.NotEmpty(t, outs)
 
-	// The whole header is a root, and the unrepresentable declaration names
-	// itself with the fix.
-	_, err = Render(Config{
+	// The whole header is a root: the unrepresentable declaration names itself
+	// with the fix, and everything else binds.
+	rendered, err := RenderResult(Config{
 		Headers: []string{header},
 		Package: "narrow",
 		Library: "libnarrow",
 		Out:     ".",
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "narrow::widen")
-	assert.Contains(t, err.Error(), "no Go value type")
+	require.NoError(t, err)
+	joined := joinWarnings(rendered.Warnings)
+	assert.Contains(t, joined, "narrow::widen")
+	assert.Contains(t, joined, "no Go value type")
 }
 
 // TestManifestExcludeNarrowsLowering is the same property for -exclude.
@@ -100,4 +101,72 @@ namespace narrow { int add(int a, int b) noexcept; }
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "names nothing")
+}
+
+// selectionConfig is the declaration-selection fixture's canonical run.
+func selectionConfig() Config {
+	return fixtureConfig("selection", "selection.hpp")
+}
+
+// TestUncarryableDeclarationsDoNotRefuseTheRecord is the fixture the contract
+// names: a class with one carryable constructor and one whose parameter is a
+// void *, and an overload set with one supported and one unsupported signature.
+// The carryable declarations bind, the others are warnings, and the class
+// exists.
+func TestUncarryableDeclarationsDoNotRefuseTheRecord(t *testing.T) {
+	rendered, err := RenderResult(selectionConfig())
+	require.NoError(t, err)
+	generated := ""
+	for _, output := range rendered.Outputs {
+		if output.Name == GenFileName {
+			generated = string(output.Data)
+		}
+	}
+	assert.Contains(t, generated, "type Value struct {", "the class exists")
+	assert.Contains(t, generated, "func NewValue(value int32) (*Value, error) {", "the carryable constructor binds")
+	assert.Contains(t, generated, "func (v *Value) Get()", "the carryable method binds")
+	assert.Contains(t, generated, "func Plain(value int32)", "the carryable overload binds")
+
+	joined := joinWarnings(rendered.Warnings)
+	assert.Contains(t, joined, "sel::Value::Value(void *)", "the uncarryable constructor is named")
+	assert.Contains(t, joined, "void pointer", "the reason is the same one the declaration-level error used")
+	assert.Contains(t, joined, "sel::plain(void *)", "the uncarryable overload is named")
+	assert.NotContains(t, generated, "Opaque", "nothing is emitted for the uncarryable declarations")
+}
+
+// TestExcludeNamesOneOverload proves -exclude removes one declaration of a set,
+// not the set: the signature is accepted and the rest of the class still binds.
+func TestExcludeNamesOneOverload(t *testing.T) {
+	cfg := selectionConfig()
+	cfg.Exclude = []string{"sel::Value::Value(void *)", "sel::plain(void *) noexcept"}
+	rendered, err := RenderResult(cfg)
+	require.NoError(t, err)
+	joined := joinWarnings(rendered.Warnings)
+	assert.NotContains(t, joined, "void pointer", "an excluded declaration is not lowered, so it is not reported")
+	generated := ""
+	for _, output := range rendered.Outputs {
+		if output.Name == GenFileName {
+			generated = string(output.Data)
+		}
+	}
+	assert.Contains(t, generated, "func NewValue(value int32)")
+	assert.Contains(t, generated, "func Plain(value int32)")
+}
+
+// TestBindNamesOneOverload proves -bind selects one declaration of a set by
+// signature, and does not drag the class in with it.
+func TestBindNamesOneOverload(t *testing.T) {
+	cfg := selectionConfig()
+	cfg.Bind = []string{"sel::plain(int)"}
+	rendered, err := RenderResult(cfg)
+	require.NoError(t, err)
+	generated := ""
+	for _, output := range rendered.Outputs {
+		if output.Name == GenFileName {
+			generated = string(output.Data)
+		}
+	}
+	assert.Contains(t, generated, "func Plain(value int32)")
+	assert.NotContains(t, generated, "type Value")
+	assert.NotContains(t, joinWarnings(rendered.Warnings), "void pointer", "the overloads the manifest did not name are not lowered")
 }
