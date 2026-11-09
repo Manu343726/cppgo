@@ -23,11 +23,39 @@ The upstream directory `skills/documentation-writer/` at that commit contains
 so there is no referenced file left to copy. The skill cites <https://diataxis.fr/>
 as the framework it follows; that link is a pointer, not a vendored artefact.
 
-Nothing was edited. Any divergence from upstream is a defect in this copy.
+Nothing was edited, with one local exception described below. Any other divergence
+from upstream is a defect in this copy.
+
+## Local addition
+
+The repository adds a pointer to its own documentation, near the top of
+`SKILL.md`, immediately below the title:
+
+```markdown
+> **Read first, in this order:**
+>
+> 1. [`../documentation-manual/SKILL.md`](../documentation-manual/SKILL.md) — the project's
+>    documentation manual: the audience, the seven rules with the operator's anti-patterns, the
+>    evidence each claim owes, the Diátaxis map and the pre-pull-request checklist.
+> 2. [`../extra/documentation-rules.md`](../extra/documentation-rules.md) — the short numbered
+>    rule list the manual expands.
+>
+> Both win over this skill's text wherever they disagree, and the rule list wins over the
+> manual.
+```
+
+That block is the whole local difference; `git hash-object` on the vendored
+`SKILL.md` no longer reproduces the upstream blob id in the table above. Both
+targets are written in this repository, not vendored:
+
+- [`../documentation-manual/SKILL.md`](../documentation-manual/SKILL.md) is the canonical
+  project manual (issue #71), created for this repository;
+- [`../extra/documentation-rules.md`](../extra/documentation-rules.md) is the operator's
+  numbered rule list.
 
 ## Updating
 
 Re-copy `SKILL.md` from a newer upstream commit, check that
-`git hash-object .agents/skills/documentation-writer/SKILL.md` matches the blob id
-the upstream tree reports, and update the table. The copy is used by the
-documentation rewrite described in issue #29.
+`git hash-object` on the file **without the local addition** matches the blob id
+the upstream tree reports, re-add the pointer block, and update the table. The
+copy is used by the documentation rewrite described in issue #29.

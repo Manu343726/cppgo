@@ -35,7 +35,36 @@ vendored. The cross-references to the sibling skills `golang-naming` and
 same collection and are only reachable where that whole collection is
 installed.
 
-Nothing was edited. Any divergence from upstream is a defect in this copy.
+Nothing was edited, with one local exception described below. Any other
+divergence from upstream is a defect in this copy.
+
+## Local addition
+
+The repository adds a pointer to its own documentation near the top of
+`SKILL.md`, between the frontmatter and the persona paragraph:
+
+```markdown
+> **Read first, in this order:**
+>
+> 1. [`../documentation-manual/SKILL.md`](../documentation-manual/SKILL.md) — the project's
+>    documentation manual: the audience, the seven rules with the operator's anti-patterns, the
+>    evidence each claim owes, the Diátaxis map and the pre-pull-request checklist.
+> 2. [`../extra/documentation-rules.md`](../extra/documentation-rules.md) — the short numbered
+>    rule list the manual expands.
+>
+> Both win over this skill's text wherever they disagree, and the rule list wins over the
+> manual. This skill still owns Go **doc comments**; the manual governs prose documentation.
+```
+
+That block is the whole local difference, so `git hash-object` on
+`.agents/skills/golang-documentation/SKILL.md` no longer reproduces the upstream
+blob id in the table above; the other vendored files are untouched. Both
+targets are written in this repository, not vendored:
+
+- [`../documentation-manual/SKILL.md`](../documentation-manual/SKILL.md) is the canonical
+  project manual (issue #71), created for this repository;
+- [`../extra/documentation-rules.md`](../extra/documentation-rules.md) is the operator's
+  numbered rule list.
 
 ## Using it
 
@@ -47,6 +76,7 @@ follow-up workstream, not here.
 ## Updating
 
 Re-copy the files from a newer upstream commit, check every `git hash-object`
-against the ids the upstream tree reports, and update the table. An update that
+against the ids the upstream tree reports — comparing `SKILL.md` with the local
+pointer line removed — update the table, and re-add the pointer block. An update that
 changes what a doc comment may look like belongs in its own commit, separate
 from any comment rewrite it triggers.

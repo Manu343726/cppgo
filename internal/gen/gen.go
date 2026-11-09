@@ -1,25 +1,26 @@
-// Package gen implements cppgo's header-first code generator.
+// Package gen implements cppgo's header-first code generator: it reads C++
+// headers through internal/cxx and writes, for one Go package,
 //
-// It reads C++ headers through internal/cxx and emits, for one Go package:
-//
-//   - zz_cppgo.gen.go, the only API a caller sees.
-//   - zz_cppgo_amd64.s, one NOSPLIT trampoline per binding.
+//   - zz_cppgo.gen.go, the only API a caller sees;
+//   - zz_cppgo_amd64.s, one NOSPLIT trampoline per direct symbol;
 //   - zz_cppgo_shim.h and zz_cppgo_shim.cpp, one extern "C" thunk per binding
-//     the direct ABI cannot call.
-//
-// A class or function template is emitted twice. Phase one writes the generic
-// Go declaration, which compiles with no concrete type. Phase two, `cppgo
-// build -scan <go package>`, parses the program with go/packages, collects the
-// instantiations it type-checks, and adds one explicit instantiation and one
-// thunk per member to the shim before compiling it. An instantiation the shim
-// was not built for fails when it is used and names the `template ...;` line to
-// add.
+//     the direct ABI cannot call, which cppgo compiles itself into
+//     libcppgo_<pkg>.so.
 //
 // Every binding is assigned exactly one carrier before anything is emitted. A
 // declaration that is noexcept, non-virtual, defined out of line and register
-// representable takes the direct trampoline. Every other declaration gets a
+// representable takes the direct trampoline; every other declaration gets a
 // generated thunk. The carrier is invisible in the Go API and named in the
-// report and in the binding's evidence comment.
+// report and in the binding's evidence comment. Nothing generated enters the
+// user's build: the shim is compiled here, and the user's library is linked
+// against, never edited.
+//
+// A class or function template is emitted twice. Phase one writes the generic Go
+// declaration, which compiles with no concrete type. Phase two, `cppgo build
+// -scan <go package>`, loads the program with go/packages, collects the
+// instantiations it type-checks, and adds one explicit instantiation and one
+// thunk per member to the shim before compiling it. An instantiation the shim was
+// not built for fails when it is used and names the `template ...;` line to add.
 package gen
 
 import (
@@ -43,8 +44,8 @@ type Instantiation struct {
 	Args     []string
 }
 
-// Names of the generated files. They are part of the contract. The shim is
-// compiled by the user's build, and Open names it when a thunk is missing.
+// Names of the generated files. They are part of the contract: the generated
+// package, the shim and a stale check all find each other by these names.
 const (
 	GenFileName        = "zz_cppgo.gen.go"
 	AsmFileName        = "zz_cppgo_amd64.s"

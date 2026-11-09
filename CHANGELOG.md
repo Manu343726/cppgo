@@ -39,6 +39,13 @@ numbers refer to the project's
 
 ### Changed
 
+- **Symbol resolution is cached per `Library`.** A name is resolved through the
+  loader once — the address it returned, or the error it reported — so
+  `cppgo.LastError` and a generated object's `Close`, which read
+  `cppgo_last_error` on every failure, no longer pay a `dlsym` per call. The
+  cache is per library and the closed flag is what invalidates it: a lookup
+  after `Close` still fails with `cppgo.ErrClosed` and hands out no address
+  (#51).
 - **The shim belongs to cppgo.** It is generated from the same parse as the Go
   API and compiled by cppgo, so the user's build gains no step and no generated
   file is compiled into the user's library. ADR-0002 supersedes ADR-0001 (#12).

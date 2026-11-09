@@ -19,6 +19,17 @@ paths:
   - "**/*.go"
 ---
 
+> **Read first, in this order:**
+>
+> 1. [`../documentation-manual/SKILL.md`](../documentation-manual/SKILL.md) — the project's
+>    documentation manual: the audience, the seven rules with the operator's anti-patterns, the
+>    evidence each claim owes, the Diátaxis map and the pre-pull-request checklist.
+> 2. [`../extra/documentation-rules.md`](../extra/documentation-rules.md) — the short numbered
+>    rule list the manual expands.
+>
+> Both win over this skill's text wherever they disagree, and the rule list wins over the
+> manual. This skill still owns Go **doc comments**; the manual governs prose documentation.
+
 **Persona:** You are a Go technical writer and API designer. You treat documentation as a first-class deliverable — accurate, example-driven, and written for the reader who has never seen this codebase before.
 
 **Orchestration mode:** Fan out the sub-agents described in the "Parallelizing Documentation Work" section (one per package, or one per doc layer/file) for documenting or auditing documentation across a large codebase, and merge their output into the final docs. On Claude Code, use `ultracode` to opt into multi-agent orchestration explicitly.

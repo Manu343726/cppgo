@@ -1,11 +1,13 @@
-// Package testlib builds a small C++ shared object used by the cppgo tests.
+// Package testlib builds the small C++ shared object the cppgo tests call into.
 //
 // The fixture is compiled on demand with the system g++ into a temporary
-// directory. The tests therefore need no checked-in binaries and no cgo. This
-// package only runs the compiler and hands back the path of the resulting .so,
-// which the tests then load with internal/rtl.
+// directory, so the tests need no checked-in binaries and no cgo. The library is
+// plain C at the boundary, like a generated cppgo shim: it carries the two integer
+// banks, the stack burner the probe is measured against, the pointer that calls
+// back into Go, and the cppgo_last_error convention, and Full and NoLastError
+// select whether the last of those is present.
 //
-// It is internal to cppgo and only intended for tests and benchmarks.
+// It is internal to cppgo and intended for tests and benchmarks only.
 package testlib
 
 import (

@@ -1,80 +1,126 @@
 # cppgo
 
-cppgo generates a Go package from a C++ header. You point it at the header and at
-the way your project compiles it; it writes the Go API, one assembly trampoline
-per call, and a C++ shim that it compiles itself. The generated package calls
-into your library with **no cgo at build time and no `import "C"`**, and your
-library, your sources and your build are not modified.
+cppgo gives a Go program an ordinary Go package that calls a C++ library. A
+**binding** is the Go code that calls a library written in another language;
+cppgo writes that code instead of you. You give it two things: the library's
+**header** — the C++ file a program includes to see its classes and functions —
+and the **compilation configuration** for that header: the directories your C++
+compiler searches for included files and the language standard it compiles with.
+It writes the package that calls the library; this page calls it the **generated
+package**.
 
-It is a generator (`cppgo gen`) plus a small runtime that the generated package
-imports. The runtime has one third-party dependency, `github.com/ebitengine/purego`,
-used for `dlopen`/`dlsym` only. libclang and a C++ compiler are needed to
-*generate*; a program built with a generated package needs neither.
+Your C++ sources, your build and your library are not modified, and the
+generated package needs **no cgo at build time and no `import "C"`**. cgo is
+Go's built-in way to call C: it needs a C compiler at build time and a special
+`import "C"` block, which lets Go compile C code written beside it, and it
+carries a per-call cost. cppgo's generated package loads the compiled library at
+run time through a small Go library — the **runtime** — that does not depend on
+cgo.
 
-**Status.** The generator, the runtime, the shim build and the two examples are
-in the tree and tested. The full error projection, the wider
-operators/inheritance work and the OpenCV, ArrayFire and Eigen target slices are
-designed and not shipped; each is marked where it appears in the documentation.
+It is a generator (`cppgo gen`) plus that runtime. `cppgo gen` reads the header
+with **libclang** — the C library of the Clang compiler front end, which parses
+C++ — and writes the package. libclang and a C++ compiler are needed to
+*generate*. The program you ship needs neither.
 
-## The workflow
-
-```
-your header + your compilation configuration
-        │
-        ▼
-   cppgo gen ──► zz_cppgo.gen.go   (the Go API)
-        │        zz_cppgo_amd64.s  (one trampoline per binding)
-        │        cppgo_shim/*.cpp  (the thunks)
-        │        libcppgo_<pkg>.so (the shim, compiled by cppgo)
-        ▼
-   your Go program
-```
-
-1. You write ordinary C++. No annotations, no `extern "C"` block, no binding
-   declarations.
-2. Your build compiles it into its own shared object, with its own flags. cppgo
-   is not involved in that build and no generated file is compiled into it.
-3. `cppgo gen` reads the header through libclang, using the include paths and
-   language standard from `compile_commands.json` or `.clangd`, and writes a Go
-   package plus the shim.
-4. cppgo compiles the shim itself and links it against your library. The
-   generated package loads the shim; the shim's `DT_NEEDED` entry brings your
-   library in.
-
-## Requirements
-
-| Tool | Version | Needed for |
-|---|---|---|
-| Go | 1.25 or newer (`go.mod`: `go 1.25.0`) | building the runtime, the generator and the generated package |
-| libclang | **20 or newer** | `cppgo gen` and `cppgo check`. Reading base-class offsets uses `clang_getOffsetOfBase`, which libclang 19 does not export |
-| A C++ compiler | C++17; same family and standard library as your library | compiling the shim |
-| `make` | any | the repository's targets (`make build`, `make test`, `make examples`) |
-
-libclang is a generation-time dependency. The runtime never imports the parser
-and has no libclang dependency; a test enforces that split.
+**Status.** The generator, the runtime and the examples are implemented and
+tested. The full set of C++ failure conventions, the remaining C++ construct
+support and the OpenCV, ArrayFire and Eigen target slices are designed and not
+shipped; each is marked where it appears in the documentation.
 
 ## Quick start
 
-Build the generator and run the example, which is a small C++17 class. The
-example builds its own `cppgo`, so `bin/cppgo` is the one you use on your own
-project:
+You need:
 
-```console
-$ make build                     # bin/cppgo, with CGO_ENABLED=0
-$ make -C examples/mathx gen     # build libmathx.so, generate, compile the shim
+| Tool | Version | Needed for |
+|---|---|---|
+| Go | 1.25 or newer ([`go.mod`](https://github.com/Manu343726/cppgo/blob/main/go.mod): `go 1.25.0`) | building the generator, the runtime and your program |
+| libclang | **20 or newer** | `cppgo gen` and `cppgo check` only |
+| A C++ compiler | C++17; the same family and standard library as your library | generating |
+| `make` | any | the repository's targets |
+
+libclang is the C library of the Clang compiler front end. `cppgo gen` uses it to
+read the header; the program you ship does not link it. Version 20 is the floor
+because older releases lack a function the generator uses.
+
+The input is an ordinary C++ header — no annotations, no `extern "C"` block (the
+C++ way to expose a function to C), no binding declarations. This is the class
+the quick start binds,
+[`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
+
+```cpp
+#include <cstddef>
+
+namespace mathx {
+
+class Vector {
+public:
+    Vector(double x, double y);
+
+    Vector(const Vector &other);
+
+    ~Vector();
+
+    double x() const { return x_; }
+
+    double y() const;
+
+    double norm() const;
+
+    double dot(const double *ys, std::size_t n) const;
+
+    double at(std::size_t index) const;
+
+    void validate() const;
+
+    void scale(double k) noexcept;
+
+    static int dims();
+
+private:
+    double x_;
+    double y_;
+};
+
+} // namespace mathx
 ```
 
-The example's `Makefile` runs this generation command, with its own freshly
-built `cppgo` and paths relative to the example:
+Build the generator, then run the example's generation step:
+
+```console
+$ make build                     # writes bin/cppgo, with CGO_ENABLED=0
+$ make -C examples/mathx gen     # builds build/libmathx.so, then generates
+```
+
+`make build` writes the `cppgo` command you use on your own project. The example
+builds its own copy under `examples/mathx/build/`, so its generation command,
+run from inside `examples/mathx`, is:
 
 ```console
 $ build/cppgo gen -header include/mathx/vector.hpp -package mathx \
                   -library build/libmathx.so -out .
 ```
 
-It prints one line per binding — the C++ declaration, its carrier, its symbol and
-the reason — and then the compiler it used for the shim. The package it wrote is
-ordinary Go:
+`cppgo gen` reads the header with the include paths and language standard your
+project uses: from a `.clangd` file beside the sources, or from the
+`compile_commands.json` that CMake and Meson write. It reports one line per
+function or method it bound, and writes the Go package.
+
+These are the declarations that class became, copied from the generated
+[`examples/mathx/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/zz_cppgo.gen.go):
+
+```go
+func NewVector(x float64, y float64) (*Vector, error)
+func (v *Vector) Norm() (float64, error)
+func (v *Vector) Scale(k float64)
+func (v *Vector) Close() error
+```
+
+`Norm` returns an error because `mathx::Vector::norm()` can throw a C++
+exception — C++'s way of reporting failure. `Scale` returns nothing because
+`mathx::Vector::scale(double) noexcept` is marked `noexcept`: it promises not to
+throw, so there is no error to check.
+
+The package it wrote is ordinary Go. Import it as `mathx` and call it:
 
 ```go
 v, err := mathx.NewVector(3, 4)
@@ -83,102 +129,141 @@ if err != nil {
 }
 defer v.Close()
 
-norm, err := v.Norm()      // C++: mathx::Vector::norm() const
+norm, err := v.Norm()
 if err != nil {
 	log.Fatal(err)
 }
 fmt.Println(norm)          // 5
 
-v.Scale(2)                 // C++: mathx::Vector::scale(double) noexcept
+v.Scale(2)                 // no error to check: this call cannot fail
 ```
 
-`Norm` returns `(float64, error)` because the C++ method may throw. `Scale`
-returns nothing because it is `noexcept`, so the generated signature has no
-error result at all. Run it:
+Run the example's tests:
 
 ```console
 $ make -C examples/mathx test
-ok  	github.com/Manu343726/cppgo/examples/mathx	0.018s
-ok  	github.com/Manu343726/cppgo/examples/mathx	1.034s   # -race
 ```
 
-The full walkthrough, including what each generated file contains and what the
-report means, is [Bind your first C++ class](https://manu343726.github.io/cppgo/tutorials/first-binding/).
+Both passes print `ok` for the package: the first builds the generated package
+and the runtime with `CGO_ENABLED=0`, and the second runs the same tests under
+the race detector, which needs cgo.
 
-## The three artefacts
+The full walkthrough is
+[Bind your first C++ class](https://manu343726.github.io/cppgo/tutorials/first-binding/).
 
-| Artefact | Owner | What it is |
-|---|---|---|
-| your library | you | your sources, your flags, your build. cppgo never writes into it |
-| the cppgo shim | cppgo | `zz_cppgo_shim.cpp` and its header, generated from the same parse as the Go API, compiled by cppgo into `libcppgo_<package>.so` and linked against your library |
-| the generated Go package | cppgo | the API you call, one `NOSPLIT` trampoline per binding, and the code that loads the shim |
+## What the generated package looks like
 
-A header-only library has no shared object at all: the shim is the whole binary.
+The package mirrors the C++ API with Go types, and every C++ rule about failure
+shows up as a Go signature you can read:
 
-## Carriers
+- a constructor returns `(*Type, error)`, and `Close` releases the object. There
+  is no finalizer, so closing is your job.
+- a method that can fail returns `(T, error)`; a method that cannot fail returns
+  its value with no error at all.
+- a plain C++ struct whose fields have a fixed layout becomes a Go struct with
+  the same fields.
+- a free function (one not inside a class), a static member function (one that
+  belongs to the class rather than to an object) and an overload (one of several
+  functions sharing a name with different arguments) become package functions.
+- a Go slice stands for a `(pointer, length)` pair: the C++ side reads the
+  slice's memory during the call, nothing is copied, and the generated code
+  keeps the slice alive until the call returns.
 
-Every binding is assigned exactly one **carrier** before anything is emitted. The
-carrier is invisible in the API, named in the report and in the binding's
-evidence comment.
+The exact shapes, per declaration, are in
+[Generated API](https://manu343726.github.io/cppgo/reference/generated-api/).
 
-| Carrier | When | Cost |
-|---|---|---|
-| **direct** | `noexcept`, not virtual, defined out of line, registers representable, symbol exported by the library | 15.9 ns/op |
-| **thunk** | everything else: inline bodies, virtual members, `std::` types, by-value records, constructors, destructors, anything that can throw | one C++ frame inside your library |
-| **reentrant** | the signature passes a Go function to C++ | 151 ns/op, one 16-byte allocation |
+## Performance
 
-Measured 2026-11-08 with `go test -bench . -benchtime 200000x`; the numbers and
-the machine are recorded in
-[`DESIGN.md`](https://github.com/Manu343726/cppgo/blob/main/DESIGN.md) and the
-[carrier table](https://manu343726.github.io/cppgo/reference/carriers/).
+cppgo exists partly because of what cgo costs per call, so the comparison is
+measured rather than claimed. The benchmark suite runs the same C++ function
+through cgo and through a generated package, plus a plain-Go baseline, in one
+process: [Performance](https://manu343726.github.io/cppgo/explanation/benchmarks/)
+has the tables, the code of every arm and the method.
+
+What it shows:
+
+- **A call the generator can make directly is about 2.8 times faster than cgo**
+  on the same arithmetic: 10.5 ns against 29.6 ns.
+- **A call that has to report a status costs about what cgo costs**: 29.2 ns
+  against 29.6 ns on the same arithmetic.
+- **Where the C++ work dominates, the cost of crossing from Go to C++ stops
+  mattering**: a 1024-element vector in and out is within about 10% of cgo.
+- **Several calls into C++ standard-library types are faster than cgo**: a string
+  in and out, an eight-element vector, a successful status call, a method on a
+  live object.
+- **Callbacks and object creation and close are slower than cgo's**; the page
+  names the causes.
+
+The value proposition is the build (no cgo, no `import "C"`, your library
+untouched) plus a call the generator can make directly that is faster than cgo
+and a status call that lands near its price, not an order-of-magnitude win on
+every operation. The suite is in
+[`benchmarks/`](https://github.com/Manu343726/cppgo/tree/main/benchmarks), and
+its raw results are committed beside it.
 
 ## Errors
 
 **A call that can fail returns `(T, error)`; a call that cannot fail returns no
-error.** Today the generator projects two C++ conventions:
+error.** Two C++ failure conventions reach Go today:
 
-- **exceptions** — a declaration that is not `noexcept` goes through a thunk that
-  catches `std::exception` (and `...`), stores the message, and returns it as a
-  `*cppgo.CallError` wrapping a `*cppgo.NativeError`. `errors.As` finds both.
-- **status codes** — a declaration named with `-status` has its 32-bit return
-  treated as a status: the Go signature returns only an error, and a non-zero
-  value is the failure.
+- **exceptions** — a C++ function that throws (the language's way of reporting
+  failure) becomes a Go call that returns an error. The Go error is a
+  `*cppgo.CallError` naming the C++ declaration, wrapping a `*cppgo.NativeError`
+  that carries the library's message. `errors.As` finds either one.
+- **status codes** — mark a declaration with `-status` and its 32-bit return
+  becomes an error: the Go signature returns only the error, and a non-zero value
+  is the failure.
 
-Designed and not shipped ([issue #19](https://git.manu343726.com/manu343726/cppgo/issues/19)):
-`std::error_code`, `std::expected`, `errno`, `std::variant`, a configured `bool`
-plus out-parameters, and custom result types. The projection is implemented and
-tested in `internal/errormap`; the generator does not consume it yet, and a
-function returning `std::error_code` is currently a generation error.
+Designed and not shipped: the other failure conventions — a standard C++ error
+value (`std::error_code`), a value-or-error type (`std::expected`), the C error
+number `errno`, a variant (`std::variant`, a type that holds one of several
+alternatives), a success flag with out-parameters (values written through
+pointers), and a project's own result type. Until then, a function returning
+`std::error_code` is refused at generation time with a message that says what to
+do.
 
-One rule cannot be configured away: an exception thrown with no C++ frame above
-it terminates the process. That is why a throwing declaration is never direct.
-See [Report failures from C++ to Go](https://manu343726.github.io/cppgo/how-to/errors/).
+[Report failures from C++ to Go](https://manu343726.github.io/cppgo/how-to/errors/)
+has the error types, the `errors.As` examples and the designed table.
 
 ## Deployment
 
-A program that uses a binding loads two shared objects: the shim and your
-library. Keep them in one directory and the shim's `-Wl,-rpath,$ORIGIN` finds
-its sibling; or name the library with `CppgoLibraryPath` /
-`CPPGO_LIBRARY_PATH`; or put the directory on the loader's search path.
+cppgo compiles a small C++ library for you at generation time. It is the
+**shim**: generated C++ that makes the calls the generated package cannot make
+directly, compiled into `libcppgo_<package>.so` and linked against your library.
+Your program loads two **shared objects** at run time — the shim and your own
+library. A shared object is a compiled library file (`.so` on Linux) that the
+system loader opens into the process when the program asks for it.
 
-`cppgo.OpenFS` embeds the objects in the Go binary and extracts them to a private
-per-user cache (`0700`/`0600`, atomic renames, content-addressed). It is
-implemented and measured in the runtime; a *generated* package's `Open` does not
-call it yet, so embedding is currently a runtime API, not a generated-package
-feature. See [Ship a program that uses a binding](https://manu343726.github.io/cppgo/how-to/deploy/)
-and [Embed the C++ side in the Go binary](https://manu343726.github.io/cppgo/how-to/embed/).
+For deployment:
+
+- keep the two shared objects in one directory, and open the shim by a path that
+  contains a slash (`./libcppgo_mathx.so`), because the loader does not search
+  the current directory; or
+- put them on the loader's search path (`LD_LIBRARY_PATH` on Linux); or
+- name your library explicitly with `CppgoLibraryPath` or the
+  `CPPGO_LIBRARY_PATH` environment variable.
+
+`cppgo.OpenFS` lets the two shared objects travel inside the Go binary instead:
+it embeds them with `//go:embed` (Go's directive for embedding files in the
+binary), extracts them to a private per-user cache and loads them from there. The
+runtime implements it; the `Open` that `cppgo gen` writes does not call it yet,
+so embedding is currently a runtime API.
+
+[Ship a program that uses a binding](https://manu343726.github.io/cppgo/how-to/deploy/)
+has the steps and the failure messages;
+[Embed the C++ side in the Go binary](https://manu343726.github.io/cppgo/how-to/embed/)
+covers embedding and its limits.
 
 ## Target libraries
 
-The design is exercised against three libraries. **None of the three is
-implemented yet**; they are the acceptance tests the contract describes, each
-with a build tag and a skip when the library is absent.
+The design names three target libraries. None is supported yet; each will
+exercise a different part of the design:
 
-| Target | What it exercises |
+| Target | What it will exercise |
 |---|---|
-| **Eigen** | the two-phase template flow; a header-only library where the shim is the whole binary; by-value fixed-size matrices |
-| **OpenCV** | whole-header binding at scale: hundreds of overloads, `cv::Mat` as an opaque value, `std::string`/`std::vector` everywhere |
-| **ArrayFire** | a C++ API over a C API; opaque handles; `af::exception` caught by the shim and reported as Go errors |
+| **Eigen** | a header-only library (delivered as source headers, compiled with your program), built from templates (C++ code generated per type): the two-phase generation for templates — `cppgo gen` writes the API, and `cppgo build -scan` adds the concrete versions your Go program uses — and fixed-size matrices passed by value (copied into the call) |
+| **OpenCV** | whole-header binding at scale: hundreds of overloads (functions sharing a name with different argument types), `cv::Mat` as an opaque value (a type cppgo passes around without exposing its contents), and `std::string`/`std::vector` everywhere |
+| **ArrayFire** | a C++ API over a C API: opaque handles, and an exception type that must arrive as a Go error |
 
 ## Limits
 
@@ -186,66 +271,53 @@ The full list, with the test that measures each one, is
 [Limits](https://manu343726.github.io/cppgo/explanation/limits/). The ones that
 shape day-to-day use:
 
-- **enums, inheritance, operators, member templates, smart pointers and
-  variadic functions are not emitted yet.** Each is a generation error naming the
-  declaration and a workaround.
-- **a callback carries at most six INTEGER and eight SSE arguments.** It is
-  called through the reentrant carrier; on the direct trampoline it kills the
-  process.
-- **`long double`, `__int128`, `void *` and `nullptr_t` have no Go value type.**
-- **a macro-only API cannot be bound**, because libclang sees a macro's
-  expansion, not its declaration.
-- **`char *` parameters do not bind in this build.** The generated shim fails to
-  compile; use `std::string` or `std::string_view` at the boundary.
-- **the shim and your library must share a C++ ABI and standard library.**
+- **These C++ constructs are refused for now**: an enum (a named set of integer
+  constants), a class that inherits from another, an operator such as `+` or `==`
+  defined for a C++ type, a template declared inside a class, a smart pointer (a
+  C++ type that owns and frees an object automatically), and a variadic function
+  (one taking a variable number of arguments). Each is a generation error naming
+  the declaration and a workaround; the full list is the linked page.
+- **a Go function passed to C++ as a callback takes at most six integer and eight
+  floating-point arguments.**
+- **`long double` and `__int128` have no Go type of the same width; `void *` and
+  `std::nullptr_t` are refused.**
+- **a macro-only API cannot be bound**: libclang sees the expansion of a macro (a
+  name the compiler replaces with text before parsing), not its declaration.
+- **`char *` parameters do not bind in this build.** Use `std::string` or
+  `std::string_view` (a non-owning view of a string) at the C++ boundary.
+- **the shim cppgo builds must match your library's compiler family and standard
+  library.** The two call each other across a compiled interface — the ABI, the
+  layout of arguments and results — and nothing detects a mismatch for you.
 
 ## Build and test
 
 ```console
-$ make build       # CGO_ENABLED=0 go build ./..., then every cmd/ binary into bin/
+$ make build       # CGO_ENABLED=0 go build ./..., then the command into bin/
 $ make test        # two passes: CGO_ENABLED=0 go test, then CGO_ENABLED=1 -race
 $ make lint        # go vet, then golangci-lint when it is installed
-$ make cover-gate  # statement coverage >= 99% on ./... (scripts/coverage-gate.sh)
-$ make examples    # build, generate and test both examples
-$ make site        # build this documentation site with hugo
+$ make cover-gate  # statement coverage >= 99% on ./...
+$ make examples    # build, generate and test every example
+$ make site        # build the documentation site with hugo
 ```
 
-`make test` runs two passes because the race detector is built on cgo, and the
+`make test` runs two passes because the race detector needs cgo, and the
 toolchain rejects `-race` with `CGO_ENABLED=0`. The first pass proves the no-cgo
 property; the second finds data races. `make verify` runs build, lint, test,
 coverage and examples in one shot.
 
-## Repository layout
-
-| Path | Contents |
-|---|---|
-| [`cppgo.go`](https://github.com/Manu343726/cppgo/blob/main/cppgo.go), [`loadfs.go`](https://github.com/Manu343726/cppgo/blob/main/loadfs.go), [`object.go`](https://github.com/Manu343726/cppgo/blob/main/object.go), [`reentrant.go`](https://github.com/Manu343726/cppgo/blob/main/reentrant.go) | the runtime package the generated code imports |
-| [`internal/asm`](https://github.com/Manu343726/cppgo/blob/main/internal/asm) | the NOSPLIT call trampolines and the stack probe |
-| [`internal/callback`](https://github.com/Manu343726/cppgo/blob/main/internal/callback) | C++→Go callbacks through `runtime.cgocallback` |
-| [`internal/cxx`](https://github.com/Manu343726/cppgo/blob/main/internal/cxx) | libclang, reached through `purego` |
-| [`internal/gen`](https://github.com/Manu343726/cppgo/blob/main/internal/gen) | selection, carrier routing, the Go/asm/shim emitters, the shim compile |
-| [`internal/errormap`](https://github.com/Manu343726/cppgo/blob/main/internal/errormap) | the error projection and its configuration (not consumed by the generator yet) |
-| [`internal/shim`](https://github.com/Manu343726/cppgo/blob/main/internal/shim) | the construct matrix, measured against a real compiler |
-| [`cmd/cppgo`](https://github.com/Manu343726/cppgo/blob/main/cmd/cppgo) | the command line |
-| [`examples/`](https://github.com/Manu343726/cppgo/blob/main/examples) | `mathx` and `stats`, each with its own build and tests |
-| [`site/`](https://github.com/Manu343726/cppgo/blob/main/site) | the Hugo sources of the documentation site |
-| [`docs/adr/`](https://github.com/Manu343726/cppgo/blob/main/docs/adr) | the decision records |
-
 ## Documentation
 
 The manual is published at <https://manu343726.github.io/cppgo/> and built from
-[`site/`](https://github.com/Manu343726/cppgo/blob/main/site) with Hugo 0.169.
-It follows four sections: tutorials, how-to guides, reference and explanation.
+[`site/`](https://github.com/Manu343726/cppgo/tree/main/site). It follows four
+sections: tutorials, how-to guides, reference and explanation —
+[Performance](https://manu343726.github.io/cppgo/explanation/benchmarks/) is the
+cost comparison, and
+[Architecture](https://manu343726.github.io/cppgo/explanation/architecture/) is
+where *how it works* is written down.
 
-- [`DESIGN.md`](https://github.com/Manu343726/cppgo/blob/main/DESIGN.md) is the
-  design contract the code is held to.
-- [`docs/adr/`](https://github.com/Manu343726/cppgo/blob/main/docs/adr) holds one
-  decision record per decision, never edited after acceptance.
-- [`examples/`](https://github.com/Manu343726/cppgo/blob/main/examples) is the
-  executable half of the tutorial.
-
-Where the contract and the site disagree about what exists, the code and its
-tests decide: the site describes the build in the tree.
+[`examples/`](https://github.com/Manu343726/cppgo/tree/main/examples) is the
+executable half of the tutorials: each example owns its build, and its
+`Makefile` targets are the commands the tutorials use.
 
 ## Contributing
 

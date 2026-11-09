@@ -1,0 +1,7 @@
+# Build output: the library, the locally built generator and the shim cppgo
+# compiles beside the generated package. The generated *sources* are committed
+# (the comparison is auditable from them and `make check` proves they are
+# current); only the compiled objects are ignored.
+build/
+libcppgo_*.so
+/benchtable

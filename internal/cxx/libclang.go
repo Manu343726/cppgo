@@ -33,6 +33,8 @@ type NotFoundError struct {
 	Cause error
 }
 
+// Error implements the error interface, naming what was searched and, when a
+// candidate existed but could not be used, why the last one failed.
 func (e *NotFoundError) Error() string {
 	if e.Cause != nil {
 		return fmt.Sprintf("%s: %v (searched %s)", ErrLibclangNotFound, e.Cause, strings.Join(e.Paths, ", "))

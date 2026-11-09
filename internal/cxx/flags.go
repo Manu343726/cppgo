@@ -492,6 +492,11 @@ func resolveDatabasePath(value, relTo string) (string, error) {
 		path = filepath.Join(relTo, path)
 	}
 	path = filepath.Clean(path)
+	// The database is read again later in the run, so record it absolutely:
+	// a relative path would depend on the working directory staying put.
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("cxx: compile_commands.json: %w", err)
@@ -739,7 +744,11 @@ func readClangd(path string) (*clangdFile, error) {
 // decision: explicit path, then .clangd, then the nearest one above dir.
 func (c *clangdConfig) findDatabase(explicit, dir string) (string, string, error) {
 	if explicit != "" {
-		path, err := resolveDatabasePath(explicit, dir)
+		// An explicit -compile-commands value is a command-line path: it is
+		// relative to the working directory, like -header, -library and -out.
+		// Only CompileFlags.CompilationDatabase is relative to the .clangd that
+		// names it.
+		path, err := resolveDatabasePath(explicit, "")
 		if err != nil {
 			return "", "", err
 		}

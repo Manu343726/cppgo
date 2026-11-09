@@ -5,10 +5,10 @@ package callback
 // callbackTableAddr is implemented in trampoline_amd64.s.
 func callbackTableAddr() uintptr
 
-// callSlotBytes is the size of one slot's CALL instruction: a five-byte
-// relative call. The trampoline divides the return address by it to recover the
-// slot, and the layout test below reads the instruction back to prove the
-// compiler and this file agree.
+// callSlotBytes is the size of one slot's CALL instruction: a five-byte relative
+// call. The trampoline divides the return address by it to recover the slot, and
+// the layout test reads the instruction back to prove the assembler and this file
+// agree.
 const callSlotBytes = 5
 
 // callSlotCount mirrors the number of CALL instructions emitted in
