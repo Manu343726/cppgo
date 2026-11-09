@@ -237,6 +237,9 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 	if binding.Owner != nil {
 		owner = binding.Owner.CxxName
 	}
+	if binding.castTo != nil {
+		return m.castTarget(binding)
+	}
 	if binding.memberField != nil {
 		return m.fieldTarget(binding, args)
 	}
@@ -340,6 +343,12 @@ func (m *packageModel) shimValue(binding *binding, call string) string {
 			return "static_cast<void *>(&(" + call + "))"
 		}
 		return "static_cast<void *>(" + call + ")"
+	}
+	if binding.Result != nil && binding.Result.Kind == goPointer && !binding.ViewResult {
+		// The C prototype names the pointer with the mapped scalar's type, and
+		// the declaration's own spelling may differ in qualification or in the
+		// signedness of char. A pointer cast is exact and says so.
+		return "reinterpret_cast<" + binding.Result.C + ">(" + call + ")"
 	}
 	return m.shimResultExpr(binding.Result, call)
 }

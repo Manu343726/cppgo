@@ -80,28 +80,3 @@ func TestUnimplementedErrorShape(t *testing.T) {
 	assert.Regexp(t, pattern, err.Error())
 	assert.Contains(t, err.Error(), "outside the emitted table")
 }
-
-// TestInheritanceRejection covers the construct left refused: inherited members
-// and base views are the next workstream's, and the message names them.
-func TestInheritanceRejection(t *testing.T) {
-	cases := []struct {
-		header string
-		want   string
-	}{
-		{"inherited.hpp", "inherited members and base views"},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.header, func(t *testing.T) {
-			t.Parallel()
-			cfg := Config{
-				Headers: []string{filepath.Join("testdata", "errors", tc.header)},
-				Package: "err",
-				Library: "liberr",
-			}
-			_, err := build(cfg)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.want)
-		})
-	}
-}

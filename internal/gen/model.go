@@ -116,6 +116,8 @@ type recordModel struct {
 	CopyConstructible    bool
 	// Comment is the C++ doc comment, normalised by the Go emitter.
 	Comment string
+	// Bases are the public base classes, transitively.
+	Bases []*baseModel
 }
 
 // fieldModel is one exported field of a mirrored record.
@@ -208,6 +210,13 @@ type binding struct {
 	fieldByValue bool
 	// fieldName overrides the Go base name a static data member takes.
 	fieldName string
+	// base is the base record an inherited method was copied from, nil for a
+	// method the record declares itself.
+	base *recordModel
+	// castTo is the record a base view converts to, nil for every other
+	// binding; dynamicCast makes it a dynamic_cast that may fail.
+	castTo      *recordModel
+	dynamicCast bool
 
 	Carrier carrier
 	Reason  string
@@ -427,6 +436,9 @@ func build(cfg Config) (*packageModel, error) {
 		return nil, err
 	}
 	if err := b.buildFieldAccessors(); err != nil {
+		return nil, err
+	}
+	if err := b.buildInheritance(); err != nil {
 		return nil, err
 	}
 	if err := b.assignNames(); err != nil {
@@ -1475,6 +1487,41 @@ func (b *builder) chooseCarrier(binding *binding) {
 	} else {
 		binding.ErrorResult = binding.Carrier.shimCarried() && binding.Status
 	}
+}
+
+// forceThunk re-routes a binding that was classified as direct to the shim. It
+// exists for the bindings whose call cannot be a transparent trampoline: a
+// static data member (the symbol is data), a field accessor (the address is a
+// member) and an inherited method (the receiver is a base subobject at an offset
+// only C++ knows).
+//
+// The status and the out-pointer are recomputed, because a direct binding never
+// had them.
+func (b *builder) forceThunk(binding *binding, reason string) {
+	binding.Carrier = thunk
+	binding.Reason = reason
+	binding.Status = !binding.sym.IsNoExcept || binding.hasStd || binding.fieldByValue
+	if !binding.Status {
+		binding.ErrorResult = false
+	} else {
+		binding.ErrorResult = true
+		if binding.Result != nil && binding.Out == nil && !binding.StdResult && !binding.ViewResult {
+			binding.Out = binding.Result
+			binding.OutLocal = outLocalType(binding.Result)
+			binding.Wire = append(binding.Wire, &wireArg{
+				label:    "out",
+				slotType: "unsafe.Pointer",
+				class:    classInt,
+				size:     8,
+				expr:     "unsafe.Pointer(&cppgoResult)",
+				keep:     "&cppgoResult",
+				cType:    outParamType(binding.Result),
+				cName:    "cppgo_result",
+			})
+		}
+	}
+	binding.Thunk = "cppgo_thunk_" + binding.ID
+	binding.Symbol = binding.Thunk
 }
 
 // statusNamed reports whether -status names this declaration, by qualified name

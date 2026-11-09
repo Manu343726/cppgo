@@ -742,7 +742,7 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		case binding.StdResult:
 			m.emitStdReturn(b, binding)
 		case binding.ViewResult:
-			m.emitViewReturn(b, binding, record, recv, "cppgoResult", true)
+			m.emitViewReturn(b, binding, record, recv, "cppgoResult")
 		case binding.Result != nil:
 			fmt.Fprintf(b, "\treturn %s, nil\n", convertResult(binding, "cppgoResult"))
 		default:
@@ -756,12 +756,12 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 			fmt.Fprintf(b, "\tvar cppgoResult %s\n", binding.OutLocal)
 			fmt.Fprintf(b, "\t%s\n", call)
 			m.emitKeepAlive(b, binding, ctx)
-			m.emitViewReturn(b, binding, record, recv, "cppgoResult", binding.ErrorResult)
+			m.emitViewReturn(b, binding, record, recv, "cppgoResult")
 			break
 		}
 		fmt.Fprintf(b, "\tcppgoRet := %s\n", call)
 		m.emitKeepAlive(b, binding, ctx)
-		m.emitViewReturn(b, binding, record, recv, "cppgoRet", binding.ErrorResult)
+		m.emitViewReturn(b, binding, record, recv, "cppgoRet")
 	case binding.Out != nil:
 		// A value the thunk writes into Go storage; a call that cannot fail has
 		// no error to report, so the result is the signature's only return.
@@ -871,7 +871,7 @@ func (m *packageModel) emitLengthChecks(b *strings.Builder, binding *binding) {
 // produced. That is what makes a method returning `T&` safe to bind: the object
 // lives until the last view is closed, and no address is handed out that
 // nothing owns.
-func (m *packageModel) emitViewReturn(b *strings.Builder, binding *binding, record *recordModel, recv, local string, hasError bool) {
+func (m *packageModel) emitViewReturn(b *strings.Builder, binding *binding, record *recordModel, recv, local string) {
 	// The view's Go type is the type the declaration returns: a field accessor
 	// returns the field's record, not the receiver's.
 	viewRecord := record
@@ -880,17 +880,24 @@ func (m *packageModel) emitViewReturn(b *strings.Builder, binding *binding, reco
 	}
 	b.WriteString("\t// A borrowed record result is a view: the receiver's object, one more reference.\n")
 	fmt.Fprintf(b, "\tif %s == nil {\n", local)
-	if hasError {
+	switch {
+	case binding.dynamicCast:
+		// A dynamic_cast that produced null: the object is not this type.
+		b.WriteString("\t\treturn nil, false\n\t}\n")
+	case binding.ErrorResult:
 		b.WriteString("\t\treturn nil, nil\n\t}\n")
-	} else {
+	default:
 		b.WriteString("\t\treturn nil\n\t}\n")
 	}
 	fmt.Fprintf(b, "\t%s.obj.Retain()\n", recv)
-	if hasError {
+	switch {
+	case binding.dynamicCast:
+		fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}, true\n", viewRecord.GoName, recv, local)
+	case binding.ErrorResult:
 		fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}, nil\n", viewRecord.GoName, recv, local)
-		return
+	default:
+		fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}\n", viewRecord.GoName, recv, local)
 	}
-	fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}\n", viewRecord.GoName, recv, local)
 }
 
 // emitKeepAlive pins every Go allocation the call handed to C++.
@@ -956,6 +963,9 @@ func goParams(params []*goParam) string {
 // goResults renders a Go result list.
 func goResults(binding *binding) string {
 	switch {
+	case binding.dynamicCast:
+		// A derived view reports whether the object really is that type.
+		return " (" + binding.Result.Go + ", bool)"
 	case binding.Result != nil && binding.ErrorResult:
 		return " (" + binding.Result.Go + ", error)"
 	case binding.Result != nil:

@@ -129,6 +129,19 @@ func (b *builder) newFieldBinding(owner *recordModel, field cxx.Field, write boo
 	return built, nil
 }
 
+// castTarget is the C++ expression a base view returns: a static_cast for
+// As<Base>, which the compiler resolves to the adjusted subobject (or through the
+// vtable for a virtual base), and a dynamic_cast for As<Derived>, which is the
+// only cast that can report that the object is not the type asked for.
+func (m *packageModel) castTarget(binding *binding) (string, error) {
+	from := "static_cast<::" + binding.Owner.CxxName + " *>(self)"
+	to := "::" + binding.castTo.CxxName
+	if binding.dynamicCast {
+		return "dynamic_cast<" + to + " *>(" + from + ")", nil
+	}
+	return "static_cast<" + to + " *>(" + from + ")", nil
+}
+
 // fieldTarget is the C++ expression a field accessor reads or writes, and the
 // value expression a setter assigns.
 func (m *packageModel) fieldTarget(binding *binding, args []string) (string, error) {

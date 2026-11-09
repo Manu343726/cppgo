@@ -71,10 +71,6 @@ func (b *builder) rejectUnimplemented() error {
 			// A class template is the generic API's input, not a record: the
 			// two-phase model in template.go decides what it can emit, and it
 			// names the construct it cannot.
-		case len(rec.Bases) > 0:
-			return recordError(rec, pending(
-				"inherited members and base views are not emitted by this build yet",
-				"bind the base class directly, or expose the derived members through a C++ wrapper"))
 		case len(rec.MemberTemplates) > 0:
 			return recordError(rec, pending(
 				fmt.Sprintf("the member function template %s is not emitted by this build yet", rec.MemberTemplates[0].QualifiedName),

@@ -111,7 +111,7 @@ extern "C" int32_t cppgo_thunk_6effb1881942(void * self, void * payload) {
 }
 
 extern "C" const int32_t * cppgo_thunk_7228c2b4cc86(const void * self) {
-	return static_cast<const ::fields::Settings *>(self)->source;
+	return reinterpret_cast<const int32_t *>(static_cast<const ::fields::Settings *>(self)->source);
 }
 
 extern "C" void cppgo_thunk_0fe1216633f0(void * self, const int32_t * source) {
