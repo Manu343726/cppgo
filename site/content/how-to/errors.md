@@ -118,9 +118,9 @@ if errors.As(err, &native) {
 [`cppgo.ErrClosed`]({{< ref "reference/runtime.md" >}}#errors). Three failures
 return or wrap it: a second `Close`, a `Symbol` call after `Close`, and a
 generated method that returns an error when its receiver is nil or already
-closed. The first two are the
-[runtime library methods]({{< ref "reference/runtime.md" >}}#loading-a-shared-object).
-Among those, `LastError` is the exception: it answers `nil` once the library is
+closed. The first two are
+[methods of the runtime library]({{< ref "reference/runtime.md" >}}#loading-a-shared-object).
+`LastError` is the exception: it answers `nil` once the library is
 closed, because there is no message left to read. A generated method with no
 error return has nowhere to put `ErrClosed`, so it panics in that state instead.
 A `CallError` has no comparable identity, so `errors.Is` on one answers false;

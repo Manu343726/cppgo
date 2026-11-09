@@ -267,7 +267,7 @@ runs the flow in phases, each named after what it produces:
 | Command | What it produces |
 |---|---|
 | `make lib` | `build/libmetrics.so` and `build/compile_commands.json`, by CMake |
-| `make gen` | the generic Go API, one assembly trampoline per binding — except one that passes a Go function to C++, and a template binding: those enter C++ through the runtime — plus `cppgoFree`, the C++ thunk sources, and `gen/libcppgo_metrics.so` |
+| `make gen` | the generic Go API, one assembly trampoline per binding — except one that passes a Go function to C++ and a template binding: those enter C++ through the runtime — plus `cppgoFree`, the C++ thunk sources, and `gen/libcppgo_metrics.so` |
 | `make scan` | the template types the program uses, added to the C++ side, which is then rebuilt |
 | `make app` | `build/app`, the Go program |
 | `make test` | the suite, twice |
@@ -279,7 +279,7 @@ function whose only job is to move arguments into the registers the C ABI
 expects and jump to an address; Go passes its arguments its own way, so one
 trampoline is generated per bound call — whether it reaches a symbol in your
 library or a thunk in the shim — except two: a binding that passes a Go function
-to C++, and a template binding. Both enter C++ through the runtime and have none.
+to C++ and a template binding. Both enter C++ through the runtime and have none.
 One more trampoline, `cppgoFree`, releases a `std::string` or `std::vector` the
 shim copied out. The *C ABI* is the platform's convention for a C call: which
 registers and which memory carry the arguments and the result. A *thunk* is a

@@ -92,7 +92,7 @@ your header + your compilation configuration
 | File | Contents |
 |---|---|
 | `zz_cppgo.gen.go` | the Go API, a load function, and one declaration per trampoline |
-| `zz_cppgo_amd64.s` | one NOSPLIT assembly trampoline per binding, except the bindings on the [reentrant carrier]({{< ref "explanation/carriers.md" >}}#reentrant) — a binding that passes a Go function to C++, and a template binding, enter C++ through `runtime.cgocall` instead — plus `cppgoFree`, the trampoline for the helper that frees a standard-library result the shim copied out. Each trampoline aligns the stack, makes the call, restores it |
+| `zz_cppgo_amd64.s` | one NOSPLIT assembly trampoline per binding, except the bindings on the [reentrant carrier]({{< ref "explanation/carriers.md" >}}#reentrant): a binding that passes a Go function to C++ and a template binding enter C++ through `runtime.cgocall` instead and have none. `cppgoFree` is the extra trampoline for the helper that frees a standard-library result the shim copied out. Each trampoline aligns the stack, makes the call, restores it |
 | `cppgo_shim/zz_cppgo_shim.h` | the `extern "C"` prototypes of the thunks (`extern "C"` gives a C++ function the C calling convention and an unmangled name, so a plain function pointer can reach it) |
 | `cppgo_shim/zz_cppgo_shim.cpp` | the thunks themselves, one per non-direct binding |
 | `libcppgo_<package>.so` | the shim, compiled by cppgo and linked against your library |
