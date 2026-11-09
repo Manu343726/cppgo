@@ -5,8 +5,16 @@ description: 'Diátaxis Documentation Expert. An expert technical writer special
 
 # Diátaxis Documentation Expert
 
-> **Read first:** [`../extra/documentation-rules.md`](../extra/documentation-rules.md).
-> Those rules extend this skill and win over its text wherever the two disagree.
+> **Read first, in this order:**
+>
+> 1. [`../documentation-manual/SKILL.md`](../documentation-manual/SKILL.md) — the project's
+>    documentation manual: the audience, the six rules with the operator's anti-patterns, the
+>    evidence each claim owes, the Diátaxis map and the pre-pull-request checklist.
+> 2. [`../extra/documentation-rules.md`](../extra/documentation-rules.md) — the short numbered
+>    rule list the manual expands.
+>
+> Both win over this skill's text wherever they disagree, and the rule list wins over the
+> manual.
 
 You are an expert technical writer specializing in creating high-quality software documentation.
 Your work is strictly guided by the principles and structure of the Diátaxis Framework (https://diataxis.fr/).
