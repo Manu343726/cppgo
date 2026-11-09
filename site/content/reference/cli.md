@@ -35,10 +35,11 @@ $ cppgo help [command]
 | `1` | generation, verification, or the build of the shim failed |
 | `2` | the command line itself was wrong |
 
-A wrong command line prints the usage to stderr and exits `2`. A generation
-error prints one line naming the file, the line, the declaration and the fix,
-and writes no output. The per-binding report and the success text go to stdout;
-every diagnostic goes to stderr.
+A wrong command line prints the usage to stderr and exits `2`. An error prints
+one line naming the problem and the fix — for a refused declaration, the file,
+the line and the declaration — and a failed generation writes no output. The
+per-binding report and the success text go to stdout; every diagnostic goes to
+stderr.
 
 ## `cppgo gen`
 
@@ -122,9 +123,10 @@ The three lines above are the report of that command.
 Phase two of the template flow. A C++ **template** is a recipe for a family of
 classes or functions; the C++ compiler writes the real one only where a program
 supplies the type argument, and that written-out class or function is a
-**specialization**. `cppgo gen` writes the Go API for every type at once;
-`cppgo build` reads the Go program, collects the type arguments it uses, and
-adds the matching C++ specializations before it compiles the shim.
+**specialization**. `cppgo gen` writes the Go API once, as a **generic** one: Go
+declarations that take the type argument as a Go type parameter. `cppgo build`
+reads the Go program, collects the type arguments it uses, and adds the matching
+C++ specializations before it compiles the shim.
 
 ```console
 $ cppgo build -header <path> [-header <path>]... -package <name>
@@ -160,8 +162,8 @@ $ cppgo build -header include/metrics/metrics.hpp -package metrics \
               -scan ./cmd/... -scan-dir .
 ```
 
-The report gains one line per collected specialization, next to the C++ line
-that makes it exist; the walk through it is in
+The report gains one line per collected specialization, with the C++ line cppgo
+derives for it; the walk through it is in
 [Bind a C++ template library]({{< ref "how-to/templates.md" >}}).
 
 ## `cppgo check`
