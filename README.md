@@ -272,13 +272,14 @@ Each module's README lists every declaration it binds and every one it refuses,
 with the generator's message.
 
 What a slice binds is what the generator carries today, not the whole library.
-`cv::Mat`, `af::array` and Eigen's matrix types are not bound, so no image is
-loaded or converted, no array is created, reduced or multiplied, and no matrix
-product is computed through these modules. The generator refuses a record that
-declares something it cannot carry, which is what `cv::Mat` and `af::array` do,
-and it cannot read an Eigen matrix specialization at all;
-[Limits](https://manu343726.github.io/cppgo/explanation/limits/) names the
-refusal behind each of them.
+`cv::Mat`, `af::array` and Eigen's matrix types are not bound by these modules,
+so no image is loaded or converted, no array is created, reduced or multiplied,
+and no matrix product is computed through them. A record binds only up to what
+can cross: `cv::Mat` and `af::array` keep no constructor set, because each
+declares one member the generator cannot carry, and an Eigen matrix
+specialization cannot be instantiated for the generator to read at all.
+[Limits](https://manu343726.github.io/cppgo/explanation/limits/) names each
+refusal.
 
 ## Limits
 
