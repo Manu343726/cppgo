@@ -180,11 +180,11 @@ protects nothing.
 
 ## Objects
 
-The garbage collector may move a Go value on the heap unless it is told that the
+The Go runtime is free to move a value on the heap unless it is told that the
 address is in use. **Pinning** is that instruction, and `runtime.Pinner` is the
 Go type that records it: a pinned object stays at its address until it is
-unpinned. That is what lets C++ hold the address as `this`, the hidden pointer
-to the object a member function was called on.
+unpinned. That is what lets C++ hold the address as `this`, the hidden pointer to
+the object a member function was called on.
 
 ```go
 // NewObject allocates size bytes of zeroed storage aligned to align, pins it,

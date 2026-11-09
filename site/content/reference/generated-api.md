@@ -162,8 +162,8 @@ The rules that hold for every class:
 
 - `New<Type>` is a constructor. A class with more than one constructor has an
   **overload set** — two declarations of the same name that differ in parameter
-  types — and the extra constructors carry the same suffix as functions, the
-  CamelCase Go type of each parameter appended, applied to `New<Type>`.
+  types — and a parameterless constructor keeps `New<Type>` while every other
+  one appends the CamelCase Go type of each parameter, as functions do.
 - `Close` releases the object. There is no finalizer — no function the garbage
   collector runs to destroy it — so closing is the caller's job.
 - `Clone` is the copy constructor. A move constructor — the C++ constructor that
@@ -398,10 +398,9 @@ The limits:
 - the call carries at most **six integer and eight floating-point arguments**,
   and one result. A callback that needs more is a generation error naming the
   argument;
-- argument and result types are scalars — single values such as integers, floats
-  and pointers, as opposed to records and standard-library types — and pointers
-  to them. A `std::string` parameter or a record passed by value in a callback is
-  a generation error;
+- argument and result types are integers, `bool`, `double` and pointers to them;
+  a `float32` argument is refused (use `double`), and a `std::string`, a record,
+  a slice or an array is a generation error;
 - a panic inside the callback does not reach C++: the result is zeroed and the
   panic is re-raised in Go when the foreign call returns;
 - a callback that has to report a failure writes a status and the C++ side checks

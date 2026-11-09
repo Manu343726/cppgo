@@ -63,7 +63,7 @@ $ cppgo gen -header <path> [-header <path>]... -package <name>
 | `-compile-commands <path>` | discovered | `compile_commands.json`, or the directory that holds it, to take the header's flags from. That file is the **compilation database**: it records the compiler flags each source file of the project is built with |
 | `-bind <qualified>` | everything in the header | add a root: the namespace, class, member or function to start selecting from; repeatable. A root is one declaration and everything below it |
 | `-exclude <qualified>` | none | remove a root; repeatable. An entry that matches nothing is an error |
-| `-instantiate '<specialization>'` | none | emit a concrete template specialization: a template with its type argument supplied, e.g. `metrics::Accumulator<double>`; repeatable. The header must make the specialization visible, e.g. `template class metrics::Accumulator<double>;` |
+| `-instantiate '<specialization>'` | none | emit a concrete template specialization: a template with its type argument supplied, e.g. `metrics::Accumulator<double>`; repeatable. The header must make the specialization visible, e.g. `template class ::metrics::Accumulator<double>;` |
 | `-rename '<signature>=<GoName>'` | none | resolve a Go name collision; repeatable |
 | `-status <qualified>` | none | a declaration whose 32-bit return is a status code — `0` means success and any other value a failure: the Go signature returns only an error, and a non-zero value becomes it; repeatable |
 | `-cxx <compiler>` | `g++`, then `clang++` | the C++ compiler for the generated side |
@@ -87,8 +87,8 @@ contains is in [Architecture]({{< ref "explanation/architecture.md" >}}#the-gene
 **Report.** On stdout, one line per binding, then the compiler line:
 
 ```
-mathx::Vector::scale(double) noexcept        direct _ZN5mathx6Vector5scaleEd     noexcept, not virtual, register class; the library exports the symbol
 mathx::Vector::norm() const                  thunk  cppgo_thunk_49993cda6560     not noexcept: an exception would unwind into Go
+mathx::Vector::scale(double) noexcept        direct _ZN5mathx6Vector5scaleEd     noexcept, not virtual, register class; the library exports the symbol
 cppgo: built libcppgo_mathx.so with /usr/bin/g++
 ```
 
@@ -137,9 +137,13 @@ $ cppgo build -header <path> [-header <path>]... -package <name>
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-scan <package>` | *required* | a Go package pattern — a path with `...` wildcards, as the `go` command accepts — whose uses of the generated generic API are collected; repeatable. The source is read, not run |
+| `-scan <package>` | none | a Go package pattern — a path with `...` wildcards, as the `go` command accepts — whose uses of the generated generic API are collected; repeatable. The source is read, not run. Without it, `build` writes the generic API and adds no specialization |
 | `-scan-dir <dir>` | `.` | the directory the patterns resolve against |
 | the rest | as `gen` | the same manifest flags |
+
+`cppgo help build` prints `-scan` without brackets, but the command does not
+refuse a run without it: it writes the generic API and collects no type
+argument. Pass the program's packages so the shim gets its specializations.
 
 If the program uses an instantiation the shim has no specialization for, the
 call returns an error naming the exact `template ...;` line to add; it never
