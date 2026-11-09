@@ -126,8 +126,11 @@ throws, so it takes a thunk. The other three `noexcept` functions in the header,
 "Supported" means a generated package does it today. "Refused" means generation
 stops with a message naming the declaration and the fix. "Designed" means the
 mechanism is stated in the design and is not in this build. A row that adds a
-clause of its own — *generated and compiled, not executed*, *emitted, not
-exercised by an example* — says exactly what has and has not been run.
+clause of its own says exactly how far the construct has been carried:
+**measured** means the test fixture for the carrier calls it against a real
+compiler, **generated and compiled, not executed** means the code is emitted and
+built but never called, and **emitted, not exercised by an example** means no
+example runs it.
 
 Two words in the table are the convention's names for its argument registers:
 **INTEGER**, the six general-purpose registers a call passes integers and
@@ -142,9 +145,9 @@ pointers in, and **SSE**, the eight floating-point registers beside them.
 | `std::string` | thunk (constructed and copied in the C++ side) | supported |
 | `std::string_view`, `std::span` | thunk (borrowed, valid for the call) | supported |
 | `std::vector<T>` | thunk | supported |
-| `std::array<T,N>` | thunk, by value | supported |
-| `std::optional<T>` | thunk; Go value is `*T` | supported |
-| `std::unique_ptr`, `std::shared_ptr` | — | **refused** |
+| `std::array<T,N>` | thunk, by value (a fixed-size array) | supported |
+| `std::optional<T>` | thunk; Go value is `*T` (a C++ value that may be absent) | supported |
+| `std::unique_ptr`, `std::shared_ptr` | — | **refused**: they are owning pointers, which free their object |
 | POD ≤ 16 bytes by value | thunk | supported |
 | POD > 16 bytes / MEMORY class by value | thunk, through an sret pointer (a hidden first argument through which the callee writes a large result) | generated and compiled, not executed |
 | non-POD by value | thunk | measured, **refused by the generator** |
@@ -152,10 +155,10 @@ pointers in, and **SSE**, the eight floating-point registers beside them.
 | exception-throwing call | thunk (`try`/`catch`) | supported |
 | callback parameter, `std::function` | reentrant | emitted, not exercised by an example |
 | class / function template | thunk, called reentrantly | supported |
-| static member | thunk, no `this` | supported |
+| static member | thunk, no `this` (the object a method was called on) | supported |
 | enum | — | **refused** |
-| operators, conversion operators | — | **refused** |
-| function-like macro that is the API | — | not bindable: a macro's expansion is not a declaration |
+| operators, conversion operators (an operator that converts the object to another type) | — | **refused** |
+| function-like macro that is the API (a macro is a text substitution performed before compilation) | — | not bindable: a macro's expansion is not a declaration |
 
 ## Related
 

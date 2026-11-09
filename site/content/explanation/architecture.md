@@ -380,12 +380,12 @@ cppgo: built libcppgo_mathx.so with /usr/bin/g++
 
 The columns are the C++ declaration, its carrier, the symbol the call goes to and
 the reason for that carrier — `register class` there saying that the values fit
-the argument registers, so the call needs no memory on the way in. When `-library` names a readable file, a direct
-binding is cross-checked against the library's dynamic symbol table — the list of
-symbols a shared object publishes to the loader — and its generated comment ends
-`, verified against libmathx.so`. The last line names the compiler that built the
-shim, which is the earliest warning if it is not the one your library was built
-with.
+the argument registers, so the call needs no memory on the way in. When
+`-library` names a readable file, a direct binding is cross-checked against the
+library's dynamic symbol table — the list of symbols a shared object publishes to
+the loader — and its generated comment ends `, verified against libmathx.so`. The
+last line names the compiler that built the shim, which is the earliest warning
+if it is not the one your library was built with.
 
 **The evidence line.** Every binding carries one comment naming the C++
 declaration, its mangled symbol and the carrier:

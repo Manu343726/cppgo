@@ -30,7 +30,7 @@ and the callback path reads only those registers.
 | An exception with no C++ frame terminates the process | the [direct path]({{< ref "explanation/carriers.md" >}}#direct) has no handler above it, and unwinding through Go frames is not supported, because a Go frame carries no unwind information | give the library a `noexcept` entry point — one that promises not to throw — that reports failure as a status |
 | A callback cannot be called from a direct binding | the runtime only accepts a callback on a thread already inside a foreign call | none: bindings that take a Go function use the [reentrant carrier]({{< ref "explanation/carriers.md" >}}#reentrant) automatically |
 | A callback carries at most 6 integer and 8 floating-point arguments, and one result | the callback entry receives the register file and nothing else | take a pointer to a struct |
-| A `std::` layout appears only in C++ | constructing a `std::string` or `std::function` from a Go-side layout — the type's in-memory representation, the bytes and their order — works only for instantiations the library happens to export | let cppgo construct it (it does, for a parameter or a result) |
+| A `std::` layout appears only in C++ | constructing a `std::string` or `std::function` (C++'s wrapper around any callable) from a Go-side layout — the type's in-memory representation, the bytes and their order — works only for instantiations the library happens to export | let cppgo construct it (it does, for a parameter or a result) |
 | A function-like macro that *is* the API cannot be bound | a macro is a text substitution performed before compilation, and its expansion is not a declaration | ask the library for a function |
 | A template type nobody asked for does not exist | a template only exists where it is instantiated | run `cppgo build -scan` with the program that uses it |
 | `long double` and `__int128` have no Go value type | they are the two C++ types wider than 64 bits, and there is no Go type of that width | widen or narrow at the C++ boundary |
@@ -38,16 +38,20 @@ and the callback path reads only those registers.
 
 ## Not supported yet
 
-Each message names the declaration and what you can supply today. Five terms from
-the messages and the fixes are worth defining first. A **POD** — *plain old data*
-— is a struct with no constructor, no virtual function and no private members,
-whose bytes are its whole representation. An **opaque record** is a C++ struct
-whose layout Go cannot see, so Go holds only a pointer to storage C++ owns. A
-**bitfield** packs several fields into the bits of one integer, a **packed
-struct** has had the padding between its fields removed, and a **union** lets
-several members share the same storage. The messages also name the convention's
-two classes of argument register: **INTEGER**, the six general-purpose ones, and
-**SSE**, the eight floating-point ones beside them.
+Each message names the declaration and what you can supply today. The messages
+and the fixes use a handful of terms that need defining first. A **record** is a
+struct or class used as a bundle of fields, and it is **mirrorable** when Go can
+hold its bytes directly — every field public, the natural Go layout, and no
+pointer, reference or other field Go cannot represent. A **POD** — *plain old
+data* — is the strongest form of that: a record with no constructor, no virtual
+function and no private members, whose bytes are its whole representation. An
+**opaque record** is the other extreme: a C++ struct whose layout Go cannot see,
+so Go holds only a pointer to storage C++ owns. A **bitfield** packs several
+fields into the bits of one integer, a **packed struct** has had the padding
+between its fields removed, and a **union** lets several members share the same
+storage. The messages also name the convention's two classes of argument
+register: **INTEGER**, the six general-purpose ones, and **SSE**, the eight
+floating-point ones beside them.
 
 | Construct | Message | Workaround |
 |---|---|---|
@@ -83,7 +87,7 @@ reports failure into a Go `error`.
 
 | Item | What is missing | What you can rely on today |
 |---|---|---|
-| the full error projection | `std::error_code`, `std::expected`, `errno`, `std::variant`, a configured `bool` + out-parameter, custom result types | exceptions and `-status` become Go errors; a function returning `std::error_code` is refused at generation time |
+| the full error projection | `std::error_code` (a library's own error value), `std::expected` (a value, or the error instead), `errno` (C's per-thread error number), `std::variant` (one of several types), a configured `bool` + out-parameter, custom result types | exceptions and `-status` become Go errors; a function returning `std::error_code` is refused at generation time |
 | generics breadth, operators, inheritance | class templates bind for scalar type arguments and non-type dimensions (a template parameter that is a value rather than a type); operators, member templates, base classes and enums are refused | every refusal names the declaration and the fix |
 | the OpenCV, ArrayFire and Eigen integrations | a generated binding tested against each real library | the two-phase template flow the Eigen integration needs exists ([Architecture]({{< ref "explanation/architecture.md" >}}#templates-why-two-phases)) |
 | embedded generated packages | `cppgo.OpenFS` works; `Open`, the load function `cppgo gen` writes, does not call it yet | deploy the two C++ files, or use the runtime directly |
