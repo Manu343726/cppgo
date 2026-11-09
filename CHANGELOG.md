@@ -3,9 +3,9 @@
 Notable changes, in the format of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 The project has **no tagged release yet** (`git tag` is empty at this commit) and
-no documented release procedure, so everything below is unreleased. Pull-request
-numbers refer to the project's
-[tracker](https://git.manu343726.com/manu343726/cppgo/pulls).
+no documented release procedure, so everything below is unreleased. A number in
+parentheses refers to the project's
+[issue tracker](https://git.manu343726.com/manu343726/cppgo/issues).
 
 ## Unreleased
 
@@ -56,7 +56,8 @@ numbers refer to the project's
   and the compiled shim is resolved relative to the package, not to the machine
   that generated it (#12).
 - **`DESIGN.md` states the v4 contract**, with each mechanism either naming the
-  test that measures it or marked as designed.
+  test that measures it or marked as designed, so a reader can tell what the
+  code promises from what it only plans.
 
 ### Removed
 
