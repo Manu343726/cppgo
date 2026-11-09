@@ -36,10 +36,11 @@ $ cppgo help [command]
 | `2` | the command line itself was wrong |
 
 A wrong command line prints the usage to stderr and exits `2`. An error prints
-one line naming the problem and the fix — for a refused declaration, the file,
-the line and the declaration — and a failed generation writes no output. The
-per-binding report and the success text go to stdout; every diagnostic goes to
-stderr.
+one line naming the problem and the fix, and a failed generation writes no
+output. A warning names the declaration and the fix, leaves that declaration out
+of the package, and does not stop the run: the generated files are written and
+the command exits `0`. The per-binding report and the success text go to stdout;
+every diagnostic goes to stderr.
 
 ## `cppgo gen`
 
