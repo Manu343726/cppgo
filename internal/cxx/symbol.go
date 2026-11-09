@@ -1,6 +1,7 @@
 package cxx
 
 import (
+	"path/filepath"
 	"strings"
 )
 
@@ -117,6 +118,13 @@ type Param struct {
 	// incomplete, variable or dependent array. A dependent size is resolved
 	// when a template argument supplies it.
 	ArraySize int64
+	// HasDefault is true when the parameter declares a default argument. The
+	// default is applied by the caller's compiler, so a binding that omits it
+	// must be written in C++.
+	HasDefault bool
+	// DefaultText is the default expression as the declaration wrote it, for
+	// diagnostics; the generator never evaluates it.
+	DefaultText string
 }
 
 // IsStream reports whether the value is a canonical C++ stream reference or
@@ -253,6 +261,9 @@ type Symbol struct {
 	// DefFile and DefLine locate the out-of-line definition, when there is one.
 	DefFile string
 	DefLine int
+	// Comment is the raw doc comment the declaration carries, empty when it has
+	// none. The generator turns it into the Go doc comment.
+	Comment string
 }
 
 // isDeleted and isDefaulted read the special-member flags, but only for the
@@ -429,7 +440,7 @@ func (e *extractor) visit(cursor, parent CXCursor) int32 {
 // collect turns one function cursor into a Symbol.
 func (e *extractor) collect(cursor, parent CXCursor) {
 	loc := e.l.f.getCursorLocation(cursor)
-	if e.l.f.locationIsInSystemHeader(loc) != 0 {
+	if !e.tu.selectable(cursor) {
 		// std:: and friends: not ours to bind, and they would bury the
 		// interesting symbols in noise.
 		return
@@ -456,6 +467,7 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 	}
 	sym.IsConst, sym.IsVirtual, sym.IsStatic = e.l.qualifiers(cursor, sym.Kind)
 	sym.DeclFile, sym.DeclLine = e.l.locationValues(loc)
+	sym.Comment = e.l.comment(cursor)
 
 	if e.l.f.isCursorDefinition(cursor) != 0 {
 		// A definition inside the class definition is implicitly inline and
@@ -495,6 +507,7 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 			sym.Params = append(sym.Params, e.l.param(e.l.f.getArgType(funcType, i)))
 		}
 		e.l.paramNames(cursor, sym.Params)
+		e.l.paramDefaults(cursor, sym.Params)
 	}
 	if sym.Kind == Constructor {
 		// A copy constructor is Clone(), not a factory, and a move
@@ -549,6 +562,9 @@ func mergeInto(into *Symbol, from Symbol) {
 	}
 	if into.Parent == "" {
 		into.Parent = from.Parent
+	}
+	if into.Comment == "" {
+		into.Comment = from.Comment
 	}
 	if into.Access == AccessNone {
 		into.Access = from.Access
@@ -857,6 +873,16 @@ func (l *Libclang) pointee(surface CXType) *Param {
 	return &p
 }
 
+// comment returns the raw doc comment attached to a declaration, or "" when it
+// has none. The text is exactly what the source says; normalising it for the Go
+// documentation is the generator's job.
+func (l *Libclang) comment(cursor CXCursor) string {
+	if l.f.cursorRawComment == nil {
+		return ""
+	}
+	return l.str(l.f.cursorRawComment(cursor))
+}
+
 // paramNames fills each parameter's declared name from the function cursor's
 // argument declarations, so the generated Go signature uses the names the C++
 // header used. A declaration that omitted a name yields "", and a cursor whose
@@ -870,6 +896,66 @@ func (l *Libclang) paramNames(cursor CXCursor, params []Param) {
 		}
 		params[i].Name = l.str(l.f.getCursorSpelling(arg))
 	}
+}
+
+// paramDefaults fills each parameter's default-argument flag from the argument
+// cursors. libclang exposes no "has default" query, so the answer comes from the
+// argument's pretty-printed declaration: "int mode = 3" declares one, "double
+// factor" does not. The default's text is kept and never evaluated.
+func (l *Libclang) paramDefaults(cursor CXCursor, params []Param) {
+	if l.f.cursorNumArguments == nil || l.f.cursorPrettyPrinted == nil {
+		return
+	}
+	if n := int(l.f.cursorNumArguments(cursor)); n < len(params) {
+		// A variadic function or a template reports fewer arguments than the
+		// type has; a default cannot be read for a parameter with no cursor.
+		return
+	}
+	for i := range params {
+		arg := l.f.cursorGetArgument(cursor, uint32(i))
+		if !l.cursorIsValid(arg) {
+			continue
+		}
+		text := l.str(l.f.cursorPrettyPrinted(arg, l.f.cursorPrintingPolicy(arg)))
+		value, ok := defaultArgument(text)
+		if !ok {
+			continue
+		}
+		params[i].HasDefault = true
+		params[i].DefaultText = value
+	}
+}
+
+// defaultArgument splits the default expression out of a parameter's printed
+// declaration. The "=" must be at the top level of the declaration: one inside
+// a template argument list, a pair of parentheses or a lambda is part of the
+// type or of the expression, not the default's separator.
+func defaultArgument(text string) (string, bool) {
+	depth := 0
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '(', '[', '{', '<':
+			depth++
+		case ')', ']', '}', '>':
+			if depth > 0 {
+				depth--
+			}
+		case '=':
+			if depth != 0 {
+				continue
+			}
+			// A "==", "!=", "<=", ">=" or "+=" is part of an expression, never
+			// the separator; require a space-delimited "=".
+			if i > 0 && strings.ContainsRune("=!<>+-*/%&|^", rune(text[i-1])) {
+				continue
+			}
+			if i+1 < len(text) && strings.ContainsRune("=!<>", rune(text[i+1])) {
+				continue
+			}
+			return strings.TrimSpace(text[i+1:]), true
+		}
+	}
+	return "", false
 }
 
 // isUnsignedKind reports whether an integer type kind is unsigned.
@@ -980,4 +1066,35 @@ func (l *Libclang) locationValues(loc CXSourceLocation) (string, int) {
 	// clang_getFileName(NULL) is documented to return an empty string, so no
 	// null check is needed here.
 	return l.str(l.f.getFileName(file)), int(line)
+}
+
+// selectable reports whether a declaration belongs to the API this unit binds:
+// everything outside a system header, plus the system headers under the unit's
+// roots. See ParseTranslationUnitIn for why the roots exist.
+func (tu *TU) selectable(cursor CXCursor) bool {
+	loc := tu.l.f.getCursorLocation(cursor)
+	if tu.l.f.locationIsInSystemHeader(loc) == 0 {
+		return true
+	}
+	file, _ := tu.l.locationValues(loc)
+	if file == "" {
+		return false
+	}
+	if abs, err := filepath.Abs(file); err == nil {
+		file = abs
+	}
+	file = filepath.Clean(file)
+	for _, root := range tu.Roots {
+		if root == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		root = filepath.Clean(root)
+		if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

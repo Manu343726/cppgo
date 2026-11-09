@@ -335,22 +335,27 @@ type libclangFuncs struct {
 	getTranslationUnitCursor func(tu uintptr) CXCursor
 
 	// Cursor inspection.
-	visitChildren        func(parent CXCursor, visitor uintptr, clientData unsafe.Pointer) uint32
-	getCursorKind        func(CXCursor) int32
-	getCursorSpelling    func(CXCursor) CXString
-	getCursorDisplayName func(CXCursor) CXString
-	getCursorType        func(CXCursor) CXType
-	getCursorLocation    func(CXCursor) CXSourceLocation
-	getCursorExtent      func(CXCursor) CXSourceRange
-	getRangeStart        func(CXSourceRange) CXSourceLocation
-	getRangeEnd          func(CXSourceRange) CXSourceLocation
-	isCursorDefinition   func(CXCursor) int32
-	isFunctionInlined    func(CXCursor) int32
-	getSemanticParent    func(CXCursor) CXCursor
-	getCursorDefinition  func(CXCursor) CXCursor
-	cursorMangling       func(CXCursor) CXString
-	isVirtualBase        func(CXCursor) int32
-	cursorGetArgument    func(CXCursor, uint32) CXCursor
+	visitChildren         func(parent CXCursor, visitor uintptr, clientData unsafe.Pointer) uint32
+	getCursorKind         func(CXCursor) int32
+	getCursorSpelling     func(CXCursor) CXString
+	getCursorDisplayName  func(CXCursor) CXString
+	getCursorType         func(CXCursor) CXType
+	getCursorLocation     func(CXCursor) CXSourceLocation
+	getCursorExtent       func(CXCursor) CXSourceRange
+	getRangeStart         func(CXSourceRange) CXSourceLocation
+	getRangeEnd           func(CXSourceRange) CXSourceLocation
+	isCursorDefinition    func(CXCursor) int32
+	isFunctionInlined     func(CXCursor) int32
+	getSemanticParent     func(CXCursor) CXCursor
+	getCursorDefinition   func(CXCursor) CXCursor
+	cursorMangling        func(CXCursor) CXString
+	isVirtualBase         func(CXCursor) int32
+	cursorGetArgument     func(CXCursor, uint32) CXCursor
+	cursorRawComment      func(CXCursor) CXString
+	cursorNumArguments    func(CXCursor) int32
+	cursorPrettyPrinted   func(CXCursor, uintptr) CXString
+	cursorPrintingPolicy  func(CXCursor) uintptr
+	printingPolicyDispose func(uintptr)
 
 	// Methods and linkage.
 	getCursorStorageClass        func(CXCursor) int32
@@ -456,6 +461,11 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_Cursor_getMangling", &f.cursorMangling},
 		{"clang_isVirtualBase", &f.isVirtualBase},
 		{"clang_Cursor_getArgument", &f.cursorGetArgument},
+		{"clang_Cursor_getRawCommentText", &f.cursorRawComment},
+		{"clang_Cursor_getNumArguments", &f.cursorNumArguments},
+		{"clang_getCursorPrettyPrinted", &f.cursorPrettyPrinted},
+		{"clang_getCursorPrintingPolicy", &f.cursorPrintingPolicy},
+		{"clang_PrintingPolicy_dispose", &f.printingPolicyDispose},
 		{"clang_Cursor_getStorageClass", &f.getCursorStorageClass},
 		{"clang_CXXMethod_isStatic", &f.methodIsStatic},
 		{"clang_CXXMethod_isVirtual", &f.methodIsVirtual},
@@ -844,11 +854,16 @@ func (l *Libclang) visit(parent CXCursor, fn visitorFunc) error {
 
 // TU is a parsed translation unit. It must be closed.
 type TU struct {
-	l               *Libclang
-	index           uintptr
-	tu              uintptr
-	File            string   // the main file, as given
-	Args            []string // the flags the unit was parsed with
+	l     *Libclang
+	index uintptr
+	tu    uintptr
+	File  string   // the main file, as given
+	Args  []string // the flags the unit was parsed with
+	// Roots are the include directories the declarations are read from. A
+	// declaration in a system header is selectable when its file is one of
+	// them, because a library installed under /usr/include is still the header
+	// the caller named.
+	Roots           []string
 	once            sync.Once
 	symbols         []Symbol
 	byName          map[string][]int
@@ -865,6 +880,19 @@ type TU struct {
 // ParseTranslationUnit parses file with the given command-line flags. The flags
 // are the ones a compiler would accept, excluding the input file itself.
 func (l *Libclang) ParseTranslationUnit(file string, args []string) (*TU, error) {
+	return l.ParseTranslationUnitIn(file, args, nil)
+}
+
+// ParseTranslationUnitIn parses file and keeps the declarations that live in a
+// system header only when their file is under one of roots.
+//
+// A compiler marks a directory under its own system include prefix as holding
+// system headers, so a library installed in /usr/include or /usr/local/include
+// is a system header even when the caller passed its directory with -I. The
+// headers of that library are the API the caller named, and they are what roots
+// selects; every other system header (the standard library and whatever else
+// the include graph pulls in) stays out of the model.
+func (l *Libclang) ParseTranslationUnitIn(file string, args []string, roots []string) (*TU, error) {
 	if l.isClosed() {
 		return nil, ErrClosed
 	}
@@ -903,7 +931,7 @@ func (l *Libclang) ParseTranslationUnit(file string, args []string) (*TU, error)
 		l.f.disposeIndex(index)
 		return nil, fmt.Errorf("cxx: parsing %s: %s", file, parseErrorName(code))
 	}
-	return &TU{l: l, index: index, tu: tu, File: file, Args: append([]string(nil), args...)}, nil
+	return &TU{l: l, index: index, tu: tu, File: file, Args: append([]string(nil), args...), Roots: append([]string(nil), roots...)}, nil
 }
 
 // Close disposes the translation unit and its index.

@@ -277,6 +277,53 @@ func rebasePath(value, dir string) string {
 	return filepath.Clean(filepath.Join(dir, value))
 }
 
+// includeSearchFlags are the arguments whose value is an include search
+// directory.
+var includeSearchFlags = map[string]bool{
+	"-I": true, "-isystem": true, "-iquote": true, "-idirafter": true,
+}
+
+// includeRoots returns the directories whose system-header declarations belong
+// to the header being bound: the longest include search directory in args that
+// contains file, or the file's own directory when no include path contains it.
+//
+// A compiler treats a directory under its own system include prefix
+// (/usr/include, /usr/local/include) as system whatever spelling put it on the
+// search path, so a library installed there is a system header. The named
+// header still names the API, and this is the directory that proves it. See
+// ParseTranslationUnitIn.
+func includeRoots(file string, args []string) []string {
+	best := ""
+	for i := 0; i < len(args); i++ {
+		flag, value, ok := splitPathFlag(args[i])
+		if !ok {
+			if !includeSearchFlags[args[i]] || i+1 >= len(args) {
+				continue
+			}
+			flag, value = args[i], args[i+1]
+			i++
+		}
+		if !includeSearchFlags[flag] || value == "" || strings.HasPrefix(value, "-") {
+			continue
+		}
+		root := value
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		root = filepath.Clean(root)
+		if file != root && !strings.HasPrefix(file, root+string(filepath.Separator)) {
+			continue
+		}
+		if len(root) > len(best) {
+			best = root
+		}
+	}
+	if best == "" {
+		return []string{filepath.Dir(file)}
+	}
+	return []string{best}
+}
+
 // sanitizeArgs drops the arguments that make sense for a compiler invocation
 // but not for a parse: the input file, -c, and "-o value". Dependency and
 // provenance flags (-MD, -MF, ...) are left alone; libclang ignores them.

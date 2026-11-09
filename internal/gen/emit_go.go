@@ -47,6 +47,9 @@ func cppgoBool(v bool) int64 {
 	for _, record := range m.records {
 		m.emitRecord(&b, record)
 	}
+	for _, enum := range m.enums {
+		m.emitEnum(&b, enum)
+	}
 	m.emitTemplates(&b)
 	m.emitPackageFunctions(&b)
 	m.emitTrampolineDeclarations(&b)
@@ -345,9 +348,12 @@ func (m *packageModel) emitMirroredType(b *strings.Builder, record *recordModel)
 	for _, field := range record.Fields {
 		offsets = append(offsets, fmt.Sprintf("%s at offset %d", field.GoName, field.Offset))
 	}
-	fmt.Fprintf(b, "// %s is %s: a POD, %d bytes, %s.\n", record.GoName, record.CxxName, record.Size, strings.Join(offsets, ", "))
+	fmt.Fprintf(b, "%s\n", docBlock(record.GoName, fmt.Sprintf("%s is %s: a POD, %d bytes, %s.", record.GoName, record.CxxName, record.Size, strings.Join(offsets, ", ")), record.Comment))
 	fmt.Fprintf(b, "type %s struct {\n", record.GoName)
 	for _, field := range record.Fields {
+		if doc := commentLines(field.Comment); doc != "" {
+			fmt.Fprintf(b, "%s", indentLines(doc, "\t"))
+		}
 		fmt.Fprintf(b, "\t%s %s\n", field.GoName, field.Type.Go)
 	}
 	b.WriteString("}\n\n")
@@ -361,17 +367,20 @@ func (m *packageModel) emitMirroredType(b *strings.Builder, record *recordModel)
 
 // emitOpaqueType writes the Go value that owns C++ storage.
 func (m *packageModel) emitOpaqueType(b *strings.Builder, record *recordModel) {
-	fmt.Fprintf(b, "// %s is %s. The object belongs to C++; obj is where it lives.\n", record.GoName, record.CxxName)
-	fmt.Fprintf(b, "type %s struct {\n\tobj *cppgo.Object\n}\n\n", record.GoName)
+	fmt.Fprintf(b, "%s\n", docBlock(record.GoName, fmt.Sprintf("%s is %s. The object belongs to C++; obj is where it lives.", record.GoName, record.CxxName), record.Comment))
+	fmt.Fprintf(b, "type %s struct {\n\tobj *cppgo.Object\n\t// view is the address of this value inside the object, 0 for the object itself.\n\taddr uintptr\n}\n\n", record.GoName)
 	fmt.Fprintf(b, `// cppgoAddr is the object address handed to C++, or 0 for a nil or closed
 // value.
 func (%s *%s) cppgoAddr() uintptr {
 	if %s == nil || %s.obj == nil {
 		return 0
 	}
+	if %s.addr != 0 {
+		return %s.addr
+	}
 	return %s.obj.Addr()
 }
-`, receiverName(record.GoName), record.GoName, receiverName(record.GoName), receiverName(record.GoName), receiverName(record.GoName))
+`, receiverName(record.GoName), record.GoName, receiverName(record.GoName), receiverName(record.GoName), receiverName(record.GoName), receiverName(record.GoName), receiverName(record.GoName))
 }
 
 // emitMirroredConstructors writes New<Type>() and Clone() for a record whose Go
@@ -732,11 +741,27 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		switch {
 		case binding.StdResult:
 			m.emitStdReturn(b, binding)
+		case binding.ViewResult:
+			m.emitViewReturn(b, binding, record, recv, "cppgoResult")
 		case binding.Result != nil:
 			fmt.Fprintf(b, "\treturn %s, nil\n", convertResult(binding, "cppgoResult"))
 		default:
 			b.WriteString("\treturn nil\n")
 		}
+	case binding.ViewResult:
+		// A borrowed record travels through the out-pointer when the call can
+		// fail and in the result register when it cannot; either way the Go
+		// side turns the address into a view of the receiver.
+		if binding.Out != nil {
+			fmt.Fprintf(b, "\tvar cppgoResult %s\n", binding.OutLocal)
+			fmt.Fprintf(b, "\t%s\n", call)
+			m.emitKeepAlive(b, binding, ctx)
+			m.emitViewReturn(b, binding, record, recv, "cppgoResult")
+			break
+		}
+		fmt.Fprintf(b, "\tcppgoRet := %s\n", call)
+		m.emitKeepAlive(b, binding, ctx)
+		m.emitViewReturn(b, binding, record, recv, "cppgoRet")
 	case binding.Out != nil:
 		// A value the thunk writes into Go storage; a call that cannot fail has
 		// no error to report, so the result is the signature's only return.
@@ -758,14 +783,16 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 }
 
 // emitBindingDoc writes the description and the one evidence line every binding
-// carries.
+// carries. The C++ doc comment is the Go doc comment; the generated contract
+// sentence leads when the header wrote none, or when its comment does not open
+// with the Go identifier.
 func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, description string) {
-	fmt.Fprintf(b, "\n// %s\n", description)
+	fmt.Fprintf(b, "\n%s\n", docBlock(binding.GoName, description, binding.sym.Comment))
 	mangled := binding.sym.Mangled
 	if mangled == "" {
 		mangled = "synthesized"
 	}
-	evidence := "//\n// C++: " + displaySignature(binding.sym) + ", " + mangled
+	evidence := "//\n// C++: " + m.declaration(binding) + ", " + mangled
 	evidence += " (" + binding.Carrier.String()
 	if binding.Carrier.shimCarried() {
 		evidence += " " + binding.Thunk
@@ -777,9 +804,33 @@ func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, desc
 	fmt.Fprintf(b, "%s\n", evidence)
 }
 
+// declaration is the C++ declaration the evidence line names. A static data
+// member is not a function, so it is spelled as the member itself.
+func (m *packageModel) declaration(binding *binding) string {
+	if binding.staticField == nil {
+		return displaySignature(binding.sym)
+	}
+	if binding.staticWrite {
+		return binding.sym.QualifiedName + " = <value>"
+	}
+	return binding.sym.QualifiedName
+}
+
 // docLine is the generated description of a call binding.
 func docLine(record *recordModel, binding *binding) string {
 	name := simpleName(binding.sym.QualifiedName)
+	if binding.memberField != nil {
+		if binding.fieldWrite {
+			return fmt.Sprintf("%s sets %s.", binding.GoName, binding.sym.QualifiedName)
+		}
+		return fmt.Sprintf("%s reads %s.", binding.GoName, binding.sym.QualifiedName)
+	}
+	if binding.staticField != nil {
+		if binding.staticWrite {
+			return fmt.Sprintf("%s sets %s.", binding.GoName, binding.sym.QualifiedName)
+		}
+		return fmt.Sprintf("%s reads %s.", binding.GoName, binding.sym.QualifiedName)
+	}
 	if record != nil {
 		return fmt.Sprintf("%s calls %s.", binding.GoName, record.CxxName+"::"+name)
 	}
@@ -812,6 +863,40 @@ func (m *packageModel) emitLengthChecks(b *strings.Builder, binding *binding) {
 			fmt.Fprintf(b, "\t\tpanic(fmt.Sprintf(%q, %s))\n", message, strings.Join(printed, ", "))
 		}
 		b.WriteString("\t}\n")
+	}
+}
+
+// emitViewReturn turns the address C++ returned into a view of the receiver:
+// the same object, one more Go-side reference, at the address the C++ cast
+// produced. That is what makes a method returning `T&` safe to bind: the object
+// lives until the last view is closed, and no address is handed out that
+// nothing owns.
+func (m *packageModel) emitViewReturn(b *strings.Builder, binding *binding, record *recordModel, recv, local string) {
+	// The view's Go type is the type the declaration returns: a field accessor
+	// returns the field's record, not the receiver's.
+	viewRecord := record
+	if binding.Result != nil && binding.Result.Record != nil {
+		viewRecord = binding.Result.Record
+	}
+	b.WriteString("\t// A borrowed record result is a view: the receiver's object, one more reference.\n")
+	fmt.Fprintf(b, "\tif %s == nil {\n", local)
+	switch {
+	case binding.dynamicCast:
+		// A dynamic_cast that produced null: the object is not this type.
+		b.WriteString("\t\treturn nil, false\n\t}\n")
+	case binding.ErrorResult:
+		b.WriteString("\t\treturn nil, nil\n\t}\n")
+	default:
+		b.WriteString("\t\treturn nil\n\t}\n")
+	}
+	fmt.Fprintf(b, "\t%s.obj.Retain()\n", recv)
+	switch {
+	case binding.dynamicCast:
+		fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}, true\n", viewRecord.GoName, recv, local)
+	case binding.ErrorResult:
+		fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}, nil\n", viewRecord.GoName, recv, local)
+	default:
+		fmt.Fprintf(b, "\treturn &%s{obj: %s.obj, addr: uintptr(%s)}\n", viewRecord.GoName, recv, local)
 	}
 }
 
@@ -878,6 +963,9 @@ func goParams(params []*goParam) string {
 // goResults renders a Go result list.
 func goResults(binding *binding) string {
 	switch {
+	case binding.dynamicCast:
+		// A derived view reports whether the object really is that type.
+		return " (" + binding.Result.Go + ", bool)"
 	case binding.Result != nil && binding.ErrorResult:
 		return " (" + binding.Result.Go + ", error)"
 	case binding.Result != nil:
@@ -911,6 +999,8 @@ func zeroValue(t *goType) string {
 		return "nil"
 	case goArray, goRecord:
 		return t.Go + "{}"
+	case goEnum:
+		return "0"
 	default:
 		return "0"
 	}
@@ -950,7 +1040,7 @@ func convertResult(binding *binding, local string) string {
 		return local + "&0xff != 0"
 	case goPointer:
 		return "(*" + strings.TrimPrefix(result.Go, "*") + ")(" + local + ")"
-	case goInteger:
+	case goInteger, goEnum:
 		if result.Go == "int64" || result.Go == "uint64" {
 			return local
 		}

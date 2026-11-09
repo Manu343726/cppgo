@@ -160,7 +160,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		if binding.Result.Kind == goRecord {
 			return fmt.Sprintf("*static_cast<%s *>(cppgo_result) = %s;", binding.Result.Cxx, call)
 		}
-		return fmt.Sprintf("*cppgo_result = %s;", call)
+		return fmt.Sprintf("*cppgo_result = %s;", m.shimValue(binding, call))
 	}
 	var b strings.Builder
 	if !binding.Status {
@@ -171,7 +171,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		case binding.Out != nil:
 			fmt.Fprintf(&b, "\t%s\n", store())
 		case binding.Result != nil:
-			fmt.Fprintf(&b, "\treturn %s;\n", call)
+			fmt.Fprintf(&b, "\treturn %s;\n", m.shimValue(binding, call))
 		default:
 			fmt.Fprintf(&b, "\t%s;\n", call)
 		}
@@ -237,6 +237,22 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 	if binding.Owner != nil {
 		owner = binding.Owner.CxxName
 	}
+	if binding.castTo != nil {
+		return m.castTarget(binding)
+	}
+	if binding.memberField != nil {
+		return m.fieldTarget(binding, args)
+	}
+	if binding.staticField != nil {
+		qualified := "::" + binding.Owner.CxxName + "::" + binding.staticField.Name
+		if !binding.staticWrite {
+			return qualified, nil
+		}
+		if len(args) != 1 {
+			return "", pending("a static data member's setter takes exactly one value", "fix the declaration")
+		}
+		return qualified + " = " + args[0], nil
+	}
 	switch binding.sym.Kind {
 	case cxx.Constructor:
 		return "new (self) ::" + owner + "(" + list + ")", nil
@@ -246,6 +262,12 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 		cast := "static_cast<::" + owner + " *>(self)"
 		if binding.sym.IsConst {
 			cast = "static_cast<const ::" + owner + " *>(self)"
+		}
+		if binding.sym.IsConversion {
+			// A conversion operator is called by casting the object to its
+			// target type: libclang's spelling of the member name is not
+			// something a call site can write.
+			return "static_cast<" + conversionTarget(binding) + ">(*(" + cast + "))", nil
 		}
 		return cast + "->" + simpleName(binding.sym.QualifiedName) + "(" + list + ")", nil
 	default:
@@ -257,6 +279,11 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 // pointer to a record; the target wants the record type, a pointer, or a
 // reference, and the conversion is written where the layout is known.
 func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
+	if p.Kind == cxx.TypeEnum {
+		// The wire word is the enum's underlying integer; the callee takes the
+		// enum type, and a scoped enum has no implicit conversion.
+		return "static_cast<::" + p.RecordName + ">(" + name + ")", nil
+	}
 	if p.Kind == cxx.TypeRecord {
 		// A record passed by value: the Go side handed over the address of the
 		// value it holds, and the copy into the call is C++'s.
@@ -289,6 +316,51 @@ func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
 		return "*" + name, nil
 	}
 	return name, nil
+}
+
+// conversionTarget is the C++ type a conversion operator converts to, spelled
+// so the shim can name it: the mapped type's qualified name when it has one, and
+// the declaration's own spelling otherwise (std::string, double).
+func conversionTarget(binding *binding) string {
+	if binding.Result != nil && binding.Result.Cxx != "" {
+		return binding.Result.Cxx
+	}
+	return binding.sym.Result.Spelling
+}
+
+// shimValue renders a call's value as the thunk's C result type.
+func (m *packageModel) shimValue(binding *binding, call string) string {
+	if binding.ViewResult {
+		// A borrowed record is a reference or a pointer, and the thunk hands
+		// out its address: a reference has no pointer conversion of its own.
+		constResult := binding.sym.Result.Pointee != nil && binding.sym.Result.Pointee.IsConst
+		if constResult || (binding.memberField != nil && binding.sym.IsConst) {
+			// The address points into the object Go owns; the qualifier
+			// belongs to the C++ view C++ handed over, not to the storage.
+			return "static_cast<void *>(const_cast<" + binding.Result.Cxx + " *>(&(" + call + ")))"
+		}
+		if strings.HasSuffix(strings.TrimSpace(binding.sym.Result.Spelling), "&") {
+			return "static_cast<void *>(&(" + call + "))"
+		}
+		return "static_cast<void *>(" + call + ")"
+	}
+	if binding.Result != nil && binding.Result.Kind == goPointer && !binding.ViewResult {
+		// The C prototype names the pointer with the mapped scalar's type, and
+		// the declaration's own spelling may differ in qualification or in the
+		// signedness of char. A pointer cast is exact and says so.
+		return "reinterpret_cast<" + binding.Result.C + ">(" + call + ")"
+	}
+	return m.shimResultExpr(binding.Result, call)
+}
+
+// shimResultExpr renders a call's value as the thunk's C result type. An enum
+// is cast to its underlying integer: a scoped enum has no implicit conversion,
+// and the Go side reads the width, not the C++ name.
+func (m *packageModel) shimResultExpr(result *goType, expr string) string {
+	if result != nil && result.Kind == goEnum {
+		return "static_cast<" + result.C + ">(" + expr + ")"
+	}
+	return expr
 }
 
 // stdLocals renders the C++ values the shim builds for a binding's

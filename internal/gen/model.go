@@ -114,13 +114,18 @@ type recordModel struct {
 	// New<Type>() and Clone() are generated only when they are true.
 	DefaultConstructible bool
 	CopyConstructible    bool
+	// Comment is the C++ doc comment, normalised by the Go emitter.
+	Comment string
+	// Bases are the public base classes, transitively.
+	Bases []*baseModel
 }
 
 // fieldModel is one exported field of a mirrored record.
 type fieldModel struct {
-	GoName string
-	Type   *goType
-	Offset int64
+	GoName  string
+	Type    *goType
+	Offset  int64
+	Comment string
 }
 
 // goParam is one visible parameter of the Go API.
@@ -187,6 +192,35 @@ type binding struct {
 	// IsClone is true for the binding emitted as Clone(): a copy constructor
 	// whose single source argument is the Go receiver.
 	IsClone bool
+	// staticField is the static data member a binding reads or writes, nil for
+	// every other binding. A static member is a package function
+	// <Type><Field>(), plus <Type>Set<Field>(v) when it is mutable, and the
+	// thunk is what reads or writes the storage: its address is not a function.
+	staticField *cxx.StaticField
+	// staticWrite is true for the setter half of a static data member.
+	staticWrite bool
+	// memberField is the public field a binding reads or writes, nil for every
+	// other binding. The accessor is a method of the record, carried by a thunk
+	// that reads or writes the member.
+	memberField *cxx.Field
+	// fieldWrite is true for the setter half of a field accessor.
+	fieldWrite bool
+	// fieldByValue is true when the member's record type is held by value but
+	// the Go side reaches it through a pointer.
+	fieldByValue bool
+	// fieldName overrides the Go base name a static data member takes.
+	fieldName string
+	// defaultPrefix is true for a binding that omits trailing default
+	// arguments: the full signature keeps the bare Go name, and a prefix takes
+	// the overload suffix.
+	defaultPrefix bool
+	// base is the base record an inherited method was copied from, nil for a
+	// method the record declares itself.
+	base *recordModel
+	// castTo is the record a base view converts to, nil for every other
+	// binding; dynamicCast makes it a dynamic_cast that may fail.
+	castTo      *recordModel
+	dynamicCast bool
 
 	Carrier carrier
 	Reason  string
@@ -233,6 +267,11 @@ type binding struct {
 	// StdResult is true when the result is a standard-library value, which the
 	// thunk copies out through out-parameters.
 	StdResult bool
+	// ViewResult is true when the result is a borrowed pointer to a record:
+	// the Go value is a view of the receiver's object, one reference more, at
+	// the address C++ returned. It is how a method that returns `T&` (`T *`)
+	// is exposed without handing Go an address nobody owns.
+	ViewResult bool
 	// stdDecls are the Go locals the out-parameters point at.
 	stdDecls []string
 	// usesFree is true when the binding's result is a heap copy that the Go
@@ -260,6 +299,7 @@ type packageModel struct {
 	libraryName string
 	headers     []string
 	records     []*recordModel
+	enums       []*enumModel
 	bindings    []*binding
 	// templates are the class and function templates the package exposes
 	// generically, and instantiations are the concrete specializations the
@@ -289,6 +329,15 @@ type builder struct {
 	symbols    []cxx.Symbol
 	rawRecords []cxx.Record
 	rawEnums   []cxx.Enum
+	// enums are the enum models by qualified name, and enumOrder their
+	// insertion order for deterministic output.
+	enums     map[string]*enumModel
+	enumOrder []string
+	// recordGoNames and enumGoNames are the Go type name of every record and
+	// enum, computed before any model exists because a nested type's name is
+	// its parent's.
+	recordGoNames map[string]string
+	enumGoNames   map[string]string
 	// order records the insertion order of records, for deterministic output.
 	order    []string
 	bindings []*binding
@@ -305,6 +354,12 @@ type builder struct {
 	synthMembers []cxx.Symbol
 	// instantiateMatched tracks the -instantiate entries a record matched.
 	instantiateMatched []bool
+	// bindMatched and excludeMatched track the -bind and -exclude entries a
+	// declaration matched, which the pre-selection records before anything is
+	// lowered: an entry that names a declaration outside what this build can
+	// lower is still an entry that named something.
+	bindMatched    []bool
+	excludeMatched []bool
 	// statusMatched tracks the -status entries a binding matched.
 	statusMatched []bool
 	verified      string
@@ -335,8 +390,11 @@ func build(cfg Config) (*packageModel, error) {
 	b := &builder{
 		cfg:                cfg,
 		records:            map[string]*recordModel{},
+		enums:              map[string]*enumModel{},
 		instantiateMatched: make([]bool, len(cfg.Instantiate)),
 		statusMatched:      make([]bool, len(cfg.Status)),
+		bindMatched:        make([]bool, len(cfg.Bind)),
+		excludeMatched:     make([]bool, len(cfg.Exclude)),
 	}
 	if err := b.load(); err != nil {
 		return nil, err
@@ -351,7 +409,11 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.rejectUnimplemented(); err != nil {
 		return nil, err
 	}
-	b.mapper = &mapper{records: b.records}
+	// Type names come first: an enum nested in a record is named after it, and
+	// a field's Go type needs the enum model the name produces.
+	b.assignTypeNames()
+	b.buildEnums()
+	b.mapper = &mapper{records: b.records, enums: b.enums}
 	if err := b.buildRecords(); err != nil {
 		return nil, err
 	}
@@ -364,12 +426,18 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.buildBindings(); err != nil {
 		return nil, err
 	}
+	b.buildStaticFields()
+	b.expandDefaults()
 	for i, entry := range b.cfg.Status {
 		if !b.statusMatched[i] {
 			return nil, fmt.Errorf("cppgo: -status %s: it names nothing this header declares", entry)
 		}
 	}
 	if err := b.applySelection(); err != nil {
+		return nil, err
+	}
+	b.buildFieldAccessors()
+	if err := b.buildInheritance(); err != nil {
 		return nil, err
 	}
 	if err := b.assignNames(); err != nil {
@@ -448,35 +516,45 @@ func (b *builder) buildRecords() error {
 			b.synthMembers = append(b.synthMembers, rec.Members...)
 		}
 		model := &recordModel{
-			GoName:               goRecordName(rec.QualifiedName),
+			GoName:               b.recordGoNames[rec.QualifiedName],
 			CxxName:              rec.QualifiedName,
 			Size:                 rec.SizeBytes,
 			Align:                rec.AlignBytes,
 			DefaultConstructible: rec.IsDefaultConstructible,
 			CopyConstructible:    rec.IsCopyConstructible,
+			Comment:              rec.Comment,
 		}
 		model.Mirrored = b.mirrorable(rec)
-		if !model.Mirrored {
-			for _, field := range rec.Fields {
-				if field.Access == cxx.AccessPublic {
-					return recordError(rec, pending(
-						fmt.Sprintf("the public field %s of an opaque record is not emitted by this build yet", field.Name),
-						"make the field private and expose an accessor in C++, or make the record a POD"))
-				}
-			}
-		}
-		for _, field := range rec.Fields {
-			if !model.Mirrored {
-				continue
-			}
-			model.Fields = append(model.Fields, &fieldModel{
-				GoName: exportName(field.Name),
-				Type:   mirrorFieldType(field.Type),
-				Offset: field.OffsetBytes,
-			})
-		}
 		b.records[rec.QualifiedName] = model
 		b.order = append(b.order, rec.QualifiedName)
+	}
+	// A member function template has no signature of its own, so it is left out
+	// of the API and reported: the non-template overloads beside it are bound,
+	// and an instantiation is a separate declaration.
+	for _, name := range b.order {
+		raw := b.rawRecord(name)
+		for _, member := range raw.MemberTemplates {
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is a member function template and is not bound: name its concrete instantiation as a non-template member beside it",
+				member.QualifiedName))
+		}
+	}
+
+	// The fields are mapped once every model exists: a mirrored field may be a
+	// record whose own model has not been built yet when its container is.
+	for _, rec := range b.rawRecords {
+		model, ok := b.records[rec.QualifiedName]
+		if !ok || !model.Mirrored {
+			continue
+		}
+		for _, field := range rec.Fields {
+			model.Fields = append(model.Fields, &fieldModel{
+				GoName:  exportName(field.Name),
+				Type:    b.mirrorFieldType(field.Type),
+				Offset:  field.OffsetBytes,
+				Comment: field.Comment,
+			})
+		}
 	}
 	for i, entry := range b.cfg.Instantiate {
 		if !b.instantiateMatched[i] {
@@ -496,10 +574,20 @@ func simpleName(qualified string) string {
 
 // mirrorable reports whether a record's Go value can be its C layout. Every
 // field must be public, at a known offset, not a bitfield, and of a type the
-// type map carries as a value. The generated file asserts the size, alignment
-// and field offsets at compile time, so this predicate is proven, not assumed.
+// type map carries as a value — a scalar, an enum, or a record that is itself
+// mirrorable. The generated file asserts the size, alignment and field offsets
+// at compile time, so this predicate is proven, not assumed.
 func (b *builder) mirrorable(rec cxx.Record) bool {
-	if !rec.LayoutKnown || !rec.IsPOD || rec.Kind == cxx.Union || len(rec.Bases) > 0 {
+	return b.mirrorableRecord(rec, 0)
+}
+
+// maxMirrorDepth bounds the recursion through nested record fields. A record
+// cannot contain itself by value, so the bound is a guard against a malformed
+// model rather than a real limit.
+const maxMirrorDepth = 8
+
+func (b *builder) mirrorableRecord(rec cxx.Record, depth int) bool {
+	if depth > maxMirrorDepth || !rec.LayoutKnown || !rec.IsPOD || rec.Kind == cxx.Union || len(rec.Bases) > 0 {
 		return false
 	}
 	for _, field := range rec.Fields {
@@ -507,22 +595,40 @@ func (b *builder) mirrorable(rec cxx.Record) bool {
 			return false
 		}
 		switch field.Type.Kind {
-		case cxx.TypeInteger, cxx.TypeFloat:
+		case cxx.TypeInteger, cxx.TypeFloat, cxx.TypeEnum:
+		case cxx.TypeRecord:
+			inner, ok := b.rawRecordByName(field.Type.RecordName)
+			if !ok || !b.mirrorableRecord(inner, depth+1) {
+				return false
+			}
 		default:
 			return false
 		}
 	}
-	return naturalLayout(rec)
+	return b.naturalLayout(rec)
+}
+
+// rawRecordByName finds a record definition by qualified name.
+func (b *builder) rawRecordByName(name string) (cxx.Record, bool) {
+	for _, rec := range b.rawRecords {
+		if rec.QualifiedName == name {
+			return rec, true
+		}
+	}
+	return cxx.Record{}, false
 }
 
 // naturalLayout reports whether the C++ layout is the one Go would give the
 // generated struct: each field at its natural offset, the size a multiple of
 // the largest alignment. A packed record or one with padding Go would not
 // reproduce is not mirrored; it takes the opaque path instead.
-func naturalLayout(rec cxx.Record) bool {
+func (b *builder) naturalLayout(rec cxx.Record) bool {
 	var offset, maxAlign int64 = 0, 1
 	for _, field := range rec.Fields {
-		size, align := scalarWidth(field.Type)
+		size, align := b.fieldWidth(field)
+		if size < 0 {
+			return false
+		}
 		offset = (offset + align - 1) / align * align
 		if field.OffsetBytes != offset {
 			return false
@@ -536,6 +642,18 @@ func naturalLayout(rec cxx.Record) bool {
 	return offset == rec.SizeBytes && maxAlign == rec.AlignBytes
 }
 
+// fieldWidth is the size and alignment of a mirrored field: its own width for a
+// scalar, and the record's for a nested mirrored record.
+func (b *builder) fieldWidth(field cxx.Field) (size, align int64) {
+	if field.Type.Kind == cxx.TypeRecord {
+		if inner, ok := b.rawRecordByName(field.Type.RecordName); ok {
+			return inner.SizeBytes, inner.AlignBytes
+		}
+		return -1, 1
+	}
+	return scalarWidth(field.Type)
+}
+
 // scalarWidth is the size and alignment of a scalar field in Go, which is its
 // width for every type the mirror predicate accepts.
 func scalarWidth(p cxx.Param) (size, align int64) {
@@ -546,11 +664,23 @@ func scalarWidth(p cxx.Param) (size, align int64) {
 }
 
 // mirrorFieldType maps a field the mirror predicate already accepted: a bool,
-// an integer of a width the type map covers, or a float. It has no failure path
-// because mirrorable checked the kind and the width.
-func mirrorFieldType(p cxx.Param) *goType {
+// an integer of a width the type map covers, a float, or an enum. It has no
+// failure path because mirrorable checked the kind and the width.
+func (b *builder) mirrorFieldType(p cxx.Param) *goType {
 	if p.Kind == cxx.TypeInteger && p.ClangKind == "Bool" {
 		return &goType{Kind: goBool, Go: "bool", C: "bool", Cxx: "bool", Param: p}
+	}
+	if p.Kind == cxx.TypeEnum {
+		// An enum's Go type is its named integer type, which has the same
+		// width as the underlying C++ integer, so the layout still holds.
+		if enum, ok := b.enums[p.RecordName]; ok {
+			return &goType{Kind: goEnum, Go: enum.GoName, C: enum.C, Cxx: "::" + enum.CxxName, Enum: enum, Param: p}
+		}
+	}
+	if p.Kind == cxx.TypeRecord {
+		if record, ok := b.records[p.RecordName]; ok {
+			return &goType{Kind: goRecord, Go: record.GoName, C: "void *", Cxx: "::" + record.CxxName, Record: record, Param: p}
+		}
 	}
 	if p.Kind == cxx.TypeFloat {
 		if p.SizeBytes == 4 {
@@ -563,12 +693,18 @@ func mirrorFieldType(p cxx.Param) *goType {
 }
 
 // buildBindings turns every public declaration into a binding, before
-// selection and naming.
+// selection and naming. A declaration the manifest does not select is not
+// lowered at all: -bind and -exclude narrow what is emitted, and a construct
+// outside the selection cannot fail the run for a signature nobody asked to
+// bind.
 func (b *builder) buildBindings() error {
 	symbols := append(append([]cxx.Symbol(nil), b.symbols...), b.synthMembers...)
 	for _, sym := range symbols {
 		if sym.IsTemplate {
 			// A template is the generic API's input; buildTemplates binds it.
+			continue
+		}
+		if !b.symbolSelected(sym) {
 			continue
 		}
 		owner := b.records[sym.Parent]
@@ -591,6 +727,9 @@ func (b *builder) buildBindings() error {
 		switch sym.Kind {
 		case cxx.Constructor:
 			if sym.IsDeleted {
+				continue
+			}
+			if !b.allocatable(owner) {
 				continue
 			}
 			switch {
@@ -648,7 +787,7 @@ func (b *builder) buildBindings() error {
 		if len(owner.Ctors) > 0 || owner.Mirrored {
 			continue
 		}
-		if !b.defaultConstructible(owner) {
+		if !b.defaultConstructible(owner) || !b.allocatable(owner) {
 			continue
 		}
 		ctor := b.syntheticConstructor(owner)
@@ -659,7 +798,7 @@ func (b *builder) buildBindings() error {
 	// constructor still gets one, because the implicit copy is callable.
 	for _, name := range b.order {
 		owner := b.records[name]
-		if owner.Mirrored || owner.Clone != nil || !owner.CopyConstructible {
+		if owner.Mirrored || owner.Clone != nil || !owner.CopyConstructible || !b.allocatable(owner) {
 			continue
 		}
 		if b.rawRecord(owner.CxxName).IsAbstract {
@@ -670,6 +809,45 @@ func (b *builder) buildBindings() error {
 		b.bindings = append(b.bindings, clone)
 	}
 	return nil
+}
+
+// symbolSelected reports whether the manifest asks for this declaration, before
+// anything is lowered. With no -bind every declaration is a root; an entry
+// selects a declaration or everything inside it, so naming a record selects its
+// members. -exclude wins, as it does in applySelection.
+func (b *builder) symbolSelected(sym cxx.Symbol) bool {
+	keep := len(b.cfg.Bind) == 0
+	for i, entry := range b.cfg.Bind {
+		if matchesName(entry, sym.QualifiedName) || (sym.Parent != "" && matchesName(entry, sym.Parent)) {
+			b.bindMatched[i] = true
+			keep = true
+		}
+	}
+	if !keep {
+		return false
+	}
+	for i, entry := range b.cfg.Exclude {
+		if matchesName(entry, sym.QualifiedName) {
+			b.excludeMatched[i] = true
+			return false
+		}
+	}
+	return true
+}
+
+// allocatable reports whether the Go side can allocate storage for a record:
+// New<Type>, Clone and a factory in general need sizeof and alignof, and a
+// record whose layout libclang could not complete has neither. Such a record is
+// still reachable as a view of a field or of a borrowed result, so the emitter
+// omits the factory and says so rather than emitting an allocation of -1 bytes.
+func (b *builder) allocatable(owner *recordModel) bool {
+	if owner.Size > 0 && owner.Align > 0 {
+		return true
+	}
+	b.warnings = append(b.warnings, fmt.Sprintf(
+		"%s has no layout the Go side can allocate (sizeof or alignof is unknown), so no factory is generated for it; reach it as a view of a field or of a borrowed result",
+		owner.CxxName))
+	return false
 }
 
 // defaultConstructible reports whether the implicit default constructor can be
@@ -744,8 +922,44 @@ func (b *builder) syntheticClone(owner *recordModel) *binding {
 	return clone
 }
 
+// qualifyNestedParams rewrites a type name that libclang spelled against the
+// template pattern — Box<T>::Slot inside Box<double>::slot — to the
+// specialization's own nested type, which is what the model indexes. A name the
+// model already knows is left alone, so a namespace-scope type keeps its name.
+func (b *builder) qualifyNestedParams(sym cxx.Symbol, owner *recordModel) cxx.Symbol {
+	if owner == nil {
+		return sym
+	}
+	var fix func(p *cxx.Param)
+	fix = func(p *cxx.Param) {
+		if p == nil {
+			return
+		}
+		if p.RecordName != "" {
+			_, recordKnown := b.records[p.RecordName]
+			_, enumKnown := b.enums[p.RecordName]
+			if !recordKnown && !enumKnown {
+				candidate := owner.CxxName + "::" + simpleName(p.RecordName)
+				if _, ok := b.records[candidate]; ok {
+					p.RecordName = candidate
+				} else if _, ok := b.enums[candidate]; ok {
+					p.RecordName = candidate
+				}
+			}
+		}
+		fix(p.Pointee)
+		fix(p.Element)
+	}
+	fix(&sym.Result)
+	for i := range sym.Params {
+		fix(&sym.Params[i])
+	}
+	return sym
+}
+
 // newBinding computes one binding's Go shape, carrier and wire arguments.
 func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, error) {
+	sym = b.qualifyNestedParams(sym, owner)
 	binding := &binding{sym: sym, Owner: owner, This: sym.Kind == cxx.Method || sym.Kind == cxx.Constructor || sym.Kind == cxx.Destructor}
 	binding.IsConstructor = sym.Kind == cxx.Constructor
 	binding.IsDestructor = sym.Kind == cxx.Destructor
@@ -778,7 +992,13 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				binding.hasByValue = true
 			}
 			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored {
-				return nil, pending(fmt.Sprintf("%q is a pointer to an opaque record", sym.Result.Spelling), "return it through a reference at the C++ boundary")
+				// A method's borrowed pointer is a view of the receiver: the
+				// object is Go's, and the returned address is inside it. A free
+				// function's is an address nobody owns, which Go cannot hold.
+				if owner == nil || owner.Mirrored || sym.Kind != cxx.Method {
+					return nil, pending(fmt.Sprintf("%q is a pointer to an opaque record", sym.Result.Spelling), "return it through a reference at the C++ boundary")
+				}
+				binding.ViewResult = true
 			}
 			binding.Result = result
 			if result.Std != stdNone {
@@ -796,9 +1016,6 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 			return nil, err
 		}
 	}
-	if err := b.checkRegisters(binding); err != nil {
-		return nil, err
-	}
 	if err := b.checkReentrant(binding); err != nil {
 		return nil, err
 	}
@@ -806,7 +1023,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		switch {
 		case binding.StdResult:
 			b.addStdResult(binding)
-		case binding.Status || binding.Result.Kind == goRecord:
+		case binding.Status || binding.Result.Kind == goRecord || binding.ViewResult:
 			binding.Out = binding.Result
 			binding.OutLocal = outLocalType(binding.Result)
 			out := &wireArg{
@@ -828,6 +1045,11 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 			}
 			binding.Wire = append(binding.Wire, out)
 		}
+	}
+	// The register check runs last: a standard-library result adds its
+	// out-parameters to the wire, and those are INTEGER words like any other.
+	if err := b.checkRegisters(binding); err != nil {
+		return nil, err
 	}
 	binding.ID = shortHash(displaySignature(sym))
 	binding.SymbolVar = "cppgoSym_" + binding.ID
@@ -1158,6 +1380,17 @@ func (b *builder) paramWire(name string, mapped *goType, param cxx.Param) *wireA
 		arg.class = classInt
 		arg.size = 8
 		arg.expr = arg.slotType + "(" + name + ")"
+	case goEnum:
+		// An enum crosses as its underlying integer: the C++ side casts back
+		// to the enum type where its name exists, and the direct ABI passes
+		// exactly the bits the callee reads.
+		arg.slotType = "int64"
+		if mapped.Enum.Unsigned {
+			arg.slotType = "uint64"
+		}
+		arg.class = classInt
+		arg.size = 8
+		arg.expr = arg.slotType + "(" + name + ")"
 	case goBool:
 		arg.slotType = "int64"
 		arg.class = classInt
@@ -1200,7 +1433,7 @@ func (b *builder) sliceElement(p cxx.Param) (*goType, bool) {
 		return nil, false
 	}
 	switch elem.Kind {
-	case goInteger, goFloat, goBool:
+	case goInteger, goFloat, goBool, goEnum:
 		return elem, true
 	case goRecord:
 		if elem.Record != nil && elem.Record.Mirrored {
@@ -1267,6 +1500,41 @@ func (b *builder) chooseCarrier(binding *binding) {
 	} else {
 		binding.ErrorResult = binding.Carrier.shimCarried() && binding.Status
 	}
+}
+
+// forceThunk re-routes a binding that was classified as direct to the shim. It
+// exists for the bindings whose call cannot be a transparent trampoline: a
+// static data member (the symbol is data), a field accessor (the address is a
+// member) and an inherited method (the receiver is a base subobject at an offset
+// only C++ knows).
+//
+// The status and the out-pointer are recomputed, because a direct binding never
+// had them.
+func (b *builder) forceThunk(binding *binding, reason string) {
+	binding.Carrier = thunk
+	binding.Reason = reason
+	binding.Status = !binding.sym.IsNoExcept || binding.hasStd || binding.fieldByValue
+	if !binding.Status {
+		binding.ErrorResult = false
+	} else {
+		binding.ErrorResult = true
+		if binding.Result != nil && binding.Out == nil && !binding.StdResult && !binding.ViewResult {
+			binding.Out = binding.Result
+			binding.OutLocal = outLocalType(binding.Result)
+			binding.Wire = append(binding.Wire, &wireArg{
+				label:    "out",
+				slotType: "unsafe.Pointer",
+				class:    classInt,
+				size:     8,
+				expr:     "unsafe.Pointer(&cppgoResult)",
+				keep:     "&cppgoResult",
+				cType:    outParamType(binding.Result),
+				cName:    "cppgo_result",
+			})
+		}
+	}
+	binding.Thunk = "cppgo_thunk_" + binding.ID
+	binding.Symbol = binding.Thunk
 }
 
 // statusNamed reports whether -status names this declaration, by qualified name
@@ -1352,6 +1620,15 @@ func displaySignature(sym cxx.Symbol) string {
 		params[i] = p.Spelling
 	}
 	list := "(" + strings.Join(params, ", ") + ")"
+	if sym.IsConversion {
+		// libclang spells the conversion's name as "operator basic_string";
+		// the declaration a reader wrote is "operator std::string".
+		parent := sym.QualifiedName
+		if i := strings.LastIndex(parent, "::"); i >= 0 {
+			parent = parent[:i]
+		}
+		return parent + "::operator " + sym.Result.Spelling + "()" + constSuffix(sym)
+	}
 	switch sym.Kind {
 	case cxx.Constructor:
 		return sym.QualifiedName + list
@@ -1359,6 +1636,18 @@ func displaySignature(sym cxx.Symbol) string {
 		return sym.QualifiedName + "()"
 	}
 	out := sym.QualifiedName + list
+	if sym.IsConst {
+		out += " const"
+	}
+	if sym.IsNoExcept {
+		out += " noexcept"
+	}
+	return out
+}
+
+// constSuffix renders the qualifiers displaySignature appends.
+func constSuffix(sym cxx.Symbol) string {
+	out := ""
 	if sym.IsConst {
 		out += " const"
 	}
@@ -1389,6 +1678,7 @@ func (b *builder) model() *packageModel {
 		libraryName:    b.linkedName,
 		headers:        b.cfg.Headers,
 		records:        records,
+		enums:          b.selectedEnums(),
 		bindings:       b.bindings,
 		templates:      b.templates,
 		instantiations: b.instantiations,
@@ -1408,7 +1698,14 @@ func (m *packageModel) report() []string {
 	lines := make([]string, 0, len(m.bindings)+len(m.templates)+len(m.instantiations))
 	for _, binding := range m.bindings {
 		symbol := binding.Symbol
-		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", displaySignature(binding.sym), binding.Carrier, symbol, binding.Reason))
+		declaration := displaySignature(binding.sym)
+		if binding.staticField != nil {
+			declaration = binding.sym.QualifiedName
+			if binding.staticWrite {
+				declaration += " = <value>"
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", declaration, binding.Carrier, symbol, binding.Reason))
 	}
 	for _, tmpl := range m.templates {
 		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s generic API, %d binding(s)", tmpl.CxxName+"<"+paramNames(tmpl)+">", "tmpl", "-", len(tmpl.bindings())))
@@ -1578,7 +1875,7 @@ func resultSlot(result *goType) *slot {
 		slot.goType = "int64"
 	default:
 		slot.goType = "int64"
-		if result.Param.Unsigned {
+		if result.Param.Unsigned || (result.Enum != nil && result.Enum.Unsigned) {
 			slot.goType = "uint64"
 		}
 	}

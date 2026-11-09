@@ -326,6 +326,8 @@ func cppgoBool(v bool) int64 {
 // Abstract is types::Abstract. The object belongs to C++; obj is where it lives.
 type Abstract struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -333,6 +335,9 @@ type Abstract struct {
 func (a *Abstract) cppgoAddr() uintptr {
 	if a == nil || a.obj == nil {
 		return 0
+	}
+	if a.addr != 0 {
+		return a.addr
 	}
 	return a.obj.Addr()
 }
@@ -373,6 +378,8 @@ func (a *Abstract) Id() (int32, error) {
 // Composed is types::Composed. The object belongs to C++; obj is where it lives.
 type Composed struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -380,6 +387,9 @@ type Composed struct {
 func (c *Composed) cppgoAddr() uintptr {
 	if c == nil || c.obj == nil {
 		return 0
+	}
+	if c.addr != 0 {
+		return c.addr
 	}
 	return c.obj.Addr()
 }
@@ -420,6 +430,8 @@ func (c *Composed) Value() (int32, error) {
 // CopyNoDtor is types::CopyNoDtor. The object belongs to C++; obj is where it lives.
 type CopyNoDtor struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -427,6 +439,9 @@ type CopyNoDtor struct {
 func (c *CopyNoDtor) cppgoAddr() uintptr {
 	if c == nil || c.obj == nil {
 		return 0
+	}
+	if c.addr != 0 {
+		return c.addr
 	}
 	return c.obj.Addr()
 }
@@ -505,6 +520,8 @@ func (c *CopyNoDtor) Value() (int32, error) {
 // DeletedCtor is types::DeletedCtor. The object belongs to C++; obj is where it lives.
 type DeletedCtor struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -512,6 +529,9 @@ type DeletedCtor struct {
 func (d *DeletedCtor) cppgoAddr() uintptr {
 	if d == nil || d.obj == nil {
 		return 0
+	}
+	if d.addr != 0 {
+		return d.addr
 	}
 	return d.obj.Addr()
 }
@@ -562,6 +582,8 @@ func (d *DeletedCtor) Close() error {
 // DeletedDtor is types::DeletedDtor. The object belongs to C++; obj is where it lives.
 type DeletedDtor struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -569,6 +591,9 @@ type DeletedDtor struct {
 func (d *DeletedDtor) cppgoAddr() uintptr {
 	if d == nil || d.obj == nil {
 		return 0
+	}
+	if d.addr != 0 {
+		return d.addr
 	}
 	return d.obj.Addr()
 }
@@ -627,6 +652,8 @@ func (d *DeletedDtor) Close() error {
 // Empty is types::Empty. The object belongs to C++; obj is where it lives.
 type Empty struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -634,6 +661,9 @@ type Empty struct {
 func (e *Empty) cppgoAddr() uintptr {
 	if e == nil || e.obj == nil {
 		return 0
+	}
+	if e.addr != 0 {
+		return e.addr
 	}
 	return e.obj.Addr()
 }
@@ -689,6 +719,8 @@ func (e *Empty) Close() error {
 // Implicit is types::Implicit. The object belongs to C++; obj is where it lives.
 type Implicit struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -696,6 +728,9 @@ type Implicit struct {
 func (i *Implicit) cppgoAddr() uintptr {
 	if i == nil || i.obj == nil {
 		return 0
+	}
+	if i.addr != 0 {
+		return i.addr
 	}
 	return i.obj.Addr()
 }
@@ -788,6 +823,8 @@ func (i *Implicit) Value() (int32, error) {
 // Mover is types::Mover. The object belongs to C++; obj is where it lives.
 type Mover struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -795,6 +832,9 @@ type Mover struct {
 func (m *Mover) cppgoAddr() uintptr {
 	if m == nil || m.obj == nil {
 		return 0
+	}
+	if m.addr != 0 {
+		return m.addr
 	}
 	return m.obj.Addr()
 }
@@ -860,6 +900,8 @@ func (m *Mover) Value() (int32, error) {
 // NoDtor is types::NoDtor. The object belongs to C++; obj is where it lives.
 type NoDtor struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -867,6 +909,9 @@ type NoDtor struct {
 func (n *NoDtor) cppgoAddr() uintptr {
 	if n == nil || n.obj == nil {
 		return 0
+	}
+	if n.addr != 0 {
+		return n.addr
 	}
 	return n.obj.Addr()
 }
@@ -938,6 +983,8 @@ func (n *NoDtor) Value() int32 {
 // NoThrowCopy is types::NoThrowCopy. The object belongs to C++; obj is where it lives.
 type NoThrowCopy struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -945,6 +992,9 @@ type NoThrowCopy struct {
 func (n *NoThrowCopy) cppgoAddr() uintptr {
 	if n == nil || n.obj == nil {
 		return 0
+	}
+	if n.addr != 0 {
+		return n.addr
 	}
 	return n.obj.Addr()
 }
@@ -1036,6 +1086,8 @@ func (n *NoThrowCopy) Value() (int32, error) {
 // Opaque is types::Opaque. The object belongs to C++; obj is where it lives.
 type Opaque struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -1043,6 +1095,9 @@ type Opaque struct {
 func (o *Opaque) cppgoAddr() uintptr {
 	if o == nil || o.obj == nil {
 		return 0
+	}
+	if o.addr != 0 {
+		return o.addr
 	}
 	return o.obj.Addr()
 }
@@ -1204,6 +1259,8 @@ func (p *Pod) Sum() int32 {
 // Tiny is types::Tiny. The object belongs to C++; obj is where it lives.
 type Tiny struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -1211,6 +1268,9 @@ type Tiny struct {
 func (t *Tiny) cppgoAddr() uintptr {
 	if t == nil || t.obj == nil {
 		return 0
+	}
+	if t.addr != 0 {
+		return t.addr
 	}
 	return t.obj.Addr()
 }

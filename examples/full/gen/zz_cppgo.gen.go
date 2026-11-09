@@ -242,6 +242,8 @@ func cppgoCloseError(symbol string) error {
 // Histogram is metrics::Histogram. The object belongs to C++; obj is where it lives.
 type Histogram struct {
 	obj *cppgo.Object
+	// view is the address of this value inside the object, 0 for the object itself.
+	addr uintptr
 }
 
 // cppgoAddr is the object address handed to C++, or 0 for a nil or closed
@@ -249,6 +251,9 @@ type Histogram struct {
 func (h *Histogram) cppgoAddr() uintptr {
 	if h == nil || h.obj == nil {
 		return 0
+	}
+	if h.addr != 0 {
+		return h.addr
 	}
 	return h.obj.Addr()
 }

@@ -201,6 +201,9 @@ func (b *builder) buildTemplates() error {
 		if !rec.IsTemplate {
 			continue
 		}
+		if !b.templateSelected(rec.QualifiedName) {
+			continue
+		}
 		tmpl, err := b.newTemplate(rec)
 		if err != nil {
 			return err
@@ -213,6 +216,9 @@ func (b *builder) buildTemplates() error {
 			continue
 		}
 		if len(sym.TemplateParameters) == 0 {
+			continue
+		}
+		if !b.templateSelected(sym.QualifiedName) {
 			continue
 		}
 		tmpl, err := b.newTemplateFunction(sym)
@@ -292,14 +298,32 @@ func (b *builder) newTemplate(rec cxx.Record) (*templateModel, error) {
 			continue
 		}
 		if len(sym.TemplateParameters) > 0 {
-			return nil, symbolError(sym, pending(
-				fmt.Sprintf("the member function template %s is not emitted by this build yet", sym.QualifiedName),
-				"expose the concrete instantiation as a non-template member"))
+			// A member function template of a class template: its signature
+			// depends on both parameter lists, so neither the generic API nor a
+			// specialization can call it without an instantiation.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is a member function template and is not bound: name its concrete instantiation as a non-template member",
+				sym.QualifiedName))
+			continue
 		}
 		if sym.IsOperator || sym.IsConversion {
-			return nil, symbolError(sym, pending(
-				"operators and conversion operators are not emitted by this build yet",
-				"give it a named member function"))
+			// An operator of a class template takes the template's parameters in
+			// its signature, so the generic API has no single name for it. The
+			// concrete specialization carries the operator under its contract
+			// name.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is not part of the generic API: an operator of a class template is bound on each concrete specialization instead",
+				displaySignature(sym)))
+			continue
+		}
+		if b.namesNestedType(sym) {
+			// A member whose signature names a type declared inside the
+			// template has one answer per instantiation, so it cannot be part
+			// of the generic API. The concrete specialization carries it.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is not part of the generic API: its signature names a type declared inside %s, and each instantiation has its own; the specialization carries it",
+				displaySignature(sym), rec.QualifiedName))
+			continue
 		}
 		switch sym.Kind {
 		case cxx.Constructor:
@@ -321,7 +345,11 @@ func (b *builder) newTemplate(rec cxx.Record) (*templateModel, error) {
 		}
 		binding, err := b.newTemplateBinding(sym, tmpl)
 		if err != nil {
-			return nil, symbolError(sym, err)
+			// One member of a pattern: the pattern stays usable and the member
+			// is reported. A concrete specialization carries what it can, and a
+			// signature that needs this one fails on its own.
+			b.warnings = append(b.warnings, fmt.Sprintf("%s is not bound: %v", displaySignature(sym), err))
+			continue
 		}
 		switch sym.Kind {
 		case cxx.Constructor:
@@ -410,6 +438,61 @@ func (b *builder) newTemplateFunction(sym cxx.Symbol) (*templateModel, error) {
 	binding.IsStatic = true
 	tmpl.Func = binding
 	return tmpl, nil
+}
+
+// templateSelected reports whether the manifest asks for a generic template.
+// With no -bind and no -instantiate every template is a root; an entry that
+// names the template selects it, and an entry that names one of its
+// specializations selects it too, because the specialization's members are read
+// from the pattern.
+func (b *builder) templateSelected(qualified string) bool {
+	if len(b.cfg.Bind) == 0 && len(b.cfg.Instantiate) == 0 {
+		return true
+	}
+	for i, entry := range b.cfg.Bind {
+		if matchesName(entry, qualified) || strings.HasPrefix(entry, qualified+"<") {
+			b.bindMatched[i] = true
+			return true
+		}
+	}
+	for _, entry := range b.cfg.Instantiate {
+		if entry == qualified || strings.HasPrefix(entry, qualified+"<") {
+			return true
+		}
+	}
+	return false
+}
+
+// namesNestedType reports whether a declaration's signature names a record or
+// enum the generated API does not hold — which, inside a template pattern, is a
+// type declared inside the template itself: libclang spells it against the
+// pattern, and every instantiation has its own.
+func (b *builder) namesNestedType(sym cxx.Symbol) bool {
+	var unknown func(p cxx.Param) bool
+	unknown = func(p cxx.Param) bool {
+		if p.RecordName == "" {
+			if p.Pointee != nil {
+				return unknown(*p.Pointee)
+			}
+			return false
+		}
+		if _, ok := b.records[p.RecordName]; ok {
+			return false
+		}
+		if _, ok := b.enums[p.RecordName]; ok {
+			return false
+		}
+		return true
+	}
+	if unknown(sym.Result) {
+		return true
+	}
+	for _, param := range sym.Params {
+		if unknown(param) {
+			return true
+		}
+	}
+	return false
 }
 
 // newTemplateBinding computes one generic binding. Only a bare type parameter,

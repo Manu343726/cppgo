@@ -487,7 +487,7 @@ extern "C" int32_t cppgo_thunk_14dd8f43176a(int32_t value, bool * cppgo_result) 
 extern "C" int32_t cppgo_thunk_f0ef254c6b7e(int32_t * value, int32_t ** cppgo_result) {
 	cppgo_error_message.clear();
 	try {
-		*cppgo_result = ::types::maybe(value);
+		*cppgo_result = reinterpret_cast<int32_t *>(::types::maybe(value));
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();
@@ -499,7 +499,7 @@ extern "C" int32_t cppgo_thunk_f0ef254c6b7e(int32_t * value, int32_t ** cppgo_re
 }
 
 extern "C" int32_t * cppgo_thunk_5b3ba8c73334(void) {
-	return ::types::null_pointer();
+	return reinterpret_cast<int32_t *>(::types::null_pointer());
 }
 
 extern "C" void cppgo_thunk_b47ae3b9ba31(void) {

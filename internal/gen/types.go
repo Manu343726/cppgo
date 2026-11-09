@@ -22,6 +22,9 @@ const (
 	goArray
 	goOptional
 	goFunc
+	// goEnum is a C++ enum: a Go named integer type with the underlying
+	// integer width on the wire.
+	goEnum
 	// goTypeParam is a class or function template's type parameter used as a
 	// value, e.g. T in `T get() const`. The generic API's declaration spells
 	// it; every concrete instantiation substitutes one scalar for it.
@@ -62,6 +65,8 @@ type goType struct {
 	Elem *goType
 	// Record is the record model a record or record pointer refers to.
 	Record *recordModel
+	// Enum is the enum model an enum value refers to.
+	Enum *enumModel
 	// Std is the standard-library shape, stdNone for an ordinary type.
 	Std stdKind
 	// ArrayLen is std::array's element count.
@@ -106,6 +111,10 @@ type callbackType struct {
 // mirrorable aggregate from an opaque value.
 type mapper struct {
 	records map[string]*recordModel
+	// enums is the package's enum model, by qualified C++ name: an enum is a
+	// Go named integer type, so a signature that names one crosses as that
+	// type over its underlying integer width.
+	enums map[string]*enumModel
 	// usesSpan is true when std::span is part of the API, whose header needs
 	// C++20.
 	usesSpan bool
@@ -146,7 +155,7 @@ func (m *mapper) mapType(p cxx.Param) (*goType, error) {
 	case cxx.TypeRecord:
 		return m.mapRecord(p)
 	case cxx.TypeEnum:
-		return nil, pending(fmt.Sprintf("%q is an enum", p.Spelling), "pass the value as its underlying integer at the C++ boundary")
+		return m.mapEnum(p)
 	case cxx.TypeArray:
 		return nil, pending(fmt.Sprintf("%q is a C array", p.Spelling), "decay it to a pointer and a length at the C++ boundary")
 	default:
@@ -301,6 +310,26 @@ trimmed:
 	return nil, pending(fmt.Sprintf("%q is not a scalar or a known record", name), "use a scalar element type at the C++ boundary")
 }
 
+// recordFor finds the record a declared type names: the exact qualified name
+// first, then a unique simple-name match, because a declaration inside a
+// namespace or a class spells its own types unqualified ("Matrix<double, 3, 3>"
+// for Eigen::Matrix<double, 3, 3>).
+func (m *mapper) recordFor(name string) (*recordModel, bool) {
+	if record, ok := m.records[name]; ok {
+		return record, true
+	}
+	return m.lookupRecord(simpleNameRespectingTemplates(name))
+}
+
+// simpleNameRespectingTemplates is the last component of a qualified name,
+// split outside any template argument list.
+func simpleNameRespectingTemplates(name string) string {
+	if i := lastQualifiedSeparator(name); i >= 0 {
+		return name[i+2:]
+	}
+	return name
+}
+
 // lookupRecord finds a record by its spelling. A template argument is often
 // spelled unqualified inside its own namespace ("V" for "ns::V"), so an exact
 // miss falls back to a unique simple-name match; an ambiguous name is a miss
@@ -309,9 +338,12 @@ func (m *mapper) lookupRecord(name string) (*recordModel, bool) {
 	if record, ok := m.records[name]; ok {
 		return record, true
 	}
+	// The same type is spelled with and without spaces after a template
+	// argument's comma, depending on where libclang read it.
+	wanted := strings.ReplaceAll(name, " ", "")
 	var found *recordModel
 	for qualified, record := range m.records {
-		if simpleName(qualified) != name {
+		if strings.ReplaceAll(simpleName(qualified), " ", "") != wanted {
 			continue
 		}
 		if found != nil {
@@ -412,6 +444,26 @@ trimmed:
 	return s, true
 }
 
+// mapEnum maps an enum to its named Go integer type. The wire width and the
+// shim's C type are the underlying integer type, which is what the enum is at
+// the ABI level, and the C++ side casts back to the enum where its name exists.
+func (m *mapper) mapEnum(p cxx.Param) (*goType, error) {
+	enum, ok := m.enums[p.RecordName]
+	if !ok {
+		return nil, pending(fmt.Sprintf("%q is an enum the generated API does not hold", p.Spelling),
+			"include the enum's definition in the header")
+	}
+	return &goType{
+		Kind:  goEnum,
+		Go:    enum.GoName,
+		C:     enum.C,
+		Cxx:   "::" + enum.CxxName,
+		Enum:  enum,
+		Param: p,
+		Const: p.IsConst,
+	}, nil
+}
+
 // mapInteger maps every integer width the type map covers, and checks the LP64
 // assumption the contract makes: on a platform where long is not 64-bit the
 // generated code would silently reinterpret a value.
@@ -488,7 +540,7 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 		// A record pointer does not need the record to be mirrorable: the Go
 		// type is *Record either way, and an opaque one crosses as the address
 		// of the object it owns.
-		record, ok := m.records[p.Pointee.RecordName]
+		record, ok := m.recordFor(p.Pointee.RecordName)
 		if !ok {
 			return nil, missingRecord(*p.Pointee)
 		}
@@ -546,7 +598,7 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 // call, which is where the C++ copy constructor lives and where a value above
 // 16 bytes is materialized without any Go-side stack knowledge.
 func (m *mapper) mapRecord(p cxx.Param) (*goType, error) {
-	record, ok := m.records[p.RecordName]
+	record, ok := m.recordFor(p.RecordName)
 	if !ok {
 		return nil, missingRecord(p)
 	}

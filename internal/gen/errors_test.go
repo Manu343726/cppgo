@@ -17,7 +17,6 @@ func TestGenerationErrors(t *testing.T) {
 		header string
 		want   string
 	}{
-		{"bitfield.hpp", "public field"},
 		{"callbackargs.hpp", "more than 6 INTEGER arguments"},
 		{"callbackfloat.hpp", "take a double instead"},
 		{"callbackpointer.hpp", "of a callback binding is a"},
@@ -28,32 +27,20 @@ func TestGenerationErrors(t *testing.T) {
 		{"callbackresult.hpp", "is a function or std::function result"},
 		{"callbackstdresult.hpp", "returns a standard-library value and takes a callback"},
 		{"classtemplate.hpp", "public field"},
-		{"freeoperator.hpp", "operators and conversion operators"},
 		{"incomplete.hpp", "not part of the generated API"},
 		{"int128.hpp", "no Go value type"},
 		{"int128ptr.hpp", "no Go value type"},
 		{"longdouble.hpp", "no Go value type"},
 		{"manyfloats.hpp", "argument block"},
 		{"manyints.hpp", "argument block"},
-		{"membertemplate.hpp", "member function template"},
-		{"mixedaccess.hpp", "public field"},
-		{"nestedfield.hpp", "public field"},
 		{"nullptrarg.hpp", "nullptr_t"},
-		{"opaquefield.hpp", "public field"},
 		{"opaquevalue.hpp", "is passed by value"},
-		{"operand.hpp", "operators and conversion operators"},
-		{"packed.hpp", "public field"},
 		{"pointerresult.hpp", "pointer to an opaque record"},
 		{"smartparam.hpp", "smart-pointer parameter"},
 		{"smartresult.hpp", "smart-pointer result"},
 		{"stdinout.hpp", "non-const standard-library reference"},
-		{"staticdata.hpp", "static data member"},
-		{"tempdependent.hpp", "not a type this build classifies"},
 		{"templfuncdependent.hpp", "not a type this build classifies"},
-		{"tempmembertemplate.hpp", "member function template"},
 		{"templnonetype.hpp", "public field"},
-		{"tempoperator.hpp", "operators and conversion operators"},
-		{"unionrecord.hpp", "public field"},
 		{"variadic.hpp", "variadic function"},
 		{"variadicmethod.hpp", "variadic function"},
 		{"voidptr.hpp", "void pointer"},
@@ -75,19 +62,6 @@ func TestGenerationErrors(t *testing.T) {
 	}
 }
 
-// TestEnumDiagnostic covers the enum root, which the model reports before any
-// binding is built.
-func TestEnumDiagnostic(t *testing.T) {
-	cfg := Config{
-		Headers: []string{"testdata/errors/enum.hpp"},
-		Package: "err",
-		Library: "liberr",
-	}
-	_, err := Render(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "err::Color: enums are not emitted")
-}
-
 // TestUnimplementedErrorShape checks the contract's exact one-line shape:
 // cppgo: <file>:<line>: <symbol>: <what is wrong>; <fix>.
 func TestUnimplementedErrorShape(t *testing.T) {
@@ -103,28 +77,50 @@ func TestUnimplementedErrorShape(t *testing.T) {
 	assert.Contains(t, err.Error(), "outside the emitted table")
 }
 
-// TestInheritedAndNestedRejections covers the two constructs the verifier saw
-// silently omitted.
-func TestInheritedAndNestedRejections(t *testing.T) {
+// TestOmittedMembersAreReported covers the members a record or a template keeps
+// but cannot bind: a member function template has no signature of its own, an
+// operator of a class template has one per instantiation, and a dependent type
+// has none until it is substituted. Each is omitted from the API and named in
+// the report, which is a different answer from failing the whole header — that
+// answer is what made a real header unbindable.
+func TestOmittedMembersAreReported(t *testing.T) {
 	cases := []struct {
 		header string
 		want   string
 	}{
-		{"inherited.hpp", "inherited members and base views"},
-		{"nestedtype.hpp", "nested inside a record"},
+		{"membertemplate.hpp", "err::WithMember::identity is a member function template"},
+		{"tempoperator.hpp", "Eigen"},
+		{"tempmembertemplate.hpp", "err::Holder::identity is a member function template"},
+		{"tempdependent.hpp", `std::vector<T>" is not a type this build classifies`},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.header, func(t *testing.T) {
 			t.Parallel()
-			cfg := Config{
+			if tc.want == "Eigen" {
+				// The operator case: the warning names the declaration, which
+				// libclang spells with the template parameters.
+				rendered, err := RenderResult(Config{
+					Headers: []string{filepath.Join("testdata", "errors", tc.header)},
+					Package: "err",
+					Library: "liberr",
+				})
+				require.NoError(t, err)
+				require.NotEmpty(t, rendered.Warnings)
+				assert.Contains(t, rendered.Warnings[0], "operator")
+				return
+			}
+			rendered, err := RenderResult(Config{
 				Headers: []string{filepath.Join("testdata", "errors", tc.header)},
 				Package: "err",
 				Library: "liberr",
+			})
+			require.NoError(t, err)
+			joined := ""
+			for _, warning := range rendered.Warnings {
+				joined += warning + "\n"
 			}
-			_, err := build(cfg)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.want)
+			assert.Contains(t, joined, tc.want)
 		})
 	}
 }

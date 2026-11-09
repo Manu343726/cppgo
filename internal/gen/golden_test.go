@@ -12,11 +12,19 @@ import (
 // byte. Regenerate them with CPPGO_UPDATE_GOLDEN=1 go test ./internal/gen/v3.
 func goldenFixtures() map[string]Config {
 	return map[string]Config{
-		"mathx":     mathxConfig(),
-		"box":       fixtureConfig("box", "box.hpp"),
-		"types":     fixtureConfig("types", "types.hpp"),
-		"overloads": fixtureConfig("overloads", "overloads.hpp"),
-		"std":       fixtureConfig("std", "std.hpp"),
+		"mathx":       mathxConfig(),
+		"box":         fixtureConfig("box", "box.hpp"),
+		"types":       fixtureConfig("types", "types.hpp"),
+		"overloads":   fixtureConfig("overloads", "overloads.hpp"),
+		"std":         fixtureConfig("std", "std.hpp"),
+		"docs":        fixtureConfig("docs", "docs.hpp"),
+		"enums":       fixtureConfig("enums", "enums.hpp"),
+		"operators":   fixtureConfig("operators", "operators.hpp"),
+		"staticdata":  fixtureConfig("staticdata", "staticdata.hpp"),
+		"fields":      fixtureConfig("fields", "fields.hpp"),
+		"nested":      nestedConfig(),
+		"inheritance": fixtureConfig("inheritance", "inheritance.hpp"),
+		"defaults":    fixtureConfig("defaults", "defaults.hpp"),
 	}
 }
 

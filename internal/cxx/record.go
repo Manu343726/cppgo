@@ -98,6 +98,8 @@ type Field struct {
 	BitWidth int
 	// IsAnonymous is true for an unnamed member (an anonymous struct or union).
 	IsAnonymous bool
+	// Comment is the member's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // Base is one base class of a record, with the access it was inherited under
@@ -202,6 +204,8 @@ type Record struct {
 	// DeclFile and DeclLine locate the definition.
 	DeclFile string
 	DeclLine int
+	// Comment is the record's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // StaticField is one static data member. It is a value that belongs to the
@@ -220,6 +224,8 @@ type StaticField struct {
 	// Mangled is the symbol of the definition, or empty when libclang has none
 	// (a template pattern's static member is spelled per instantiation).
 	Mangled string
+	// Comment is the member's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // memberTemplate is a member function template kept for on-demand
@@ -243,6 +249,8 @@ type Enumerator struct {
 	UnsignedValue uint64
 	// IsUnsigned reports which of the two readings is the type's own.
 	IsUnsigned bool
+	// Comment is the enumerator's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // Enum is one enum definition. It carries the underlying integer type and the
@@ -267,6 +275,8 @@ type Enum struct {
 	// DeclFile and DeclLine locate the definition.
 	DeclFile string
 	DeclLine int
+	// Comment is the definition's raw doc comment, empty when it has none.
+	Comment string
 }
 
 // recordExtractor walks one translation unit and turns record and enum
@@ -319,7 +329,7 @@ func (tu *TU) extractRecords() {
 
 // visit is the clang_visitChildren callback for records and enums.
 func (e *recordExtractor) visit(cursor, parent CXCursor) int32 {
-	if e.l.f.locationIsInSystemHeader(e.l.f.getCursorLocation(cursor)) != 0 {
+	if !e.tu.selectable(cursor) {
 		return visitContinue
 	}
 	switch kind := e.l.f.getCursorKind(cursor); kind {
@@ -365,6 +375,7 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 		AlignBytes:    -1,
 	}
 	rec.DeclFile, rec.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
+	rec.Comment = e.l.comment(cursor)
 
 	pattern, isSpecialization := e.l.specialization(cursor)
 	if isSpecialization {
@@ -404,6 +415,14 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 		decl = definition
 	}
 	typ := e.l.f.getCanonicalType(e.l.f.getCursorType(decl))
+	if e.l.f.typeGetSizeOf(typ) < 0 {
+		// An explicit instantiation's definition cursor is the pattern, whose
+		// type is dependent and has no size. The instantiation's own type is
+		// the one the compiler completed.
+		if direct := e.l.f.getCanonicalType(e.l.f.getCursorType(cursor)); e.l.f.typeGetSizeOf(direct) >= 0 {
+			typ = direct
+		}
+	}
 	rec.SizeBytes = e.l.f.typeGetSizeOf(typ)
 	rec.AlignBytes = e.l.f.typeGetAlignOf(typ)
 	rec.IsPOD = e.l.f.isPODType(typ) != 0
@@ -463,6 +482,11 @@ func (e *recordExtractor) finishRecord(rec *Record, facts ctorFacts) {
 // (it does not for a template with a non-type or template-template parameter).
 func (e *recordExtractor) addTypeSpecialization(field CXCursor) {
 	typ := e.l.f.getTypeDeclaration(e.l.f.getCursorType(field))
+	if !e.tu.selectable(typ) {
+		// The instantiation of a standard-library type reached through a field:
+		// not the API the caller named.
+		return
+	}
 	pattern, ok := e.l.specialization(typ)
 	if !ok {
 		return
@@ -780,6 +804,7 @@ func (e *recordExtractor) synthesizeMember(cursor CXCursor, rec *Record, sub sub
 	member.IsConst, member.IsVirtual, member.IsStatic = e.l.qualifiers(cursor, kind)
 	member.IsNoExcept = !member.ExceptionSpec.CanThrow()
 	member.DeclFile, member.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
+	member.Comment = e.l.comment(cursor)
 
 	funcType := e.l.f.getCursorType(cursor)
 	if kind == Constructor || kind == Destructor {
@@ -793,6 +818,7 @@ func (e *recordExtractor) synthesizeMember(cursor CXCursor, rec *Record, sub sub
 			member.Params = append(member.Params, sub.param(e.l.param(e.l.f.getArgType(funcType, i))))
 		}
 		e.l.paramNames(cursor, member.Params)
+		e.l.paramDefaults(cursor, member.Params)
 	}
 	if kind == Constructor {
 		member.IsCopyConstructor = e.l.f.constructorIsCopyConstructor(cursor) != 0
@@ -816,6 +842,7 @@ func (e *recordExtractor) collectStaticField(cursor CXCursor) StaticField {
 		Access:  e.l.access(cursor),
 		IsConst: e.l.f.isConstQualifiedType(typ) != 0,
 		Mangled: e.l.str(e.l.f.cursorMangling(cursor)),
+		Comment: e.l.comment(cursor),
 	}
 }
 
@@ -963,6 +990,11 @@ func (e *recordExtractor) enumeratorValue(cursor CXCursor, sub substitution, pre
 
 // sourceText returns the source a cursor covers, read from the file it is in.
 func (e *recordExtractor) sourceText(cursor CXCursor) (string, bool) {
+	if e.tu == nil || e.tu.l == nil {
+		// A record synthesized without a translation unit has no source to read;
+		// the caller treats that as values it cannot see, not as a failure.
+		return "", false
+	}
 	span := e.l.f.getCursorExtent(cursor)
 	path, start, ok := e.offsetOf(e.l.f.getRangeStart(span))
 	if !ok {
@@ -1350,6 +1382,7 @@ func (e *recordExtractor) collectField(cursor CXCursor) Field {
 		IsBitField:  e.l.f.cursorIsBitField(cursor) != 0,
 		IsAnonymous: e.l.f.cursorIsAnonymous(cursor) != 0,
 		OffsetBytes: -1,
+		Comment:     e.l.comment(cursor),
 	}
 	if bits := e.l.f.cursorOffsetOfField(cursor); bits >= 0 {
 		field.OffsetBytes = bits / 8
@@ -1392,6 +1425,7 @@ func (e *recordExtractor) collectEnum(cursor CXCursor) Enum {
 		IsScoped:       e.l.f.enumDeclIsScoped(cursor) != 0,
 		Underlying:     e.l.param(e.l.f.getEnumDeclIntegerType(cursor)),
 		ConstantsKnown: true,
+		Comment:        e.l.comment(cursor),
 	}
 	enum.DeclFile, enum.DeclLine = e.l.locationValues(e.l.f.getCursorLocation(cursor))
 	_ = e.l.visit(cursor, func(child, parent CXCursor) int32 {
@@ -1401,6 +1435,7 @@ func (e *recordExtractor) collectEnum(cursor CXCursor) Enum {
 				Value:         e.l.f.getEnumConstantValue(child),
 				UnsignedValue: e.l.f.getEnumConstantUnsignedValue(child),
 				IsUnsigned:    enum.Underlying.Unsigned,
+				Comment:       e.l.comment(child),
 			})
 		}
 		return visitContinue
@@ -1461,6 +1496,9 @@ func mergeRecord(into *Record, from Record) {
 	}
 	if into.DeclFile == "" {
 		into.DeclFile, into.DeclLine = from.DeclFile, from.DeclLine
+	}
+	if into.Comment == "" {
+		into.Comment = from.Comment
 	}
 	into.IsTemplateSpecialization = into.IsTemplateSpecialization || from.IsTemplateSpecialization
 	into.HasVirtualFunction = into.HasVirtualFunction || from.HasVirtualFunction

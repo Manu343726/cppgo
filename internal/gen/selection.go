@@ -10,8 +10,10 @@ import (
 // With no -bind every declaration is a root. A type named by a kept binding is
 // kept even when it is not a root: that is the type closure.
 func (b *builder) applySelection() error {
-	bindMatched := make([]bool, len(b.cfg.Bind))
-	excludeMatched := make([]bool, len(b.cfg.Exclude))
+	// The pre-selection already recorded the entries that named a declaration,
+	// including the declarations it did not lower.
+	bindMatched := b.bindMatched
+	excludeMatched := b.excludeMatched
 
 	for _, binding := range b.bindings {
 		keep := len(b.cfg.Bind) == 0
@@ -52,6 +54,9 @@ func (b *builder) applySelection() error {
 			needed[record] = true
 		}
 	}
+	// The enums are selected here, before the unmatched-entry check, because an
+	// entry may name an enum and nothing else.
+	b.selectEnums(bindMatched)
 	for i, entry := range b.cfg.Bind {
 		if !bindMatched[i] {
 			return fmt.Errorf("cppgo: -bind %s: it names nothing this header declares", entry)
@@ -105,9 +110,14 @@ func bindingMatches(entry string, binding *binding) bool {
 	return binding.Owner != nil && matchesName(entry, binding.Owner.CxxName)
 }
 
-// matchesName reports whether qualified is entry or lives inside it.
+// matchesName reports whether qualified is entry or lives inside it. Template
+// argument lists are compared with their spaces removed, because libclang spells
+// the same instantiation with and without them depending on where it read it,
+// and a manifest entry is written the way a reader writes it.
 func matchesName(entry, qualified string) bool {
-	return qualified == entry || strings.HasPrefix(qualified, entry+"::")
+	e := strings.ReplaceAll(entry, " ", "")
+	q := strings.ReplaceAll(qualified, " ", "")
+	return q == e || strings.HasPrefix(q, e+"::")
 }
 
 // addReferenced records every record a binding's signature names.
@@ -163,7 +173,11 @@ func (b *builder) reattach() {
 // -rename, then the collision check.
 func (b *builder) assignNames() error {
 	for _, binding := range b.bindings {
-		binding.GoName = b.baseName(binding)
+		name, err := b.baseName(binding)
+		if err != nil {
+			return symbolError(binding.sym, err)
+		}
+		binding.GoName = name
 	}
 	b.applyOverloadSuffixes()
 	if err := b.applyRenames(); err != nil {
@@ -173,21 +187,31 @@ func (b *builder) assignNames() error {
 }
 
 // baseName is the name a binding gets before overloads are told apart.
-func (b *builder) baseName(binding *binding) string {
+func (b *builder) baseName(binding *binding) (string, error) {
+	if binding.fieldName != "" {
+		return binding.fieldName, nil
+	}
 	if binding.IsDestructor {
-		return "Close"
+		return "Close", nil
 	}
 	if binding.IsClone {
-		return "Clone"
+		return "Clone", nil
 	}
 	if binding.IsConstructor {
-		return "New" + binding.Owner.GoName
+		return "New" + binding.Owner.GoName, nil
 	}
 	name := exportName(simpleName(binding.sym.QualifiedName))
-	if binding.IsStatic {
-		return binding.Owner.GoName + name
+	if binding.sym.IsOperator {
+		operator, err := b.operatorGoName(binding)
+		if err != nil {
+			return "", err
+		}
+		name = operator
 	}
-	return name
+	if binding.IsStatic {
+		return binding.Owner.GoName + name, nil
+	}
+	return name, nil
 }
 
 // nameScope is where a Go name lives: package level for functions,
@@ -223,8 +247,43 @@ func (b *builder) applyOverloadSuffixes() {
 		sort.Slice(group, func(i, j int) bool {
 			return displaySignature(group[i].sym) < displaySignature(group[j].sym)
 		})
+		// A group made of one declaration and its default-argument prefixes
+		// keeps the bare name for the full signature: that is the declaration a
+		// reader called, and each prefix is a shorter spelling of it.
+		// A genuine zero-argument declaration keeps the bare name when there is
+		// one; otherwise, in a group that holds one declaration and its
+		// default-argument prefixes, the full signature keeps it.
+		primary := ""
+		hasPrefix := false
+		zeroArity := false
+		for _, binding := range group {
+			if binding.defaultPrefix {
+				hasPrefix = true
+			} else if len(binding.Params) == 0 {
+				zeroArity = true
+			}
+		}
+		if hasPrefix && !zeroArity {
+			for _, binding := range group {
+				if binding.defaultPrefix || len(binding.Params) == 0 {
+					continue
+				}
+				if primary == "" {
+					primary = binding.GoName
+				} else {
+					primary = ""
+					break
+				}
+			}
+		}
 		for _, binding := range group {
 			if len(binding.Params) == 0 {
+				// A genuine zero-argument overload keeps the bare name. A
+				// collision with the full signature is the collision check's
+				// to report.
+				continue
+			}
+			if primary != "" && !binding.defaultPrefix {
 				continue
 			}
 			binding.GoName += paramSuffix(binding.Params)
@@ -246,8 +305,14 @@ func paramSuffix(params []*goParam) string {
 // nothing, or matches several declarations by qualified name, is an error.
 func (b *builder) applyRenames() error {
 	for _, entry := range b.cfg.Rename {
-		name, goName, ok := strings.Cut(entry, "=")
-		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(goName) == "" {
+		// The separator is the last "=", because a signature can contain one:
+		// operator=, operator== and operator<=> all do.
+		cut := strings.LastIndex(entry, "=")
+		name, goName := "", ""
+		if cut >= 0 {
+			name, goName = entry[:cut], entry[cut+1:]
+		}
+		if cut < 0 || strings.TrimSpace(name) == "" || strings.TrimSpace(goName) == "" {
 			return fmt.Errorf("cppgo: -rename %q: it must be <qualified signature>=<GoName>", entry)
 		}
 		name = strings.TrimSpace(name)
@@ -316,6 +381,26 @@ func (b *builder) checkCollisions() error {
 			return fmt.Errorf("cppgo: two records map to Go type %s; rename one with -rename '<signature>=<GoName>'", record.GoName)
 		}
 		recordNames[record.GoName] = true
+		if previous, ok := seen["\x00"+record.GoName]; ok {
+			return fmt.Errorf("cppgo: the record %s and %s both map to Go name %s; rename one with -rename '<signature>=<GoName>'",
+				record.CxxName, displaySignature(previous.sym), record.GoName)
+		}
+	}
+	for _, enum := range b.enums {
+		if !enum.selected {
+			continue
+		}
+		if recordNames[enum.GoName] {
+			return fmt.Errorf("cppgo: two types map to Go type %s; rename one with -rename '<signature>=<GoName>'", enum.GoName)
+		}
+		recordNames[enum.GoName] = true
+		for _, constant := range enum.Constants {
+			if recordNames[constant.GoName] {
+				return fmt.Errorf("cppgo: the enumerator %s maps to Go name %s, which another type or enumerator already uses; rename one with -rename '<signature>=<GoName>'",
+					constant.CxxName, constant.GoName)
+			}
+			recordNames[constant.GoName] = true
+		}
 	}
 	return nil
 }
