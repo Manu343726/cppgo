@@ -53,7 +53,7 @@ vectors, a throw, a status code and a callback. This lesson follows only its two
 templates; the rest is the subject of
 [Build a complete Go + C++ project]({{< ref "tutorials/full-project.md" >}}).
 
-## Step 1 — Read the C++ the templates declare
+## Step 1 — Look at the C++ header
 
 These are the two templates, copied from
 [`metrics.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/full/include/metrics/metrics.hpp):

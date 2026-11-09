@@ -4,17 +4,40 @@ description: "Two C++ files, one directory, and the ways to tell the generated p
 weight: 30
 ---
 
+This guide is for the moment after the binding works on your machine: you have
+a Go binary and two C++ files, and you need them on another machine, in a
+container, or in a package you hand to somebody else.
+
 A program that uses a generated package loads **two** C++ files at run time: the
-one cppgo built for you, and the C++ library it was linked against. This guide is
-about getting those two files to the machine and telling the program where they
-are.
+one cppgo built for you, and the C++ library it was linked against. The task is
+to get those two files to the machine and tell the program where they are.
 
 Both are *shared objects* (`.so` on Linux): files the operating system loads into
 the process at run time. They are not linked into the Go binary.
 
+The scenario is the `full` example. Its program, in
+[`cmd/app/main.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/cmd/app/main.go),
+opens the generated file by a relative path and points the package at its library
+first, because the example's `Makefile` keeps the library under `build/` and the
+shim under `gen/`. Your own deployment can keep the two in one directory instead,
+as Recipe A does.
+
 ## Where the generated package looks
 
-`mathx.Open(path)` opens the file cppgo built, then resolves the bindings. Your
+Every generated package has the same entry point, from
+[`examples/full/gen/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo.gen.go):
+
+```go
+// Open loads the cppgo-built shim and, when the package has one, the user's
+// library it was linked against, then resolves every symbol this package binds.
+//
+// path names the shim cppgo compiled beside this package. A path of "" uses the
+// name the package was generated with. It is safe to call Open more than once;
+// the first successful call wins.
+func Open(path string) error
+```
+
+`Open(path)` opens the file cppgo built, then resolves the bindings. Your
 own library is looked for in this order, and the first match wins:
 
 1. `CPPGO_LIBRARY_PATH` (the environment);
