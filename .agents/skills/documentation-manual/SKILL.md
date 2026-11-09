@@ -1,6 +1,6 @@
 ---
 name: documentation-manual
-description: "The cppgo documentation manual, written in this repository: who the documentation is for, the six rules on what a page may say and in which order it shows its code, the operator's own anti-patterns, the evidence every claim carries, the Diátaxis map of the site, and the checklist a writer runs before opening a docs pull request. Read it before writing, rewriting or reviewing any cppgo page: README, tutorial, how-to, reference, explanation, benchmark page or the site under site/."
+description: "The cppgo documentation manual, written in this repository: who the documentation is for, the seven rules on what a page may say and in which order it shows its code, the operator's own anti-patterns, the evidence every claim carries, the Diátaxis map of the site, and the checklist a writer runs before opening a docs pull request. Read it before writing, rewriting or reviewing any cppgo page: README, tutorial, how-to, reference, explanation, benchmark page or the site under site/."
 ---
 
 # The cppgo documentation manual
@@ -282,9 +282,11 @@ Applying it:
   [`site/content/tutorials/first-binding.md`](../../../site/content/tutorials/first-binding.md)
   and [`site/content/tutorials/full-project.md`](../../../site/content/tutorials/full-project.md).
 
-The anti-pattern, verbatim from the current
-[`site/content/how-to/templates.md`](../../../site/content/how-to/templates.md) (lines
-13–17, replaced by [#70](https://git.manu343726.com/manu343726/cppgo/issues/70)):
+The anti-pattern, abridged from
+[`site/content/how-to/templates.md`](../../../site/content/how-to/templates.md) as the page
+opened before rule 6 applied (its link markup is elided here). The page now opens with
+prose, an objective, and the real `metrics` scenario of
+[`examples/full`](../../../examples/full):
 
 > ## The header
 >
@@ -295,23 +297,166 @@ The anti-pattern, verbatim from the current
 Three defects in three lines: it opens on a section title that assumes the reader knows why
 the header matters; it introduces `box::Box` with an internal test fixture as the reason the
 type exists ("the fixture the two-phase flow is measured on" is about the project's tests,
-not about the reader's task); and the sentence names a path without a link. A learned
+not about the reader's task); and it sends the reader to a path in
+`internal/gen/testdata`, where no library they can bind lives. A learned
 reader gets through it; a reader learning the two-phase flow cannot tell whether `Box` is a
 library they can use.
 
-## Rules 5 and 6 live in the rule list too
+## Rule 7 — Write for the reader who does not know the topic
 
-[`../extra/documentation-rules.md`](../extra/documentation-rules.md) currently ends at
-rule 4. Rules 5 and 6 are being added to that file by
-[#68](https://git.manu343726.com/manu343726/cppgo/issues/68) (benchmarks) and
-[#70](https://git.manu343726.com/manu343726/cppgo/issues/70) (tutorials), and the wording in
-this manual is extracted from those two issues.
+The reader is the one § *Who the documentation is for* defines, and rule 7 makes that reader
+the test of every sentence: a competent Go developer who has never built an FFI (a foreign
+function interface: Go calling code that was not compiled as Go) and, on an explanation page,
+has never looked at the Go runtime's internals. Every term the page needs —
+C++, FFI or Go-runtime — is defined the first time the page uses it, in the sentence that
+needs it. The page builds from what the reader already knows, so no sentence requires a term
+or mechanism the page defines later, and no step is skipped because it is obvious to someone
+who has done the thing before. An analogy is allowed where it removes a leap, and the precise
+statement follows it. Each line of a code block the reader cannot parse is named and
+explained.
 
-**Once those land, the rule list is the canonical wording and this manual follows it**: the
-manual keeps the examples and the checklist, and where a sentence of rules 5 or 6 in this
-manual differs from the file, the file wins, as the precedence at the top of this page says.
-Do not edit the rule list for documentation reasons. It is the operator's file; the
-benchmarks workstream owns rules 5, the tutorials workstream owns rule 6, and a writer
+That is the operator's rule, from
+[#83](https://git.manu343726.com/manu343726/cppgo/issues/83), and it ends on the sentence
+that decides most arguments about a page — the trampoline it names being the generated
+assembly that performs the call into C++:
+
+> Each line of a code block the reader cannot parse is named and explained: "the trampoline"
+> is not an explanation of the trampoline.
+
+Applying it:
+
+- **The test is a read, not a search.** Read the page front to back as the reader it names,
+  and mark every term used before its definition, every sentence whose antecedent is
+  undefined, every code block with an identifier or an instruction the page never names, and
+  every step it skips as obvious. Each mark is a rewrite, not a note for later.
+- **Define in the sentence, or in a short list above the first use.** Not in a glossary the
+  reader has to find. A link to another page is allowed only where that page owns the concept
+  (rule 1), and the sentence here must still stand alone: "the carrier is defined in
+  *Carriers*" is not a definition of the carrier.
+- **This is rule 4 extended to assembly and to runtime internals.** Naming a mechanism is not
+  explaining it: an assembler flag, a single instruction, a runtime entry point and a
+  scheduling term are all names until the page says what each one does and why it is there.
+  The worked example below is four places where a page named them and moved on.
+- **An analogy earns its place only where it removes a leap**, and the precise statement
+  follows it: "a P is the permission an M holds while it runs Go code" is allowed, and the
+  local run queue, the allocator cache and the hand-off between threads come next. An
+  analogy offered in place of the precise statement is a defect, not a style.
+- **The bar is the same on a tutorial, a how-to, a reference page and the README.** A
+  reference page is the same reader looking something up: a table row, an error message and a
+  flag description are read by the person who has never built an FFI.
+
+### The worked example: the Go runtime page before #75
+
+The rule was written from a page the operator rejected in
+[#75](https://git.manu343726.com/manu343726/cppgo/issues/75). Read as a Go developer who has
+never looked at the runtime, the page opens on an abstraction and then keeps going without
+grounding it in code:
+
+> A binding is a native call made from a language whose runtime was designed
+> without one.
+
+The sentence is quoted verbatim, line break included: on the page it opens the first
+paragraph, which then links *Architecture*, and
+[#75](https://git.manu343726.com/manu343726/cppgo/issues/75) quotes the same sentence when it
+states the problem. Four failures follow it, and each one breaks a different clause of this
+rule:
+
+1. **The abstraction has no anchor.** Nothing in that sentence is something the reader can
+   see: no call, no stack, no frame has been shown, and the paragraph that follows promises
+   "the trampoline, the probe, the callback table" as the sources each section starts from —
+   "the trampoline" named before the page has said what a trampoline is, and never defined
+   anywhere on the page.
+2. **`g`, `M` and `P` arrive before the words their definitions use.** The runtime's three
+   scheduling words are its names for a goroutine (`g`), an operating-system thread (`M`) and
+   the permission a thread must hold to run Go code (`P`, with the local run queue and the
+   allocator cache inside it). The page defines `g` as "the stack, the frame chain and the
+   saved registers of one lightweight thread" — three terms it has not established, and
+   "frame" is never defined anywhere on the page. "The scheduler" and "the collector" appear
+   in the first paragraph in the same position, as things the reader is assumed to know.
+3. **Runtime terms carry the argument before they are defined.** `stack maps` — the per-frame
+   lists that say which words hold pointers, and therefore what the collector and the copier
+   must adjust — decide the whole consequence in § *The stack is copied, not extended*, and
+   the section that says what a stack map is, § *Safepoints, preemption, and what the runtime
+   cannot see* (a safepoint is a point where the runtime may stop a goroutine because every
+   frame there can be described), comes two sections later. `NOSPLIT`, the assembler flag
+   that forbids the stack-growth preamble in a function, is in the page's first assembly
+   snippet before the page has said what the assembler does with a flag, and the section
+   that explains it, § *What `NOSPLIT` is*, comes only after the stack-copy and safepoint
+   arguments have used it as a premise. `cgocall` — the runtime's own entry point for a call
+   into foreign code, which parks the goroutine on the system stack (`g0`) and releases its P
+   — enters as "the runtime's own entry" with `g0`, `m.incgo` and "the C ABI" in the same
+   comment, none of them defined there.
+4. **Seven assembly instructions are shown before the reader can parse one.** The generated
+   `cppgoCall_…` block is followed by the sentence "Four things in those seven instructions
+   are the whole mechanism", so the block is not explained until after it has been read. The
+   five mnemonics the block uses — `MOVQ`, `MOVSD`, `ANDQ`, `CALL`, `RET` — are copied into
+   the prose but never introduced as instructions: the reader is not told that `ANDQ` is a
+   bitwise and, or that `$~15` is an immediate constant used as a mask, so "rounds it down"
+   is a conclusion the page states rather than one the reader can reach.
+
+The shape of the fix is the order the reader's knowledge arrives in, not a rewrite of the
+sentences in place. It starts from a Go call, adds one layer at a time, and uses only what the
+previous layer established:
+
+1. what happens when one Go function calls another: the call stack, a frame, `SP`, `FP`, the
+   argument registers and the return address;
+2. goroutines and OS threads, then the `g`/`M`/`P` triple, one definition per sentence, with
+   the analogy for `P` and the precise statement after it;
+3. why a Go stack grows by copying, and what a stack map is — the point at which a pointer in
+   a register, in a `uintptr` or in a C++ frame stops following the stack;
+4. the heap and the collector: what pinning is — telling the collector that an address must
+   not move — why an object keeps its storage reachable, and why a frame address cannot be
+   pinned at all;
+5. safepoints and preemption, and the state a foreign frame puts the runtime in;
+6. entering a foreign call: `runtime.cgocall`, the `g0` stack, and what the P does meanwhile;
+7. the trampoline, line by line: the real assembly, then every instruction and register named —
+   `MOVQ`, `MOVSD`, `ANDQ`, the alignment sequence, `CALL`, `RET`, `SP`, `FP`, `R12`, `R13`,
+   `R14`, and `TEXT`, `NOSPLIT` and `$0-24` as assembler syntax before they are used.
+
+The order is the rule, not a suggestion about the rewrite: a page that keeps its trampoline
+section where the rejected one put its first paragraph has not applied rule 7, however well
+each individual sentence reads. The same reading applies to a how-to's steps and a reference
+page's tables: each step explained before it is taken, each row introduced by the declaration
+it measures.
+
+## The rule list carries rules 1–7
+
+[`../extra/documentation-rules.md`](../extra/documentation-rules.md) carries all seven rules —
+rule 1 through rule 7, each with its own `Applying it` list — and it is the canonical wording.
+The manual's § *Rule 5*, § *Rule 6* and § *Rule 7* above are its long form: the same
+requirement, plus the examples that make each one checkable, which the rule list leaves to
+this page. Where a sentence of rules 5, 6 or 7 in this manual differs from the file, the file
+wins, as the precedence at the top of this page says.
+
+Rule 5, *A benchmarks page is read one scenario at a time*, opens:
+
+> The benchmarks page is organised per scenario, in the order the scenarios are measured, and
+> every scenario has the same four parts: **the scenario** — what is measured, the C++ work,
+> and the variants compared; **the code** — the C++ declaration and the call each arm makes
+> to reach it; **the results** — one row per arm with the numbers; **the conclusions** — what
+> this scenario's numbers say and why, written for a reader who has not seen the other
+> scenarios.
+
+Rule 6, *A tutorial teaches a person, a how-to answers a task*, opens:
+
+> Every tutorial opens with an introduction (what the reader will build and why), states its
+> objective (the concrete result at the end), introduces the example scenario it uses — a
+> real, user-facing project, not an internal test fixture — and then walks step by step,
+> explaining what each step does and why.
+
+Rule 7, *Write for the reader who does not know the topic*, opens:
+
+> Every page is written for the reader the project defines: a competent Go developer who has
+> never built an FFI and, on an explanation page, has never looked at the Go runtime's
+> internals.
+
+The first is the four parts the manual's § *Rule 5* numbers, the second the opening of the
+shape its § *Rule 6* lists, and the third the audience statement its § *Rule 7* applies; the
+manual adds the examples that make each one checkable, and the closing section the rule list
+leaves to the long form. Rule 7 is in the file as well, appended after rule 6: the list is
+the wording, and § *Rule 7* above is where the reader test and the worked example live.
+
+Do not edit the rule list for documentation reasons. It is the operator's file, and a writer
 reports a disagreement instead of resolving it alone.
 
 ## The anti-patterns, named
@@ -322,7 +467,7 @@ for. Each is quoted as written, and each one is a defect wherever it appears.
 | The anti-pattern | Why it fails | What replaces it |
 |---|---|---|
 | *"Measured 2026-11-08 on the machine that built this tree"* | A date, a machine and a description of the authoring process on a user page (rule 2). The user cannot use any of the three, and the page will be wrong as soon as the tree moves. | The characteristic and its neutral environment: *"median of six runs on a Ryzen 7 6800HS; the run is linked"*, on the benchmarks page, with the method in the developer docs. |
-| *"The header. The template is declared in a header… This is `box::Box`, the fixture the two-phase flow is measured on, in `internal/gen/testdata`"* | A terse feature-announcement opening (rule 6), an internal test fixture used as the example (rule 6), and a bare path (rule 4). | An introduction and objective, a real library from [`examples/`](../../../examples), the header in code with a link, then the numbered steps. |
+| *"The header. The template is declared in a header… This is `box::Box`, the fixture the two-phase flow is measured on, in `internal/gen/testdata`"* | A terse feature-announcement opening (rule 6), an internal test fixture used as the example (rule 6), and a path into `internal/` that a user cannot follow (rule 4). | An introduction and objective, a real library from [`examples/`](../../../examples), the header in code with a link, then the numbered steps — what [`site/content/how-to/templates.md`](../../../site/content/how-to/templates.md) now does. |
 | A Go snippet with no C++ above it (rule 3) | The reader cannot tell what was generated, from which declaration, or whether the snippet is the generator's output or something they must write. | The C++ declaration, the `cppgo gen` command, the generated Go, then the Go call. |
 | A benchmark table with no scenario and no code above it (rule 4, rule 5) | The table is a wall of names the reader has never seen, with no way to judge a row. | Scenario, scenario code (every arm's C++ and Go), table with iterations and runs, conclusions. |
 
@@ -397,8 +542,9 @@ and stops teaching. Move the page, do not bend the rule.
 
 Run this list against the diff, in order. A "no" is not a note for later; it is the change.
 
-1. **Audience.** Does every C++ or FFI term appear with its definition, in the page that
-   first needs it, the way a Go developer who has never built an FFI would need it?
+1. **Audience.** Does every C++, FFI or Go-runtime term appear with its definition, in the
+   page that first needs it, the way a Go developer who has never built an FFI and has never
+   looked at the runtime would need it?
 2. **Rule 1.** Does the page say what the feature does and how to use it, with the mechanism
    either absent or inside a *How it works* section or an explanation page it links?
 3. **Rule 2.** Search the diff for a date, a machine name, "this tree", a commit or issue
@@ -414,12 +560,16 @@ Run this list against the diff, in order. A "no" is not a note for later; it is 
 7. **Rule 6.** Does every tutorial have an introduction, an objective, a real user-facing
    scenario (not a fixture under `internal/`), numbered steps with the reason for each, and a
    closing? Does every how-to open with its task, when and scenario?
-8. **Evidence.** Is every number traceable to a run, every behaviour to a test, every
+8. **Rule 7 — the reader test.** Read the page front to back as the reader it names, and mark
+   every term used before its definition, every sentence whose antecedent is undefined, every
+   code block with an identifier or instruction the page never names, and every step skipped
+   as obvious. Each mark is a rewrite, and the marks are the change.
+9. **Evidence.** Is every number traceable to a run, every behaviour to a test, every
    version to a file? Does anything claim more than the tree proves?
-9. **The build.** `make site` succeeds — Hugo fails the build on a broken `ref`/`relref`, so
-   a green build is the link check for the site. The pages the change links still exist.
-10. **The international check.** The diff is English. Re-read the two sentences you are least
-    sure about; if they are written for someone who already knows, rewrite them.
+10. **The build.** `make site` succeeds — Hugo fails the build on a broken `ref`/`relref`, so
+    a green build is the link check for the site. The pages the change links still exist.
+11. **The international check.** The diff is English. Re-read the two sentences you are least
+    sure about; a sentence that needs a second pass is rewritten.
 
 A docs change is reviewed against this list, not against taste. When a page and an issue
 disagree about a measurement, the issue with the run behind it wins and the page is

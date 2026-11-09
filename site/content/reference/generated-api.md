@@ -4,16 +4,24 @@ description: "The Go shapes cppgo gen writes for records, classes, functions and
 weight: 20
 ---
 
-This page describes the package `cppgo gen` writes. Every shape is shown with
-the C++ declaration it comes from — copied from the header in the repository,
-linked — and the Go it became, copied from a generated package in the examples.
-The C++ is the input; the Go is the output.
+This page describes the package `cppgo gen` writes. `cppgo gen` reads a C++
+**header** — the `.hpp` file that declares a library's classes and functions —
+and writes a Go **binding**: one Go identifier per C++ declaration, plus the code
+that loads the library and calls it. Every shape is shown with the C++ declaration
+it comes from — copied from the header in the repository, linked — and the Go it
+became, from a generated package in the examples. The C++ is the input; the Go is
+the output. Where a generated function is shown without its body, the body is in
+the linked file and adds nothing a reader needs to recognise the shape.
 
 ## Package entry
 
 Every generated package has one way in. These two are not generated from a C++
-declaration: `Open` loads the two shared objects and `CppgoLibraryPath` says
-where the user's library is.
+declaration: `Open` loads the two **shared objects** — the `.so` files the
+dynamic loader, the part of the operating system that maps libraries into a
+process, opens at run time — and `CppgoLibraryPath` says where the user's library
+is. Of the two objects, the first is the **shim**, the C++ that `cppgo gen`
+generates and compiles, and the second is the library the user built, which the
+shim links against.
 
 ```go
 // Open loads the cppgo-built shim and, when the package has one, the user's
@@ -33,15 +41,22 @@ var CppgoLibraryPath string
 
 The generated methods call `Open("")` themselves when the package is not open
 yet, so a program that keeps the two files where the package can find them needs
-no explicit call. A missing binding is reported once, as
-`the shim cppgo compiled is stale; run cppgo gen again`.
+no explicit call. `""` means the shim name the generator recorded. A missing
+symbol is reported once, as
+`the shim cppgo compiled is stale; run cppgo gen again`: the shim on disk was
+built from a different header than the Go package.
 
 ## Records
 
+A C++ **record** is a `struct` or a `class`. A record whose fields are all
+public and whose layout matches Go's becomes a Go struct with the same fields. A
+record with no constructor, no virtual function and no base class is called
+**POD**, plain old data: its bytes are its value, so both languages can pass it
+by value.
+
 ### A record with a natural layout becomes a Go struct
 
-A C++ record whose fields are all public and whose layout matches Go's becomes a
-Go struct with the same fields. This is `mathx::Point`, in
+This is `mathx::Point`, in
 [`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
 
 ```cpp
@@ -68,12 +83,28 @@ func NewPoint() (*Point, error)
 func (p *Point) Clone() (*Point, error)
 ```
 
-A `Point` is passed and returned by value. A record that does not qualify
-becomes an opaque value instead: Go storage the C++ side owns, with `Close`,
-`Clone` when the C++ type is copyable, and generated accessors for the public
-fields.
+A `Point` is passed and returned by value: the Go struct has the C++ layout, and
+the generated code proves that at compile time. `NewPoint` returns the zero
+value, and `Clone` returns a copy. The C++ field names become exported Go field
+names: `x` is `X` and `y` is `Y`.
+
+A record that does not qualify becomes an **opaque** value instead: Go holds
+only a pointer to storage whose layout it cannot see, and the generated methods
+and `Close` are its whole surface.
 
 ### A class becomes a struct with a lifetime
+
+A **class** is a record with member functions and access control — the
+`public` and `private` labels that say who may use a member. A
+**constructor** builds an object; a **destructor** destroys it; a non-static
+member function receives `this`, a hidden pointer to the object it was called on;
+and a **static member** belongs to the class rather than to an object, so it has
+no `this`. A **copy constructor** is the constructor that takes another object of
+the same class and copies it. The generated Go value has a **lifetime**: it owns
+C++ storage, and the Go program destroys that storage with `Close`.
+
+The class below also uses `std::size_t`, the C++ standard library's unsigned
+integer wide enough to hold a size — Go's `uint64` on this platform.
 
 The class the generated package in the examples binds, `mathx::Vector`, from
 [`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
@@ -124,22 +155,32 @@ func NewVector(x float64, y float64) (*Vector, error)
 func (v *Vector) Close() error
 ```
 
+`obj` is a `*cppgo.Object` ([Runtime]({{< ref "reference/runtime.md" >}})#objects):
+Go-allocated storage pinned so its address stays valid while C++ holds it.
+
 The rules that hold for every class:
 
-- `New<Type>` is a constructor. Constructor overloads carry the same parameter
-  suffix as functions, applied to `New<Type>`.
-- `Close` releases the object. There is no finalizer, so closing is the caller's
-  job.
-- `Clone` is the copy constructor. A move constructor is not exposed.
+- `New<Type>` is a constructor. A class with more than one constructor has an
+  **overload set** — two declarations of the same name that differ in parameter
+  types — and a parameterless constructor keeps `New<Type>` while every other
+  one appends the CamelCase Go type of each parameter, as functions do.
+- `Close` releases the object. There is no finalizer — no function the garbage
+  collector runs to destroy it — so closing is the caller's job.
+- `Clone` is the copy constructor. A move constructor — the C++ constructor that
+  takes over another object's storage instead of copying it — is not exposed.
 - A static member with no `this` becomes a package function named after its type:
-  `func VectorDims() (int32, error)` is `mathx::Vector::dims()`.
+  `func VectorDims() (int32, error)` is `mathx::Vector::dims()`. Go has no class
+  scope, so the type name is the prefix.
 - Accessors keep their names: `X`, `Y`, `Norm`, `Dot`, `At`, `Validate`,
   `Scale`.
 
 ### Zero and closed values
 
-A method on a nil or closed value returns `cppgo.ErrClosed`. The C++ side is the
-inline accessor and the `noexcept` setter in the class above:
+A method on a nil or closed value returns `cppgo.ErrClosed` — the error a closed
+value reports. The C++ side is the inline accessor and the `noexcept` setter in
+the class above. `noexcept` is C++'s promise that a function will not throw a
+**C++ exception** — the language's error-signalling mechanism, which unwinds the
+stack until a handler catches it:
 
 ```cpp
 double x() const { return x_; }
@@ -168,8 +209,29 @@ func (v *Vector) X() (float64, error) {
 }
 ```
 
-A method whose declaration cannot fail has no error result to return, so it
-panics instead. This is the generated `Scale`, unchanged:
+Line by line:
+
+- `v == nil || v.obj == nil` is the one failure that never reaches C++: a nil or
+  closed receiver has no object to call, so the method returns `ErrClosed`.
+- `cppgoOpen("")` loads the shim on first use; `""` is the name the package was
+  generated with, as in `Open`.
+- `cppgo.ProbeStack()` makes the stack room the C++ frame needs, before any
+  address into the frame is taken.
+- `cppgoCall_00064a4bc112(cppgoSym_00064a4bc112, v.cppgoAddr(), unsafe.Pointer(&cppgoResult))`
+  is the generated assembly **trampoline** for this binding — a small assembly
+  function that loads the arguments into the C registers and calls the resolved
+  address. `cppgoSym_00064a4bc112` is the address `Open` resolved for the symbol,
+  `v.cppgoAddr()` is the receiver's C++ address, and the third argument is the
+  address of the result — `unsafe.Pointer`, Go's untyped pointer, is how an
+  address into Go memory is handed across.
+- `cppgo.KeepAlive(v, &cppgoResult)` keeps the receiver and the result reachable
+  while C++ reads and writes them.
+- the returned status is `0` for success and non-zero for failure;
+  `cppgoCallError` builds a `*cppgo.CallError` carrying the message the shim
+  stored.
+
+A method whose declaration cannot fail has no error result to return, so it panics
+instead. This is the generated `Scale`, unchanged:
 
 ```go
 func (v *Vector) Scale(k float64) {
@@ -186,68 +248,103 @@ func (v *Vector) Scale(k float64) {
 ```
 
 The difference follows from the signature, not from a preference: `scale` cannot
-fail, so its Go signature has nowhere to put an error.
+fail, so its Go signature has nowhere to put an error. The only failure left is
+the Go-side one, a dead receiver, and a function with no error result reports it
+by panicking.
 
 ## Functions and overloads
 
-A free function becomes a package function. An overload takes a suffix built
-from the Go parameter types, in order, and one declaration keeps the bare name.
-These are the declarations, in
-[`internal/gen/testdata/overloads/overloads.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/overloads/overloads.hpp):
+A C++ **free function** — a function that belongs to no class — becomes a Go
+package function. These are two of the functions of the `metrics` library in
+[`examples/full/include/metrics/metrics.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/full/include/metrics/metrics.hpp):
 
 ```cpp
-namespace over {
+Point centroid(Point a, Point b) noexcept;
 
-class Thing {
-public:
-    Thing();
-    Thing(int32_t value);
-    ~Thing();
-
-    int32_t value() const;
-    int32_t value(int32_t scale) const;
-
-    void reset();
-    void reset(int32_t value);
-
-private:
-    int32_t value_;
-};
-
-int32_t add(int32_t a, int32_t b) noexcept;
-double add(double a, double b) noexcept;
-
-} // namespace over
+std::string describe(const std::string &prefix, const Point &p);
 ```
 
 and these are the Go functions they became, from
-[`internal/gen/testdata/golden/overloads/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/golden/overloads/zz_cppgo.gen.go):
+[`examples/full/gen/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo.gen.go):
 
 ```go
-func AddFloat64Float64(a float64, b float64) float64
-func AddInt32Int32(a int32, b int32) int32
-func NewThing() (*Thing, error)
-func NewThingInt32(value int32) (*Thing, error)
+func Centroid(a Point, b Point) Point
+func Describe(prefix string, p *Point) (string, error)
 ```
 
-A collision that no suffix separates is a generation error naming both
-declarations, and `-rename '<signature>=<GoName>'` is the way out.
+`centroid` is `noexcept` and returns a POD, so its Go signature has no error
+result. `describe` is not `noexcept` — it builds a `std::string`, the
+standard-library byte-string type, which can throw — so it returns
+`(string, error)`. Go has no reference type, so the C++ reference
+`const Point &p` becomes the pointer `p *Point`; the caller passes `&p`.
 
-A default argument is **not** expanded by this build: the Go function takes every
-parameter of the declaration and the caller passes the value.
+An **overload** is two declarations with the same name in the same scope that
+differ in parameter types; C++ chooses one by the arguments. The generator writes
+a distinct Go name for each: a declaration with no parameters keeps the bare name,
+and every other one appends the CamelCase Go type of each parameter, in order. A
+pair the suffix cannot separate, or a name that collides with another Go
+identifier, is a generation error naming both declarations, and
+`-rename '<signature>=<GoName>'` is the way out
+([Command line]({{< ref "reference/cli.md" >}})).
+
+A **default argument** — a parameter the C++ declaration gives a value, so a C++
+caller may omit it — is **not** expanded by this build: the Go function takes
+every parameter of the declaration and the caller passes the value.
 
 ## Values: the type map
+
+The generator maps each C++ type to a Go type. These declarations of the
+`metrics` and `stats` examples use the mapping:
+
+```cpp
+std::vector<double> scaled(const std::vector<double> &values, double factor);
+
+void histogram(const double *xs, size_t n, double *bins, size_t nbins, double lo,
+               double hi);
+
+const double *data_pointer(const double *xs, size_t n) noexcept;
+```
+
+and these are the generated signatures, from
+[`examples/full/gen/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo.gen.go)
+and
+[`examples/stats/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/stats/zz_cppgo.gen.go):
+
+```go
+func Scaled(values []float64, factor float64) ([]float64, error)
+func Histogram(xs []float64, bins []float64, lo float64, hi float64) error
+func DataPointer(xs []float64) *float64
+```
+
+The standard-library types in the table: `std::string` is a byte string,
+`std::string_view` a borrowed view of one, `std::vector<T>` a growable array,
+`std::span<T>` a borrowed view of a range, `std::array<T,N>` a fixed-size array,
+and `std::optional<T>` a value that may be absent, with `nullopt` as the absent
+value. `std::size_t` is an unsigned integer wide enough for a size,
+`std::ptrdiff_t` its signed counterpart, and `std::int8_t` … `std::uint64_t` the
+fixed-width integers.
+
+Neither `scaled` nor `histogram` is `noexcept`, so both Go signatures return an
+error; `data_pointer` is `noexcept` and returns the pointer alone.
+
+A pointer and the count that follows it spend the pointer's position and become
+one slice: `(const double *xs, std::size_t n)` is `xs []float64`, and a mutable
+`double *bins` with its `nbins` is `bins []float64`, borrowing the caller's
+array so the writes reach it. A lone pointer with no count stays a pointer:
+`const double *` becomes `*float64`. A `std::vector` is copied in and out, because
+the Go slice and the C++ vector do not share storage.
 
 | C++ | Go | Notes |
 |---|---|---|
 | `bool` | `bool` | |
 | `char`, `signed char`, `unsigned char` | `int8`, `uint8` | |
-| `short`, `int`, `long`, `long long` and unsigned | `int16`/`int32`/`int64`, unsigned alike | LP64 |
+| `short`, `int`, `long`, `long long` and unsigned | `int16`/`int32`/`int64`, unsigned alike | LP64, the Linux convention: `int` is 32 bits and `long` 64 |
 | `std::int8_t` … `std::uint64_t` | the same width | |
 | `std::size_t`, `std::ptrdiff_t` | `uint64`, `int64` | |
 | `float`, `double` | `float32`, `float64` | |
-| `T *`, `T &` | `*T` | borrowed |
-| `(const T *p, std::size_t n)` | `[]T` | borrowed for the call, nothing copied. `T` other than `char`; see below |
+| `T *`, `T &` | `*T` | borrowed; a lone pointer or reference, with no paired count |
+| `(const T *p, std::size_t n)` | `[]T` | borrowed for the call, nothing copied. `T` other than `char`; `n` is the count that follows the pointer |
+| a `T *` followed by its count | `[]T` | borrowed, and writes in the callee reach the caller's slice |
 | `std::string` | `string` | copied in and out |
 | `std::string_view` | `string` | borrowed for the call |
 | `std::vector<T>` | `[]T` | copied in and out |
@@ -258,50 +355,11 @@ parameter of the declaration and the caller passes the value.
 | `T[N]` as a record field | `[N]T` | fixed-size array |
 | function pointer, `std::function<R(Args…)>` | `func(…) R` | see *Callbacks* |
 
-For a header that uses them, the fixture in
-[`internal/gen/testdata/std/std.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/std/std.hpp)
-declares one function per shape:
-
-```cpp
-namespace stdx {
-
-std::string describe(const std::string &prefix, std::string_view suffix);
-
-std::size_t text_length(const std::string &value);
-
-std::string_view literal_view();
-
-std::vector<double> doubled(const std::vector<double> &values);
-
-double sum(std::span<const double> values);
-
-std::array<double, 3> triple(std::array<double, 3> values);
-
-std::optional<double> maybe(bool present, double value);
-
-double unwrap(std::optional<double> value, double fallback);
-
-} // namespace stdx
-```
-
-The generated signatures are, copied from
-[`internal/gen/testdata/golden/std/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/golden/std/zz_cppgo.gen.go):
-
-```go
-func Describe(prefix string, suffix string) (string, error)
-func TextLength(value string) (uint64, error)
-func LiteralView() (string, error)
-func Doubled(values []float64) ([]float64, error)
-func Sum(values []float64) (float64, error)
-func Triple(values [3]float64) ([3]float64, error)
-func Maybe(present bool, value float64) (*float64, error)
-func Unwrap(value *float64, fallback float64) (float64, error)
-```
-
 Some shapes are refused rather than guessed — `long double`, `__int128`,
-`nullptr_t`, `void *`, `std::unique_ptr`/`std::shared_ptr`, a
-`non-const` reference to a standard-library value, and every enum. The
-[limits page]({{< ref "explanation/limits.md" >}}) has the messages and the
+`nullptr_t`, `void *`, the owning smart pointers
+`std::unique_ptr`/`std::shared_ptr`, a `non-const` reference to a
+standard-library value, and every enum (a C++ named set of integer constants).
+The [limits page]({{< ref "explanation/limits.md" >}}) has the messages and the
 tests.
 
 **A `char *` parameter does not bind in this build.** `const char *` is mapped to
@@ -312,71 +370,236 @@ fixed.
 
 ## Callbacks
 
-A parameter that takes a function pointer or a `std::function` becomes a Go
-function value. The limits:
+A **callback** is a Go function that C++ calls. A parameter that takes a function
+pointer — a C++ value holding the address of a function, such as
+`double (*fn)(double)` — or a `std::function` — the standard-library type that
+stores any callable with a given signature — becomes a Go function value. This is
+`metrics::apply`, from
+[`examples/full/include/metrics/metrics.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/full/include/metrics/metrics.hpp):
+
+```cpp
+double apply(double (*fn)(double), double value);
+```
+
+and this is the Go function it became, from
+[`examples/full/gen/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo.gen.go):
+
+```go
+func Apply(fn func(float64) float64, value float64) (float64, error)
+```
+
+The call enters C++ through the **reentrant** carrier — the call path that marks
+the thread as being inside a foreign call, a call from Go into code that was not
+compiled by Go, which is the only state from which C++ may call back into Go. A
+binding that passes no Go function does not need it.
+
+The limits:
 
 - the call carries at most **six integer and eight floating-point arguments**,
   and one result. A callback that needs more is a generation error naming the
   argument;
-- argument and result types are scalars, and pointers to them. A `std::string`
-  parameter or a record passed by value in a callback is a generation error;
+- argument and result types are integers, `bool`, `double` and pointers to them;
+  a `float32` argument is refused (use `double`), and a `std::string`, a record,
+  a slice or an array is a generation error;
 - a panic inside the callback does not reach C++: the result is zeroed and the
   panic is re-raised in Go when the foreign call returns;
 - a callback that has to report a failure writes a status and the C++ side checks
-  it. An exception raised across a callback into Go terminates the process.
-
-There is no example in `examples/` that passes a callback yet.
+  it. A C++ exception that unwinds through a Go frame terminates the process, so
+  catch it on the C++ side before the callback returns.
 
 ## Templates
 
-A class template — `box::Box` in
-[`internal/gen/testdata/box/box.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/box/box.hpp):
+A C++ **template** is a recipe for a family of classes or functions. The compiler
+writes the real class or function only where a program supplies the **type
+argument**; that written-out one is a **specialization**, and writing it is
+**instantiating** the template. The `metrics` library has one of each kind, in
+[`examples/full/include/metrics/metrics.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/full/include/metrics/metrics.hpp):
 
 ```cpp
+// A class template. The generic Go API exists after `cppgo gen`; each
+// specialization the Go program type-checks is instantiated in the shim by
+// `cppgo build -scan`.
 template <typename T>
-class Box {
+class Accumulator {
 public:
-    Box() : value_() {}
-    Box(T value) : value_(value) {}
-    Box(const Box &other) = delete;
-    ~Box() {}
-    T get() const { return value_; }
-    void set(T value) { value_ = value; }
-    T add(T other) const { return value_ + other; }
-    T *echo(T *value) const { return value; }
-    const T *peek(const T *value) const { return value; }
-    void consume(const T &value) { value_ = value; }
+    Accumulator() : total_() {}
+    explicit Accumulator(T start) : total_(start) {}
+    ~Accumulator() {}
+    T total() const { return total_; }
+    void add(T value) { total_ += value; }
     static T identity(T value) { return value; }
 
 private:
-    T secret() const { return value_; }
-    T value_;
+    T total_;
 };
+
+// A free function template, collected the same way.
+template <typename T>
+T twice(T value) {
+    return value * 2;
+}
 ```
 
-— becomes a Go generic type, and the concrete C++ types are provided by
-`cppgo build -scan`:
+`Accumulator<T>` is a **class template** and `twice<T>` a **function template**.
+Nothing exists for either one until `T` is supplied, so the generator cannot
+write a complete binding in one pass. `cppgo gen` writes a **generic** Go API:
+Go declarations that take the type argument as a Go type parameter, so one API
+serves every specialization. The report says so:
+
+```
+metrics::Accumulator<T>                      tmpl   -                            generic API, 6 binding(s)
+metrics::twice<T>                            tmpl   -                            generic API, 1 binding(s)
+```
+
+`tmpl` marks the line as a template, and `-` sits where a non-template line
+carries a symbol — a name the loader resolves to an address: there is no concrete
+function to point at yet. The count is the number of Go declarations the generic
+API holds for the template.
+
+The declarations `cppgo gen` writes, bodies omitted, from
+[`examples/full/gen/zz_cppgo.gen.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/zz_cppgo.gen.go):
 
 ```go
-// Box is box::Box<T>: the generic API. The concrete specializations are the ones
+// Accumulator is metrics::Accumulator<T>: the generic API. The concrete specializations are the ones
 // the program instantiates; `cppgo build` collects them and emits the shim.
-type Box[T any] struct {
+type Accumulator[T any] struct {
 	obj *cppgo.Object
 }
 
-// NewBox constructs a box::Box<T>.
+// NewAccumulator constructs a metrics::Accumulator<T>.
 //
-// C++: box::Box::Box<T>(T), two-phase template
-func NewBox[T any](value T) (*Box[T], error)
+// C++: metrics::Accumulator::Accumulator<T>(T), two-phase template
+func NewAccumulator[T any](start T) (*Accumulator[T], error)
 
-// Get calls box::Box::get.
-func (b *Box[T]) Get() (T, error)
+// NewAccumulatorDefault constructs a metrics::Accumulator<T>.
+//
+// C++: metrics::Accumulator::Accumulator<T>(), two-phase template
+func NewAccumulatorDefault[T any]() (*Accumulator[T], error)
 
-// Set calls box::Box::set.
-func (b *Box[T]) Set(value T) error
+// Add calls metrics::Accumulator::add.
+//
+// C++: metrics::Accumulator::add(T), two-phase template
+func (a *Accumulator[T]) Add(value T) error
+
+// Total calls metrics::Accumulator::total.
+//
+// C++: metrics::Accumulator::total() const, two-phase template
+func (a *Accumulator[T]) Total() (T, error)
+
+// Close destroys the Accumulator. It returns cppgo.ErrClosed when the receiver has no live object.
+func (a *Accumulator[T]) Close() error
+
+// AccumulatorIdentity calls metrics::Accumulator::identity.
+//
+// C++: metrics::Accumulator::identity(T), two-phase template
+func AccumulatorIdentity[T any](value T) (T, error)
+
+// Twice calls metrics::twice.
+//
+// C++: metrics::twice(T), two-phase template
+func Twice[T any](arg0 T) (T, error)
 ```
 
-See [Bind a C++ template library]({{< ref "how-to/templates.md" >}}).
+`type Accumulator[T any]` is a **Go generic type**: `[T any]` declares a type
+parameter `T` that any Go type may fill, and the generated methods use it exactly
+as the C++ template uses `T`. The generic API compiles with no instantiation at
+all. The two constructors are the two C++ constructors: the one with the most
+parameters keeps `New<Type>`, a parameterless overload becomes
+`New<Type>Default`, and the rest take the parameter suffix. `Add` and `Total`
+return an error because the specialization is resolved at run time, so the call
+can fail. `AccumulatorIdentity` is the static member `identity`, named
+`<Type><Member>` as above. `Twice` is the free function template, and its
+parameter is named `arg0` in the generated signature.
+
+Phase two is the command that reads the program:
+
+```console
+$ cppgo build -header include/metrics/metrics.hpp -package metrics \
+              -library build/libmetrics.so \
+              -compile-commands build/compile_commands.json \
+              -out ./gen -status metrics::validate_name \
+              -scan ./cmd/... -scan-dir .
+```
+
+Run from [`examples/full`](https://github.com/Manu343726/cppgo/tree/main/examples/full)
+after `make lib`, with `cppgo` on `PATH`. `-scan` loads the Go package named by
+the pattern and collects every type argument passed to the generic API. The new
+lines of the report are the collected specializations: the C++ specialization in
+the first column, the Go type argument in the middle, and in the last column the
+`template ...;` line that makes it exist.
+
+```
+metrics::Accumulator<T>                      tmpl   -                            generic API, 6 binding(s)
+metrics::twice<T>                            tmpl   -                            generic API, 1 binding(s)
+metrics::Accumulator<double>                 tmpl   float64                      template class ::metrics::Accumulator<double>;
+metrics::Accumulator<std::int32_t>           tmpl   int32                        template class ::metrics::Accumulator<std::int32_t>;
+metrics::twice<std::int64_t>                 tmpl   int64                        template class ::metrics::twice<std::int64_t>;
+```
+
+The mapping is the type map above: `int32` is `std::int32_t`, `float64` is
+`double`, `int64` is `std::int64_t`. With those types known, the command writes
+the class specializations into the shim. **An explicit instantiation** is a C++
+declaration that makes the compiler write every member of that specialization;
+the lines it added are visible in
+[`gen/cppgo_shim/zz_cppgo_shim.cpp`](https://github.com/Manu343726/cppgo/blob/main/examples/full/gen/cppgo_shim/zz_cppgo_shim.cpp):
+
+```cpp
+// The specializations the Go program instantiates. cppgo build collected
+// them from the program; adding one here is what makes its members exist.
+template class ::metrics::Accumulator<double>;
+template class ::metrics::Accumulator<std::int32_t>;
+```
+
+The free function template needs no such declaration: one thunk per collected
+type is written for it — the generated `extern "C"` C++ function that carries one
+call across the boundary — and the report's last column records the
+specialization line cppgo derives for that type.
+
+Finally, the Go program supplies the type arguments. This is the part of
+[`cmd/app/main.go`](https://github.com/Manu343726/cppgo/blob/main/examples/full/cmd/app/main.go)
+that uses the two templates:
+
+```go
+// The generic API: the two specializations the shim was built for.
+i, err := metrics.NewAccumulator[int32](10)
+if err != nil {
+	return err
+}
+defer i.Close()
+if err := i.Add(5); err != nil {
+	return err
+}
+sum, err := i.Total()
+if err != nil {
+	return err
+}
+fmt.Printf("Accumulator[int32](10) + 5 = %v\n", sum)
+
+d, err := metrics.NewAccumulator[float64](1.5)
+if err != nil {
+	return err
+}
+defer d.Close()
+if err := d.Add(0.25); err != nil {
+	return err
+}
+sumF, err := d.Total()
+if err != nil {
+	return err
+}
+fmt.Printf("Accumulator[float64](1.5) + 0.25 = %v\n", sumF)
+
+twice, err := metrics.Twice[int64](21)
+if err != nil {
+	return err
+}
+fmt.Printf("twice[int64](21) = %v\n", twice)
+```
+
+Each `NewAccumulator[int32]` names the type argument at the call site; that is
+what `-scan` reads. The Go package compiled before the C++ specializations
+existed, and `-scan` is what makes those three calls reach C++. The full lesson
+is [Bind a C++ template library]({{< ref "how-to/templates.md" >}}).
 
 ## Names
 
@@ -384,6 +607,7 @@ See [Bind a C++ template library]({{< ref "how-to/templates.md" >}}).
 |---|---|
 | `snake_case`, `camelCase`, `PascalCase` | `CamelCase`, split on `_` |
 | constructor | `New<Type>` |
+| parameterless constructor of a class template | `New<Type>Default` |
 | destructor | `Close` |
 | copy constructor | `Clone` |
 | static member `f` | `<Type>F` |
@@ -396,7 +620,12 @@ also an error.
 ## The comment on every binding
 
 Every generated declaration carries a comment naming the C++ declaration it came
-from and how cppgo calls it. For `mathx::Vector::at`, declared in
+from and how cppgo calls it. The **mangled name** is the name the C++ compiler
+writes into the object's symbol table — namespace, class and parameter types
+encoded — and a **thunk** is the generated `extern "C"` function that adapts a
+call the direct path — the call that goes straight to the C++ symbol through
+generated assembly — cannot carry, compiled into the shim. For
+`mathx::Vector::at`, declared in
 [`examples/mathx/include/mathx/vector.hpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/include/mathx/vector.hpp):
 
 ```cpp
@@ -409,8 +638,11 @@ the generated comment is:
 // C++: mathx::Vector::at(std::size_t) const, _ZNK5mathx6Vector2atEm (thunk cppgo_thunk_79aeb346bd10, not noexcept: an exception would unwind into Go), verified against libmathx.so
 ```
 
-It is the first thing to read when a generated method surprises you. The fields
-are explained in [Architecture]({{< ref "explanation/architecture.md" >}}#generation-parse-selection-determinism).
+It names the declaration, its mangled symbol, the thunk that carries it, the
+reason a thunk was chosen, and finally that cppgo checked the symbol against the
+library's dynamic symbol table (`libmathx.so`). It is the first thing to read
+when a generated method surprises you. The fields are explained in
+[Architecture]({{< ref "explanation/architecture.md" >}}#generation-parse-selection-determinism).
 
 ## Related
 

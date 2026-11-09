@@ -35,7 +35,7 @@ The repository adds a pointer to its own documentation, near the top of
 > **Read first, in this order:**
 >
 > 1. [`../documentation-manual/SKILL.md`](../documentation-manual/SKILL.md) — the project's
->    documentation manual: the audience, the six rules with the operator's anti-patterns, the
+>    documentation manual: the audience, the seven rules with the operator's anti-patterns, the
 >    evidence each claim owes, the Diátaxis map and the pre-pull-request checklist.
 > 2. [`../extra/documentation-rules.md`](../extra/documentation-rules.md) — the short numbered
 >    rule list the manual expands.
