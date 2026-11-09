@@ -5,11 +5,12 @@ name: CI
 # Why an image at all: CI used to inherit its toolchain from `ubuntu-latest`, and when that
 # image stopped shipping libclang, internal/cxx silently skipped itself, its coverage vanished
 # and the 99% gate failed for a reason that had nothing to do with the code. The Dockerfile
-# pins Go, g++ 14, clang/libclang 22, golangci-lint, hugo, binutils and make instead, so the
-# environment is a reviewed artefact. It also carries the target libraries #15's tests bind
-# against the real thing and not a mock — Eigen 3.4.0 and OpenCV 4.10.0 from trixie's archive,
-# ArrayFire 3.10.0 (CPU backend) built from source because the archive has no package for it;
-# the provenance of each and the build-time compile/link/run check are in the `Dockerfile`.
+# pins Go, g++ 14, clang/libclang 22, golangci-lint, hugo, binutils, make and cmake
+# instead, so the environment is a reviewed artefact. It also carries the target libraries
+# #15's tests bind against the real thing and not a mock — Eigen 3.4.0 and OpenCV 4.10.0
+# from trixie's archive, ArrayFire 3.10.0 (CPU backend) built from source because the
+# archive has no package for it; the provenance of each and the build-time
+# compile/link/run check are in the `Dockerfile`.
 #
 # ---------------------------------------------------------------------------
 # THE TWO FACTS THIS FILE OWNS. Every other mention of them, here and in the pull request,
@@ -21,7 +22,7 @@ name: CI
 #
 #    `<recipe>` is the Dockerfile's content address — the first 12 hex of `sha256(Dockerfile)`:
 #
-#        sha256sum Dockerfile | cut -c1-12     # 0e49b1c2f9b7, for the recipe this file names
+#        sha256sum Dockerfile | cut -c1-12     # 79f9e9ad9528, for the recipe this file names
 #
 #    `ghcr.io/manu343726/cppgo-ci` carries the same tag and `.github/workflows/ci.yml`
 #    resolves it the same way (it hashes the Dockerfile it checked out and waits for
@@ -40,10 +41,18 @@ name: CI
 #    The image is published by hand today, and the tag below names the last build that was
 #    pushed: the recipe that moved to clang 22 (trixie's archive stops at 19 and the tree binds
 #    `clang_getOffsetOfBase`; the reason and the measured choice of major are in the
-#    `Dockerfile`'s base note, which owns them) and gained the target libraries. Its index
-#    digest is `sha256:42e52d97eb251d7fc608ac41d08aacdc60bd8acfa64627b24f13bca0941cefce`, the
-#    same manifest that was pushed as `3610540` before the tag became content-addressed
-#    (`docker tag` + push, no rebuild: same digest, second name).
+#    `Dockerfile`'s base note, which owns them), gained the target libraries, and then put
+#    `cmake` in the final stage — `examples/full` is a CMake project driven by its own
+#    Makefile, and without the command the examples gate stops at `cmake: command not found`
+#    (Forgejo run #778 on PR #61; the package's reason is beside it in the `Dockerfile`). Its
+#    index digest, read from the registry and not from a local image id, is
+#    `sha256:8880fe8664160be7efe87de74dec69eedf7ac05439cae88a977c90b45584a5fe`.
+#
+#    A changed recipe gets a new address: `recipe-e1efb00b847f` is still served, unchanged, at
+#    `sha256:6605cad213a3efbd8ae2485b34e2488b5f81ee732d713839125d5b7d78101ccd`. The digest this
+#    block used to quote for it, `sha256:42e52d97…`, is not what the registry serves for that
+#    tag; quote the digest `docker buildx imagetools inspect` reports, never a local image id
+#    or a remembered number.
 #
 #    Publishing on a `Dockerfile` change is not automated yet: a change lands in
 #    `.forgejo/workflows/image.yml` on the day it does, and this block gains one link to it.
@@ -142,7 +151,7 @@ env:
   # coverage profile and the gate then fails with a number nobody can explain. Require libclang
   # instead of skipping.
   CPPGO_REQUIRE_LIBCLANG: '1'
-  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-e1efb00b847f
+  CI_IMAGE: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-79f9e9ad9528
 
 jobs:
   test:
@@ -156,7 +165,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-e1efb00b847f
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-79f9e9ad9528
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}
@@ -188,6 +197,7 @@ jobs:
           go version
           g++ --version | head -n 1
           clang --version | head -n 1
+          cmake --version | head -n 1
           golangci-lint --version
           hugo version
           nm --version | head -n 1
@@ -260,7 +270,7 @@ jobs:
       # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
       # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
       # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
-      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-e1efb00b847f
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-79f9e9ad9528
       credentials:
         username: ${{ secrets.REGISTRY_USER }}
         password: ${{ secrets.REGISTRY_TOKEN }}

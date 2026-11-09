@@ -298,6 +298,16 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 #                    the prose gate. `scripts/prose-check.sh` also needs `perl`,
 #                    which the base already carries (5.40.1, perl-base).
 #   pkg-config       asked for by the image contract; some cgo paths use it
+#   cmake            the build system of `examples/full`, which drives `cmake -S`
+#                    and `cmake --build` from its own Makefile. Without it the
+#                    examples gate stops at `cmake: command not found` (measured
+#                    in Forgejo run #778 on PR #61) — the same class of missing
+#                    tool this image exists to prevent. Its runtime dependencies
+#                    (libarchive, libcurl, jsoncpp, librhash) are what the trixie
+#                    package pulls in; nothing else is added beside it, and no
+#                    version is pinned because the gate asserts the configure, not
+#                    a major. The CMake project itself is the example's, not this
+#                    image's: this only provides the command it invokes.
 #   g++              C++17 fixtures (internal/testlib, examples, build-examples)
 #                    and the race detector's cgo; `cc` also builds the fake
 #                    libclang the cxx tests use
@@ -338,6 +348,7 @@ RUN apt-get update \
       binutils \
       ca-certificates \
       clang-${CLANG_VERSION} \
+      cmake \
       curl \
       g++ \
       git \
@@ -542,6 +553,7 @@ RUN set -eux; \
     test -x /usr/bin/nm; \
     g++ --version | head -n 1; \
     clang --version | head -n 1; \
+    cmake --version | head -n 1; \
     hugo version | grep -qi extended; \
     go version | grep -q "go1\.27\.3 "; \
     clang --version | grep -q "clang version ${CLANG_VERSION}\."
