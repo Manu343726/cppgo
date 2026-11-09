@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/Manu343726/cppgo/internal/gen"
@@ -151,25 +152,9 @@ func (c *cli) generate(args []string, m mode) int {
 		return exitOK
 	}
 
-	fs := flag.NewFlagSet("cppgo "+verb, flag.ContinueOnError)
+	fs, v := newFlagSet(m)
 	fs.SetOutput(c.stderr)
 	fs.Usage = func() { c.usage(m, c.stderr) }
-	var headers, bind, exclude, instantiate, rename, status, scan stringList
-	fs.Var(&headers, "header", "C++ header to bind; repeat for several")
-	packageName := fs.String("package", "", "Go package name")
-	library := fs.String("library", "", "the user's shared object the shim links against")
-	cxx := fs.String("cxx", "", "C++ compiler for the shim (default g++, then clang++)")
-	out := fs.String("out", ".", "output directory")
-	compileCommands := fs.String("compile-commands", "", "compile_commands.json (or its directory) for the header's flags")
-	fs.Var(&bind, "bind", "add a root; repeatable")
-	fs.Var(&exclude, "exclude", "remove a root; repeatable")
-	fs.Var(&instantiate, "instantiate", "concrete template specialization to emit; repeatable")
-	fs.Var(&rename, "rename", "<qualified signature>=<GoName>; repeatable")
-	fs.Var(&status, "status", "declaration whose int32 return is a status code; repeatable")
-	fs.Var(&scan, "scan", "Go package whose template instantiations to collect; repeatable")
-	scanDir := fs.String("scan-dir", ".", "directory the -scan patterns resolve against")
-	check := fs.Bool("check", m == modeCheck, "report whether the generated files are up to date instead of writing them")
-	quiet := fs.Bool("q", false, "suppress the per-binding report and the confirmation message")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -178,31 +163,31 @@ func (c *cli) generate(args []string, m mode) int {
 		fs.Usage()
 		return exitUsage
 	}
-	if len(headers) == 0 {
+	if len(v.headers) == 0 {
 		c.errorf("cppgo %s: -header is required: name the C++ header to bind", verb)
 		fs.Usage()
 		return exitUsage
 	}
-	if *out == "" {
+	if v.out == "" {
 		c.errorf("cppgo %s: -out must not be empty", verb)
 		return exitUsage
 	}
 
 	cfg := gen.Config{
-		Headers:         headers,
-		Package:         *packageName,
-		Library:         *library,
-		CXX:             *cxx,
-		Out:             *out,
-		Check:           *check,
-		CompileCommands: *compileCommands,
-		Bind:            bind,
-		Exclude:         exclude,
-		Instantiate:     instantiate,
-		Rename:          rename,
-		Status:          status,
-		Scan:            scan,
-		ScanDir:         *scanDir,
+		Headers:         v.headers,
+		Package:         v.packageName,
+		Library:         v.library,
+		CXX:             v.cxx,
+		Out:             v.out,
+		Check:           v.check,
+		CompileCommands: v.compileCommands,
+		Bind:            v.bind,
+		Exclude:         v.exclude,
+		Instantiate:     v.instantiate,
+		Rename:          v.rename,
+		Status:          v.status,
+		Scan:            v.scan,
+		ScanDir:         v.scanDir,
 		Warnings:        c.stderr,
 	}
 	if m == modeGen {
@@ -211,7 +196,7 @@ func (c *cli) generate(args []string, m mode) int {
 		cfg.Scan = nil
 		cfg.ScanDir = ""
 	}
-	if !*quiet && !*check {
+	if !v.quiet && !v.check {
 		// The per-binding carrier report is the answer to "what did this
 		// bind, and how?", so it goes to stdout for "gen" and "build".
 		cfg.Report = c.stdout
@@ -220,8 +205,8 @@ func (c *cli) generate(args []string, m mode) int {
 		c.errorf("cppgo %s: %v", verb, err)
 		return exitError
 	}
-	if *check && !*quiet {
-		c.printf("%s: generated files are up to date\n", *out)
+	if v.check && !v.quiet {
+		c.printf("%s: generated files are up to date\n", v.out)
 	}
 	return exitOK
 }
@@ -237,6 +222,223 @@ func wantsHelp(args []string) bool {
 		}
 	}
 	return false
+}
+
+// flagValues holds the values of the flag set that gen, check and build share.
+type flagValues struct {
+	headers, bind, exclude, instantiate, rename, status, scan stringList
+	packageName, library, cxx, out, compileCommands, scanDir  string
+	check, quiet                                              bool
+}
+
+// newFlagSet creates the flag set "cppgo <verb>" parses with. Every flag the
+// help documents is registered here, and every flag registered here is
+// documented by flagDocs, so the two cannot drift apart silently.
+func newFlagSet(m mode) (*flag.FlagSet, *flagValues) {
+	fs := flag.NewFlagSet("cppgo "+m.verb(), flag.ContinueOnError)
+	v := &flagValues{}
+	fs.Var(&v.headers, "header", "C++ header to read; repeatable")
+	fs.StringVar(&v.packageName, "package", "", "Go package name")
+	fs.StringVar(&v.library, "library", "", "the user's shared object the shim links against")
+	fs.StringVar(&v.cxx, "cxx", "", "C++ compiler for the shim (default g++, then clang++)")
+	fs.StringVar(&v.out, "out", ".", "output directory")
+	fs.StringVar(&v.compileCommands, "compile-commands", "", "compile_commands.json (or its directory) for the header's flags")
+	fs.Var(&v.bind, "bind", "add a root; repeatable")
+	fs.Var(&v.exclude, "exclude", "remove a root; repeatable")
+	fs.Var(&v.instantiate, "instantiate", "concrete template specialization to emit; repeatable")
+	fs.Var(&v.rename, "rename", "<qualified signature>=<GoName>; repeatable")
+	fs.Var(&v.status, "status", "declaration whose int32 return is a status code; repeatable")
+	fs.Var(&v.scan, "scan", "Go package whose template instantiations to collect; repeatable")
+	fs.StringVar(&v.scanDir, "scan-dir", ".", "directory the -scan patterns resolve against")
+	fs.BoolVar(&v.check, "check", m == modeCheck, "report whether the generated files are up to date instead of writing them")
+	fs.BoolVar(&v.quiet, "q", false, "suppress the per-binding report and the confirmation message")
+	return fs, v
+}
+
+// flagDoc is one flag's entry in a command's help: the value it takes, the
+// prose under its name, and the default when the flag has a meaningful one.
+type flagDoc struct {
+	meta  string
+	lines []string
+	def   string
+}
+
+// flagOrder is the order the shared flags are documented in.
+var flagOrder = []string{
+	"header", "package", "library", "out", "compile-commands",
+	"bind", "exclude", "instantiate", "rename", "status",
+	"scan", "scan-dir", "cxx", "check", "q",
+}
+
+// flagDocs returns the help for every flag of one command. The flag set is
+// shared; only the flags whose role differs per command are worded per command.
+func flagDocs(m mode) map[string]flagDoc {
+	docs := map[string]flagDoc{
+		"header": {
+			meta: "path",
+			lines: []string{
+				"a C++ header to read; repeatable. Every public declaration in the",
+				"header is bound unless -bind or -exclude narrows the set",
+			},
+		},
+		"package": {
+			meta: "name",
+			lines: []string{
+				"the Go package name. There is no default: a missing or invalid",
+				"name is an error",
+			},
+		},
+		"library": {
+			meta: "file",
+			lines: []string{
+				"your shared object. The shim is linked against it, and when it is",
+				"a readable file cppgo checks that every function it binds directly",
+				"is listed in its dynamic symbol table. Omit it for a header-only",
+				"library, whose shim is the whole binary",
+			},
+		},
+		"out": {
+			meta:  "dir",
+			lines: []string{"the output directory"},
+			def:   `"."`,
+		},
+		"compile-commands": {
+			meta: "path",
+			lines: []string{
+				"compile_commands.json, or the directory that holds it, to take",
+				"the header's flags from instead of discovering them",
+			},
+			def: "discovered",
+		},
+		"bind": {
+			meta: "qualified",
+			lines: []string{
+				"add a root: the namespace, class, member or function to start",
+				"selecting from; repeatable. A root is one declaration and",
+				"everything below it",
+			},
+			def: "everything in the header",
+		},
+		"exclude": {
+			meta:  "qualified",
+			lines: []string{"remove a root; repeatable. An entry that matches nothing is an error"},
+			def:   "none",
+		},
+		"instantiate": {
+			meta: "specialization",
+			lines: []string{
+				"emit a concrete template specialization: a template with its type",
+				"argument supplied, e.g. metrics::Accumulator<double>; repeatable.",
+				"The header must make the specialization visible, e.g.",
+				"'template class ::metrics::Accumulator<double>;'",
+			},
+			def: "none",
+		},
+		"rename": {
+			meta:  "signature=GoName",
+			lines: []string{"resolve a Go name collision; repeatable"},
+			def:   "none",
+		},
+		"status": {
+			meta: "qualified",
+			lines: []string{
+				"a declaration whose 32-bit return is a status code: 0 is success",
+				"and any other value a failure, so the Go signature returns only",
+				"an error; repeatable",
+			},
+			def: "none",
+		},
+		"cxx": {
+			meta:  "compiler",
+			lines: []string{"the C++ compiler to build the shim with"},
+			def:   "g++, then clang++",
+		},
+		"check": {
+			meta: "",
+			lines: []string{
+				"report whether the generated files are up to date instead of",
+				"writing them",
+			},
+			def: "off",
+		},
+		"q": {
+			meta:  "",
+			lines: []string{"suppress the per-binding report and the confirmation message"},
+			def:   "off",
+		},
+	}
+
+	switch m {
+	case modeGen:
+		docs["scan"] = flagDoc{
+			meta: "package",
+			lines: []string{
+				"accepted and ignored: -scan is build's input, and gen writes",
+				"no concrete template code; repeatable",
+			},
+			def: "none",
+		}
+		docs["scan-dir"] = flagDoc{
+			meta:  "dir",
+			lines: []string{"accepted and ignored with -scan"},
+			def:   `"."`,
+		}
+	case modeCheck:
+		docs["scan"] = flagDoc{
+			meta: "package",
+			lines: []string{
+				"a Go package pattern whose uses of the generated generic API are",
+				"collected, so the shim is compared for the same instantiations;",
+				"repeatable. The source is read, not run",
+			},
+			def: "none",
+		}
+		docs["scan-dir"] = flagDoc{meta: "dir", lines: []string{"the directory the -scan patterns resolve against"}, def: `"."`}
+		docs["check"] = flagDoc{
+			meta: "",
+			lines: []string{
+				"report whether the generated files are up to date instead of",
+				"writing them; check is this mode already, so only -check=false",
+				"writes",
+			},
+			def: "on",
+		}
+	case modeBuild:
+		docs["scan"] = flagDoc{
+			meta: "package",
+			lines: []string{
+				"a Go package pattern whose uses of the generated generic API are",
+				"collected; repeatable. The source is read, not run. Without it,",
+				"build writes the generic API and adds no specialization",
+			},
+			def: "none",
+		}
+		docs["scan-dir"] = flagDoc{meta: "dir", lines: []string{"the directory the -scan patterns resolve against"}, def: `"."`}
+	}
+
+	return docs
+}
+
+// printFlags renders the shared flags for one command. It reads flagOrder and
+// flagDocs, so a flag added to the set without a doc entry is caught by the
+// help test rather than silently missing from the help.
+func (c *cli) printFlags(w io.Writer, m mode) {
+	docs := flagDocs(m)
+	fmt.Fprintln(w, "flags:")
+	for _, name := range flagOrder {
+		doc := docs[name]
+		if doc.meta == "" {
+			fmt.Fprintf(w, "  -%s\n", name)
+		} else {
+			fmt.Fprintf(w, "  -%s %s\n", name, doc.meta)
+		}
+		for _, line := range doc.lines {
+			fmt.Fprintln(w, "        "+line)
+		}
+		if doc.def != "" {
+			fmt.Fprintf(w, "        (default: %s)\n", doc.def)
+		}
+	}
 }
 
 // printUsage is the top-level help.
@@ -261,6 +463,7 @@ func (c *cli) printUsage(w io.Writer) {
 	fmt.Fprintf(w, "  %-8s %s\n", "help", "print this message, or the help of one command")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "run \"cppgo help <command>\" for command-specific help.")
+	fmt.Fprintln(w, "-h, -help and --help print the same help after a subcommand and exit 0.")
 }
 
 // printGenUsage documents "cppgo gen".
@@ -275,14 +478,17 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "gen reads the C++ headers through libclang and writes:")
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %-18s %s\n", gen.GenFileName, "the Go API, the generated Open and the trampoline")
-	fmt.Fprintf(w, "  %-18s %s\n", "", "declarations")
-	fmt.Fprintf(w, "  %-18s %s\n", gen.AsmFileName, "one NOSPLIT trampoline per binding")
-	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimHeaderFileName, "the extern \"C\" thunk declarations")
-	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimSourceFileName, "the thunks")
-	fmt.Fprintf(w, "  %-18s %s\n", gen.ShimLibraryName("<package>"), "the shim cppgo compiles and links against")
-	fmt.Fprintf(w, "  %-18s %s\n", "", "the library: Open loads it, and the library brings")
-	fmt.Fprintf(w, "  %-18s %s\n", "", "the user's library in")
+	const fileColumn = 28
+	shimHeader := filepath.Join(gen.ShimDirName, gen.ShimHeaderFileName)
+	shimSource := filepath.Join(gen.ShimDirName, gen.ShimSourceFileName)
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, gen.GenFileName, "the Go API, the generated Open and the trampoline")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, "", "declarations")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, gen.AsmFileName, "one NOSPLIT trampoline per binding")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, shimHeader, "the extern \"C\" thunk declarations")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, shimSource, "the thunks")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, gen.ShimLibraryName("<package>"), "the shim cppgo compiles and links against")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, "", "the library: Open loads it, and the library brings")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, "", "the user's library in")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Templates are a two-phase flow: gen writes the generic API, and")
 	fmt.Fprintln(w, "\"cppgo build -scan <go package>\" collects the program's instantiations")
@@ -295,49 +501,18 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "signature passes a Go function to C++. The report names the carrier and")
 	fmt.Fprintln(w, "why, and the shim build reports the compiler it used.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "flags:")
-	fmt.Fprintln(w, "  -header string")
-	fmt.Fprintln(w, "        C++ header to bind; repeatable")
-	fmt.Fprintln(w, "  -package string")
-	fmt.Fprintln(w, "        Go package name")
-	fmt.Fprintln(w, "  -library string")
-	fmt.Fprintln(w, "        the user's shared object: the shim is linked against it, and when it")
-	fmt.Fprintln(w, "        is a readable file its dynamic symbol table cross-checks every direct")
-	fmt.Fprintln(w, "        binding. Omit it for a header-only library, whose shim is the whole")
-	fmt.Fprintln(w, "        binary")
-	fmt.Fprintln(w, "  -out string")
-	fmt.Fprintln(w, "        output directory (default \".\")")
-	fmt.Fprintln(w, "  -compile-commands string")
-	fmt.Fprintln(w, "        compile_commands.json (or its directory) to take the header's flags")
-	fmt.Fprintln(w, "        from, instead of discovering them")
-	fmt.Fprintln(w, "  -bind qualified")
-	fmt.Fprintln(w, "        add a root (a namespace, class, member or function); repeatable")
-	fmt.Fprintln(w, "  -exclude qualified")
-	fmt.Fprintln(w, "        remove a root; repeatable")
-	fmt.Fprintln(w, "  -instantiate 'mathx::Box<int>'")
-	fmt.Fprintln(w, "        emit a concrete template specialization; repeatable. The header must")
-	fmt.Fprintln(w, "        make the instantiation visible, e.g. 'template struct Box<int>;'")
-	fmt.Fprintln(w, "  -rename 'signature=GoName'")
-	fmt.Fprintln(w, "        resolve a Go name collision; repeatable")
-	fmt.Fprintln(w, "  -status qualified")
-	fmt.Fprintln(w, "        a declaration whose 32-bit return is a status code: the Go signature")
-	fmt.Fprintln(w, "        returns only an error, and a non-zero value is the failure; repeatable")
-	fmt.Fprintln(w, "  -cxx string")
-	fmt.Fprintln(w, "        C++ compiler to build the shim with (default g++, then clang++)")
-	fmt.Fprintln(w, "  -check")
-	fmt.Fprintln(w, "        report whether the generated files are up to date instead of writing")
-	fmt.Fprintln(w, "  -q")
-	fmt.Fprintln(w, "        suppress the per-binding report and the confirmation message")
+	c.printFlags(w, modeGen)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "example:")
 	fmt.Fprintln(w, "  cppgo gen -header include/mathx/vector.hpp -package mathx \\")
-	fmt.Fprintln(w, "            -library build/libmathx.so -out ./mathx")
+	fmt.Fprintln(w, "            -library build/libmathx.so -out .")
 }
 
 // printCheckUsage documents "cppgo check".
 func (c *cli) printCheckUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: cppgo check -header <path> [-header <path>]... -package <name>")
-	fmt.Fprintln(w, "                    [-library <file>] [-out <dir>] [-q]")
+	fmt.Fprintln(w, "                    [-library <file>] [-out <dir>]")
+	fmt.Fprintln(w, "                    [-scan <go-package>]... [-scan-dir <dir>] [-q]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "check regenerates the sources in memory and compares them with the files on")
 	fmt.Fprintln(w, "disk. It writes nothing, builds nothing, exits 0 when everything is up to")
@@ -348,9 +523,14 @@ func (c *cli) printCheckUsage(w io.Writer) {
 	fmt.Fprintln(w, "when the package has templates: the shim's source depends on the program's")
 	fmt.Fprintln(w, "instantiations, so check compares the shim built for the same scan.")
 	fmt.Fprintln(w)
+	c.printFlags(w, modeCheck)
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, "example:")
-	fmt.Fprintln(w, "  cppgo check -header include/mathx/vector.hpp -package mathx \\")
-	fmt.Fprintln(w, "              -library build/libmathx.so -out ./mathx || echo out of date")
+	fmt.Fprintln(w, "  cppgo check -header include/metrics/metrics.hpp -package metrics \\")
+	fmt.Fprintln(w, "              -library build/libmetrics.so \\")
+	fmt.Fprintln(w, "              -compile-commands build/compile_commands.json \\")
+	fmt.Fprintln(w, "              -out ./gen -status metrics::validate_name \\")
+	fmt.Fprintln(w, "              -scan ./cmd/... -scan-dir .")
 }
 
 // printBuildUsage documents "cppgo build", the second phase of the template
@@ -360,7 +540,7 @@ func (c *cli) printBuildUsage(w io.Writer) {
 	fmt.Fprintln(w, "                    -scan <go-package> [-scan <go-package>]...")
 	fmt.Fprintln(w, "                    [-scan-dir <dir>] [-library <file>] [-out <dir>]")
 	fmt.Fprintln(w, "                    [-compile-commands <path>] [-instantiate '<specialization>']...")
-	fmt.Fprintln(w, "                    [-rename '<signature>=<GoName>']... [-status <qualified>]...")
+	fmt.Fprintln(w, "                    [-rename <signature=GoName>]... [-status <qualified>]...")
 	fmt.Fprintln(w, "                    [-cxx <compiler>] [-q]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "build is phase two of the two-phase generics flow:")
@@ -370,24 +550,25 @@ func (c *cli) printBuildUsage(w io.Writer) {
 	fmt.Fprintln(w, "  2. cppgo build loads the Go program named by -scan with go/packages and")
 	fmt.Fprintln(w, "     collects every instantiation of those generic types and functions;")
 	fmt.Fprintln(w, "  3. for each collected specialization it writes the shim's")
-	fmt.Fprintln(w, "     `template struct ...;` line and one thunk per member, and compiles")
+	fmt.Fprintln(w, "     `template class ...;` line and one thunk per member, and compiles")
 	fmt.Fprintln(w, "     the shim beside the generated package.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "The source is read, not run. Without -scan, build writes the generic API")
+	fmt.Fprintln(w, "and adds no specialization.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "A Go instantiation the shim has no counterpart for fails when it is used,")
 	fmt.Fprintln(w, "naming the exact `template ...;` line to add; it never reaches a nil call.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "flags:")
-	fmt.Fprintln(w, "  -scan package")
-	fmt.Fprintln(w, "        Go package pattern whose instantiations to collect; repeatable")
-	fmt.Fprintln(w, "  -scan-dir string")
-	fmt.Fprintln(w, "        directory the -scan patterns resolve against (default \".\")")
-	fmt.Fprintln(w, "  -header, -package, -library, -out, -compile-commands, -instantiate,")
-	fmt.Fprintln(w, "  -rename, -status, -cxx, -q")
-	fmt.Fprintln(w, "        the same manifest flags as \"cppgo gen\"")
+	c.printFlags(w, modeBuild)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "example:")
-	fmt.Fprintln(w, "  cppgo gen   -header include/box.hpp -package box -out ./box")
-	fmt.Fprintln(w, "  cppgo build -header include/box.hpp -package box -out ./box -scan ./cmd/tool")
+	fmt.Fprintln(w, "  cppgo gen   -header include/metrics/metrics.hpp -package metrics \\")
+	fmt.Fprintln(w, "              -library build/libmetrics.so -out ./gen")
+	fmt.Fprintln(w, "  cppgo build -header include/metrics/metrics.hpp -package metrics \\")
+	fmt.Fprintln(w, "              -library build/libmetrics.so \\")
+	fmt.Fprintln(w, "              -compile-commands build/compile_commands.json \\")
+	fmt.Fprintln(w, "              -out ./gen -status metrics::validate_name \\")
+	fmt.Fprintln(w, "              -scan ./cmd/... -scan-dir .")
 }
 
 // printVersionUsage documents "cppgo version".
