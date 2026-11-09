@@ -85,9 +85,15 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		if len(binding.Block) > 0 {
+			writeArgumentBlock(&s, binding)
+		}
 		s.WriteString("\n")
 		start := shimLine(&s)
 		fmt.Fprintf(&s, "extern \"C\" %s %s(%s) {\n", shimReturnType(binding), binding.Thunk, shimParams(binding))
+		if len(binding.Block) > 0 {
+			fmt.Fprintf(&s, "\tconst %s *cppgo_args = static_cast<const %s *>(cppgo_block);\n", binding.BlockType, binding.BlockType)
+		}
 		s.WriteString(body)
 		s.WriteString("}\n")
 		spans = append(spans, thunkSpan{start: start, end: shimLine(&s), symbol: binding.sym.QualifiedName})
@@ -105,6 +111,26 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 
 // shimLine is the line number the next write lands on.
 func shimLine(b *strings.Builder) int { return strings.Count(b.String(), "\n") + 1 }
+
+// writeArgumentBlock declares the struct an over-full thunk unpacks. It is
+// emitted beside the thunk, at namespace scope, and both compilers assert its
+// layout: the Go side checks unsafe.Sizeof and every offset, the C++ side checks
+// sizeof and offsetof, so a disagreement is a compile error on one side or the
+// other rather than a wrong value at run time.
+func writeArgumentBlock(s *strings.Builder, binding *binding) {
+	fmt.Fprintf(s, "\n// %s is the argument block %s unpacks: the words the register\n// file cannot hold, in the order the declaration names them.\n", binding.BlockType, binding.Thunk)
+	fmt.Fprintf(s, "struct %s {\n", binding.BlockType)
+	for _, arg := range binding.Block {
+		fmt.Fprintf(s, "\t%s %s;\n", blockFieldType(arg.slotType), arg.cName)
+	}
+	s.WriteString("};\n")
+	fmt.Fprintf(s, "static_assert(sizeof(%s) == %d, \"cppgo: the argument block of %s is the size the Go side asserts\");\n",
+		binding.BlockType, binding.BlockSize, binding.sym.QualifiedName)
+	for i, arg := range binding.Block {
+		fmt.Fprintf(s, "static_assert(offsetof(%s, %s) == %d, \"cppgo: the argument block of %s has the offset the Go side asserts\");\n",
+			binding.BlockType, arg.cName, binding.BlockOffsets[i], binding.sym.QualifiedName)
+	}
+}
 
 // shimReturnType is the C return type of a thunk: the status when the call can
 // fail, the value itself when it cannot, and nothing when the value travels
@@ -157,6 +183,12 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 	// where C++'s own sret form is materialized. It is only reached when the
 	// binding has an out-pointer, which newBinding only adds with one.
 	store := func() string {
+		if binding.OutObject != nil {
+			// A record Go cannot mirror is constructed into Go's storage. The
+			// temporary the callee returned is destroyed at the end of the full
+			// expression, so what Go holds is its own copy.
+			return fmt.Sprintf("new (cppgo_result) %s(%s);", binding.OutObject.CxxName, call)
+		}
 		if binding.Result.Kind == goRecord {
 			return fmt.Sprintf("*static_cast<%s *>(cppgo_result) = %s;", binding.Result.Cxx, call)
 		}
@@ -192,6 +224,9 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 		// The callee's own return value is the status: 0 is success, anything
 		// else is the failure the Go side turns into an error.
 		fmt.Fprintf(&b, "\t\treturn %s;\n", call)
+	case binding.OutObject != nil:
+		fmt.Fprintf(&b, "\t\t%s\n", store())
+		b.WriteString("\t\treturn 0;\n")
 	case binding.Out != nil:
 		fmt.Fprintf(&b, "\t\t%s\n", store())
 		b.WriteString("\t\treturn 0;\n")
@@ -212,21 +247,21 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 // targetCall renders the C++ expression that calls the bound declaration.
 func (m *packageModel) targetCall(binding *binding) (string, error) {
 	args := make([]string, 0, len(binding.Wire))
-	for _, arg := range binding.Wire {
+	for _, arg := range binding.inputs() {
 		if arg.label == "this" || arg.label == "out" || arg.isOut || arg.stdRole == stdRoleExtra {
 			continue
 		}
 		if arg.callable != nil && !arg.callable.Std {
 			// A plain function pointer: the address the callback table handed
 			// out, cast to the declaration's own type.
-			args = append(args, "reinterpret_cast<"+arg.callable.Cxx+">("+arg.cName+")")
+			args = append(args, "reinterpret_cast<"+arg.callable.Cxx+">("+m.bodyName(binding, arg.cName)+")")
 			continue
 		}
 		if arg.stdRole == stdRolePrimary {
 			args = append(args, arg.stdLocal)
 			continue
 		}
-		expr, err := m.shimArg(arg.param, arg.cName)
+		expr, err := m.shimArg(arg.param, m.bodyName(binding, arg.cName))
 		if err != nil {
 			return "", err
 		}
@@ -255,13 +290,13 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 	}
 	switch binding.sym.Kind {
 	case cxx.Constructor:
-		return "new (self) ::" + owner + "(" + list + ")", nil
+		return "new (" + m.receiver(binding) + ") ::" + owner + "(" + list + ")", nil
 	case cxx.Destructor:
-		return "static_cast<::" + owner + " *>(self)->~" + destructorSimpleName(owner) + "()", nil
+		return "static_cast<::" + owner + " *>(" + m.receiver(binding) + ")->~" + destructorSimpleName(owner) + "()", nil
 	case cxx.Method:
-		cast := "static_cast<::" + owner + " *>(self)"
+		cast := "static_cast<::" + owner + " *>(" + m.receiver(binding) + ")"
 		if binding.sym.IsConst {
-			cast = "static_cast<const ::" + owner + " *>(self)"
+			cast = "static_cast<const ::" + owner + " *>(" + m.receiver(binding) + ")"
 		}
 		if binding.sym.IsConversion {
 			// A conversion operator is called by casting the object to its
@@ -318,6 +353,19 @@ func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
 	return name, nil
 }
 
+// bodyName is the expression that reads one thunk argument inside the body: the
+// parameter itself, or the block field it was packed into with the cast the
+// declaration's own type needs.
+func (m *packageModel) bodyName(binding *binding, name string) string {
+	if expr, ok := binding.blockReads[name]; ok {
+		return expr
+	}
+	return name
+}
+
+// receiver is the expression the body passes as the implicit this.
+func (m *packageModel) receiver(binding *binding) string { return m.bodyName(binding, "self") }
+
 // conversionTarget is the C++ type a conversion operator converts to, spelled
 // so the shim can name it: the mapped type's qualified name when it has one, and
 // the declaration's own spelling otherwise (std::string, double).
@@ -347,8 +395,14 @@ func (m *packageModel) shimValue(binding *binding, call string) string {
 	if binding.Result != nil && binding.Result.Kind == goPointer && !binding.ViewResult {
 		// The C prototype names the pointer with the mapped scalar's type, and
 		// the declaration's own spelling may differ in qualification or in the
-		// signedness of char. A pointer cast is exact and says so.
-		return "reinterpret_cast<" + binding.Result.C + ">(" + call + ")"
+		// signedness of char. A pointer cast is exact and says so. A reference
+		// result is an object, so the address is taken; a pointer result is
+		// already one.
+		expr := call
+		if strings.HasSuffix(strings.TrimSpace(binding.sym.Result.Spelling), "&") {
+			expr = "&(" + call + ")"
+		}
+		return "reinterpret_cast<" + binding.Result.C + ">(" + expr + ")"
 	}
 	return m.shimResultExpr(binding.Result, call)
 }
@@ -368,7 +422,7 @@ func (m *packageModel) shimResultExpr(result *goType, expr string) string {
 // failure is translated like any other exception.
 func (m *packageModel) stdLocals(binding *binding) string {
 	var b strings.Builder
-	for _, arg := range binding.Wire {
+	for _, arg := range binding.inputs() {
 		if arg.stdRole != stdRolePrimary {
 			continue
 		}

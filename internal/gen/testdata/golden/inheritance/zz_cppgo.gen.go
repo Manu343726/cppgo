@@ -323,7 +323,7 @@ func cppgoCloseError(symbol string) error {
 	return nil
 }
 
-// Drawable is inherit::Drawable. The object belongs to C++; obj is where it lives.
+// Drawable is inherit::Drawable (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A second base with its own state: the derived type holds it at an offset.
 type Drawable struct {
@@ -442,7 +442,7 @@ func (d *Drawable) Draw() {
 	cppgo.KeepAlive(d)
 }
 
-// Flat is inherit::Flat. The object belongs to C++; obj is where it lives.
+// Flat is inherit::Flat (sizeof 1). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A shape that is not polymorphic: no vtable, so no dynamic_cast.
 type Flat struct {
@@ -529,7 +529,7 @@ func (f *Flat) Level() int32 {
 	return int32(cppgoRet)
 }
 
-// Raised is inherit::Raised. The object belongs to C++; obj is where it lives.
+// Raised is inherit::Raised (sizeof 1). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // The derived type of a non-polymorphic base.
 type Raised struct {
@@ -656,7 +656,7 @@ func (r *Raised) AsFlat() *Flat {
 	return &Flat{obj: r.obj, addr: uintptr(cppgoResult)}
 }
 
-// Rect is inherit::Rect. The object belongs to C++; obj is where it lives.
+// Rect is inherit::Rect (sizeof 48). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A rectangle: Shape plus Drawable plus a virtual Tagged.
 type Rect struct {
@@ -1017,7 +1017,7 @@ func (r *Rect) AsSquare() (*Square, bool) {
 	return &Square{obj: r.obj, addr: uintptr(cppgoResult)}, true
 }
 
-// Shape is inherit::Shape. The object belongs to C++; obj is where it lives.
+// Shape is inherit::Shape (sizeof 16). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // The root of the hierarchy, polymorphic.
 type Shape struct {
@@ -1241,7 +1241,7 @@ func (s *Shape) AsSquare() (*Square, bool) {
 	return &Square{obj: s.obj, addr: uintptr(cppgoResult)}, true
 }
 
-// Square is inherit::Square. The object belongs to C++; obj is where it lives.
+// Square is inherit::Square (sizeof 48). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A rectangle with a twist: the derived type of Rect.
 type Square struct {
@@ -1602,7 +1602,7 @@ func (s *Square) AsTagged() *Tagged {
 	return &Tagged{obj: s.obj, addr: uintptr(cppgoResult)}
 }
 
-// Tagged is inherit::Tagged. The object belongs to C++; obj is where it lives.
+// Tagged is inherit::Tagged (sizeof 16). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A virtual base, whose subobject offset is resolved through the vtable.
 type Tagged struct {

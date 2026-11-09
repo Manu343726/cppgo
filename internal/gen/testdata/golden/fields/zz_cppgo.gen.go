@@ -200,7 +200,7 @@ func cppgoCloseError(symbol string) error {
 	return nil
 }
 
-// Payload is fields::Payload. The object belongs to C++; obj is where it lives.
+// Payload is fields::Payload (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A record the Go side cannot hold by value: it has a destructor.
 type Payload struct {
@@ -350,7 +350,7 @@ func (p *Point) Clone() (*Point, error) {
 	return &clone, nil
 }
 
-// Settings is fields::Settings. The object belongs to C++; obj is where it lives.
+// Settings is fields::Settings (sizeof 104). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // The record: private members hide the layout, public ones are the state.
 type Settings struct {

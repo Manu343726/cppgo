@@ -282,6 +282,24 @@ type binding struct {
 	Out *goType
 	// OutLocal is the Go local the out-pointer aims at.
 	OutLocal string
+	// OutObject is the record whose storage the thunk constructs a by-value
+	// non-POD result into. The Go side allocates it before the call and returns
+	// an owning *T; the destructor runs at Close.
+	OutObject *recordModel
+	// Block are the input arguments an over-full call packs into the argument
+	// block the thunk unpacks, nil when the call fits the register file. When it
+	// is set, Wire holds one pointer to the block plus the out-parameters.
+	Block []*wireArg
+	// BlockType is the Go and C name of the block struct, BlockSize its size in
+	// bytes, and BlockOffsets each field's offset, for the assertions both
+	// compilers check.
+	BlockType    string
+	BlockSize    int
+	BlockOffsets []int
+	// blockReads maps a thunk parameter name to the expression that reads it out
+	// of the block, one cast from the block's word to the declaration's own
+	// type.
+	blockReads map[string]string
 	// selected is set by the binding manifest.
 	selected bool
 }
@@ -957,6 +975,21 @@ func (b *builder) qualifyNestedParams(sym cxx.Symbol, owner *recordModel) cxx.Sy
 	return sym
 }
 
+// crossesOpaqueByValue reports whether the signature passes or returns a record
+// Go cannot mirror by value. Such a call is shim-carried and, unlike a shared
+// standard-library type, its copy constructor can throw: the thunk catches.
+func crossesOpaqueByValue(binding *binding) bool {
+	if binding.Result != nil && binding.Result.ByValue && binding.Result.Record != nil && !binding.Result.Record.Mirrored {
+		return true
+	}
+	for _, param := range binding.Params {
+		if param.Type.ByValue && param.Type.Record != nil && !param.Type.Record.Mirrored {
+			return true
+		}
+	}
+	return false
+}
+
 // newBinding computes one binding's Go shape, carrier and wire arguments.
 func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, error) {
 	sym = b.qualifyNestedParams(sym, owner)
@@ -991,7 +1024,13 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				// owns, so its size and its sret form are the thunk's problem.
 				binding.hasByValue = true
 			}
-			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored {
+			if result.ByValue {
+				// A record Go cannot mirror returns as an owning *T: the shim
+				// constructs it into Go's storage, and the copy that happens
+				// there can throw whatever its copy constructor throws.
+				binding.hasByValue = true
+			}
+			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored && !result.ByValue {
 				// A method's borrowed pointer is a view of the receiver: the
 				// object is Go's, and the returned address is inside it. A free
 				// function's is an address nobody owns, which Go cannot hold.
@@ -1008,6 +1047,15 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		}
 	}
 	b.chooseCarrier(binding)
+	if crossesOpaqueByValue(binding) {
+		// A record Go cannot mirror is copied by the shim, in one direction or
+		// the other, and that copy can throw whatever the declaration promises.
+		// The call carries an error channel so the failure is a Go error and
+		// not an exception unwinding into Go.
+		binding.Status = true
+		binding.ErrorResult = true
+		binding.Reason += "; the by-value copy runs in the shim, which catches a throwing copy"
+	}
 	if b.statusNamed(sym) {
 		// The 32-bit return is the status, not a value: the Go signature keeps
 		// the error and loses the integer, and the thunk returns the callee's
@@ -1023,6 +1071,21 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		switch {
 		case binding.StdResult:
 			b.addStdResult(binding)
+		case binding.Result.ByValue && binding.Result.Record != nil && !binding.Result.Record.Mirrored:
+			// The shim constructs the result into the storage the Go side
+			// allocated; the pointer is the object's address, and the object
+			// owns the destructor's call.
+			binding.OutObject = binding.Result.Record
+			binding.Wire = append(binding.Wire, &wireArg{
+				label:    "out",
+				slotType: "uintptr",
+				class:    classInt,
+				size:     8,
+				expr:     "cppgoObject.Addr()",
+				keep:     "cppgoObject",
+				cType:    "void *",
+				cName:    "cppgo_result",
+			})
 		case binding.Status || binding.Result.Kind == goRecord || binding.ViewResult:
 			binding.Out = binding.Result
 			binding.OutLocal = outLocalType(binding.Result)
@@ -1048,9 +1111,6 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	}
 	// The register check runs last: a standard-library result adds its
 	// out-parameters to the wire, and those are INTEGER words like any other.
-	if err := b.checkRegisters(binding); err != nil {
-		return nil, err
-	}
 	binding.ID = shortHash(displaySignature(sym))
 	binding.SymbolVar = "cppgoSym_" + binding.ID
 	binding.Trampoline = "cppgoCall_" + binding.ID
@@ -1059,6 +1119,9 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		binding.Symbol = binding.Thunk
 	} else {
 		binding.Symbol = sym.Mangled
+	}
+	if err := b.routeRegisters(binding); err != nil {
+		return nil, err
 	}
 	return binding, nil
 }
@@ -1192,6 +1255,12 @@ func (b *builder) lowerParams(binding *binding) error {
 			// place the C++ copy constructor exists.
 			b.byValueParam(binding, name, mapped, p, addWire)
 			continue
+		}
+		if mapped.ByValue {
+			// A record Go cannot mirror: the wire word is the object's own
+			// address and the shim copies it into the call, so the call is
+			// shim-carried whatever the register class says.
+			binding.hasByValue = true
 		}
 		wire := b.paramWire(name, mapped, p)
 		wire.label = "a" + itoa(len(binding.Wire))
@@ -1594,12 +1663,19 @@ func (b *builder) checkReentrant(binding *binding) error {
 	return nil
 }
 
-// checkRegisters rejects a signature the generated trampoline cannot pass. An
-// argument block is the contract's answer; it is phase 2b, so this build names
-// the limit instead of emitting a call with arguments on the stack.
-func (b *builder) checkRegisters(binding *binding) error {
+// routeRegisters decides how a call whose arguments do not fit the SysV
+// register file reaches C++. The register file is six INTEGER and eight SSE
+// words; a signature past it is carried by the shim, whose thunk takes a pointer
+// to an argument block and unpacks it, so the trampoline still passes one word.
+// Only the input arguments go into the block: the out-parameters a
+// standard-library result needs stay thunk parameters, and a call whose
+// out-parameters alone fill the file is refused rather than mis-passed.
+func (b *builder) routeRegisters(binding *binding) error {
 	ints, floats := 0, 0
 	for _, arg := range binding.Wire {
+		if arg.isOut || arg.label == "out" {
+			continue
+		}
 		switch arg.class {
 		case classInt:
 			ints++
@@ -1607,10 +1683,134 @@ func (b *builder) checkRegisters(binding *binding) error {
 			floats++
 		}
 	}
-	if ints > maxIntRegs || floats > maxFloatRegs {
-		return fmt.Errorf("cppgo: %s: the call needs %d INTEGER and %d SSE argument registers; passing an argument block is not implemented by this build yet", binding.sym.QualifiedName, ints, floats)
+	if ints <= maxIntRegs && floats <= maxFloatRegs {
+		return nil
 	}
+	if binding.Carrier == reentrant {
+		// checkReentrant already refuses every parameter shape a callback can
+		// take that would overflow the frame; this is the belt to that brace.
+		return fmt.Errorf("cppgo: %s: the callback call needs %d INTEGER and %d SSE words, past the register file", binding.sym.QualifiedName, ints, floats)
+	}
+	b.forceThunk(binding, "more than 6 INTEGER or 8 SSE arguments: the thunk takes an argument block and unpacks it")
+	return b.buildArgumentBlock(binding)
+}
+
+// buildArgumentBlock replaces the input wire words with one pointer to a block
+// the thunk reads them from. The block's fields keep the order of the C++
+// parameters and the shape of the register words, so the shim's unpack is one
+// cast per argument and the Go side fills it with the expression it already
+// had.
+func (b *builder) buildArgumentBlock(binding *binding) error {
+	var inputs, rest []*wireArg
+	for _, arg := range binding.Wire {
+		if arg.isOut || arg.label == "out" {
+			rest = append(rest, arg)
+			continue
+		}
+		inputs = append(inputs, arg)
+	}
+	if 1+len(rest) > maxIntRegs {
+		return fmt.Errorf("cppgo: %s: the call needs %d words after the argument block, past the register file", binding.sym.QualifiedName, 1+len(rest))
+	}
+	binding.Block = inputs
+	binding.BlockType = "cppgoArgs_" + binding.ID
+	offset, align := 0, 1
+	for _, arg := range inputs {
+		size := wireWordSize(arg.slotType)
+		if size == 0 {
+			return fmt.Errorf("cppgo: %s: the argument block cannot carry the word %q", binding.sym.QualifiedName, arg.slotType)
+		}
+		offset = alignUp(offset, size)
+		binding.BlockOffsets = append(binding.BlockOffsets, offset)
+		offset += size
+		if size > align {
+			align = size
+		}
+	}
+	binding.BlockSize = alignUp(offset, align)
+	reads := make(map[string]string, len(inputs))
+	for _, arg := range inputs {
+		reads[arg.cName] = blockRead(arg)
+	}
+	// A standard-library value is built by the shim from the words beside it;
+	// those words now live in the block, so the local's initializer reads them
+	// out with the same cast.
+	for _, arg := range inputs {
+		for i, name := range arg.stdArgs {
+			if expr, ok := reads[name]; ok {
+				arg.stdArgs[i] = expr
+			}
+		}
+	}
+	binding.blockReads = reads
+	block := &wireArg{
+		label:    "block",
+		slotType: "unsafe.Pointer",
+		class:    classInt,
+		size:     8,
+		expr:     "unsafe.Pointer(&cppgoBlock)",
+		keep:     "&cppgoBlock",
+		cType:    "void *",
+		cName:    "cppgo_block",
+	}
+	binding.Wire = append([]*wireArg{block}, rest...)
 	return nil
+}
+
+// blockRead is the C++ expression that reads one block field as the type the
+// declaration names. A word is unsigned by construction, so a pointer field is a
+// reinterpret_cast and every other field a static_cast.
+func blockRead(arg *wireArg) string {
+	field := "cppgo_args->" + arg.cName
+	switch arg.slotType {
+	case "unsafe.Pointer", "uintptr":
+		return "reinterpret_cast<" + arg.cType + ">(" + field + ")"
+	default:
+		return "static_cast<" + arg.cType + ">(" + field + ")"
+	}
+}
+
+// wireWordSize is the size and alignment of one block word: the same for both,
+// because every word this build packs is a scalar of its own width.
+func wireWordSize(slotType string) int {
+	switch slotType {
+	case "int64", "uint64", "uintptr", "unsafe.Pointer", "float64":
+		return 8
+	case "float32":
+		return 4
+	default:
+		return 0
+	}
+}
+
+// blockFieldType is the C++ type of one block field: the word's own type, so the
+// Go struct and the C++ struct describe the same layout.
+func blockFieldType(slotType string) string {
+	switch slotType {
+	case "int64":
+		return "int64_t"
+	case "uint64":
+		return "uint64_t"
+	case "uintptr":
+		return "uintptr_t"
+	case "unsafe.Pointer":
+		return "void *"
+	case "float64":
+		return "double"
+	case "float32":
+		return "float"
+	default:
+		return "void *"
+	}
+}
+
+// inputs are the arguments the callee receives, in declaration order: the wire
+// when the register file carries them, and the block fields when it does not.
+func (b *binding) inputs() []*wireArg {
+	if len(b.Block) > 0 {
+		return b.Block
+	}
+	return b.Wire
 }
 
 // displaySignature renders the C++ declaration the evidence comment names.

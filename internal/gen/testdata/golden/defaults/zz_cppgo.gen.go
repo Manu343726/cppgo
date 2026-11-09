@@ -176,7 +176,7 @@ func cppgoBool(v bool) int64 {
 	return 0
 }
 
-// Shape is defaults::Shape. The object belongs to C++; obj is where it lives.
+// Shape is defaults::Shape (sizeof 16). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 //
 // A shape with a configurable number of sides.
 type Shape struct {

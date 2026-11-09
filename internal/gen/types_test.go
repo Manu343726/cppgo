@@ -13,7 +13,8 @@ import (
 // testMapper is a mapper with the two record shapes the type tests need.
 func testMapper() *mapper {
 	return &mapper{records: map[string]*recordModel{
-		"mathx::Vector": {GoName: "Vector", CxxName: "mathx::Vector"},
+		"mathx::Vector": {GoName: "Vector", CxxName: "mathx::Vector", Size: 24, Align: 8},
+		"ns::Empty":     {GoName: "Empty", CxxName: "ns::Empty"},
 		"mathx::Point":  {GoName: "Point", CxxName: "mathx::Point", Mirrored: true},
 	}}
 }
@@ -190,7 +191,8 @@ func TestMapPointer(t *testing.T) {
 	}
 }
 
-// TestMapRecord checks a mirrored record by value and the two failures.
+// TestMapRecord checks a mirrored record by value, a non-POD record by value,
+// and the two failures.
 func TestMapRecord(t *testing.T) {
 	m := testMapper()
 	point := cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Point", ClangKind: "Record", SizeBytes: 16, RecordName: "mathx::Point"}
@@ -198,11 +200,22 @@ func TestMapRecord(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, goRecord, mapped.Kind)
 	assert.Equal(t, "Point", mapped.Go)
+	assert.False(t, mapped.ByValue, "a mirrored record is the Go struct, not an owned object")
 
 	vector := cxx.Param{Kind: cxx.TypeRecord, Spelling: "mathx::Vector", ClangKind: "Record", SizeBytes: 16, RecordName: "mathx::Vector"}
-	_, err = m.mapType(vector)
+	mapped, err = m.mapType(vector)
+	require.NoError(t, err)
+	assert.Equal(t, goPointer, mapped.Kind)
+	assert.Equal(t, "*Vector", mapped.Go)
+	assert.True(t, mapped.ByValue, "a record Go cannot mirror crosses as an owned object, copied by the shim")
+	assert.Equal(t, "::mathx::Vector", mapped.Cxx)
+
+	// A record whose layout libclang did not complete cannot be allocated, so a
+	// by-value use of it names the limit rather than emitting an object of an
+	// unknown size.
+	_, err = m.mapType(cxx.Param{Kind: cxx.TypeRecord, Spelling: "ns::Empty", ClangKind: "Record", RecordName: "ns::Empty"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "passed by value but is not a POD")
+	assert.Contains(t, err.Error(), "passed by value but its layout is unknown")
 
 	_, err = m.mapType(cxx.Param{Kind: cxx.TypeRecord, Spelling: "ns::Unknown", ClangKind: "Record", RecordName: "ns::Unknown"})
 	require.Error(t, err)

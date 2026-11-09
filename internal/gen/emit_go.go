@@ -50,6 +50,7 @@ func cppgoBool(v bool) int64 {
 	for _, enum := range m.enums {
 		m.emitEnum(&b, enum)
 	}
+	m.emitArgumentBlocks(&b)
 	m.emitTemplates(&b)
 	m.emitPackageFunctions(&b)
 	m.emitTrampolineDeclarations(&b)
@@ -367,7 +368,7 @@ func (m *packageModel) emitMirroredType(b *strings.Builder, record *recordModel)
 
 // emitOpaqueType writes the Go value that owns C++ storage.
 func (m *packageModel) emitOpaqueType(b *strings.Builder, record *recordModel) {
-	fmt.Fprintf(b, "%s\n", docBlock(record.GoName, fmt.Sprintf("%s is %s. The object belongs to C++; obj is where it lives.", record.GoName, record.CxxName), record.Comment))
+	fmt.Fprintf(b, "%s\n", docBlock(record.GoName, fmt.Sprintf("%s is %s (sizeof %d). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.", record.GoName, record.CxxName, record.Size), record.Comment))
 	fmt.Fprintf(b, "type %s struct {\n\tobj *cppgo.Object\n\t// view is the address of this value inside the object, 0 for the object itself.\n\taddr uintptr\n}\n\n", record.GoName)
 	fmt.Fprintf(b, `// cppgoAddr is the object address handed to C++, or 0 for a nil or closed
 // value.
@@ -423,6 +424,9 @@ func (m *packageModel) emitConstructor(b *strings.Builder, record *recordModel, 
 	} else {
 		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
 	}
+	for _, assignment := range m.blockAssignments(ctor, ctx) {
+		fmt.Fprintf(b, "\t%s\n", assignment)
+	}
 	call := ctor.Trampoline + "(" + strings.Join(m.callArgs(ctor, ctx), ", ") + ")"
 	if ctor.Status {
 		fmt.Fprintf(b, "\tif cppgoStatus := %s; cppgoStatus != 0 {\n", call)
@@ -459,6 +463,9 @@ func (m *packageModel) emitClone(b *strings.Builder, record *recordModel, clone 
 		b.WriteString("\t})\n")
 	} else {
 		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
+	}
+	for _, assignment := range m.blockAssignments(clone, ctx) {
+		fmt.Fprintf(b, "\t%s\n", assignment)
 	}
 	call := clone.Trampoline + "(" + strings.Join(m.callArgs(clone, ctx), ", ") + ")"
 	if clone.Status {
@@ -712,6 +719,7 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 	// A length parameter shared by several slices is one C++ argument: the Go
 	// caller must not hand over differently sized arrays.
 	m.emitLengthChecks(b, binding)
+	m.emitByValueNilChecks(b, binding)
 
 	for _, decl := range binding.stdDecls {
 		fmt.Fprintf(b, "\t%s\n", decl)
@@ -720,6 +728,9 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		b.WriteString(err)
 	}
 	b.WriteString("\tcppgo.ProbeStack()\n")
+	for _, assignment := range m.blockAssignments(binding, ctx) {
+		fmt.Fprintf(b, "\t%s\n", assignment)
+	}
 	if binding.Carrier == reentrant {
 		m.emitReentrant(b, binding, ctx)
 		b.WriteString("}\n")
@@ -731,6 +742,10 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		// A status thunk delivers its value through the out-pointer and, when
 		// the binding has one, reports the failure as an error. A status thunk
 		// always has an error result: it exists because the call can throw.
+		if binding.OutObject != nil {
+			m.emitObjectResult(b, binding, call, ctx)
+			break
+		}
 		if binding.Out != nil {
 			fmt.Fprintf(b, "\tvar cppgoResult %s\n", binding.OutLocal)
 		}
@@ -787,6 +802,9 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 // sentence leads when the header wrote none, or when its comment does not open
 // with the Go identifier.
 func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, description string) {
+	if note := byValueNote(binding); note != "" {
+		description += " " + note
+	}
 	fmt.Fprintf(b, "\n%s\n", docBlock(binding.GoName, description, binding.sym.Comment))
 	mangled := binding.sym.Mangled
 	if mangled == "" {
@@ -837,6 +855,40 @@ func docLine(record *recordModel, binding *binding) string {
 	return fmt.Sprintf("%s calls %s.", binding.GoName, binding.sym.QualifiedName)
 }
 
+// emitByValueNilChecks refuses a nil value where the C++ side takes the record
+// itself. The wire word for such an argument is the object's address, and a nil
+// object has none: passing 0 would hand the shim a null pointer to copy from.
+// Every such binding carries an error channel (its copy runs in the shim, which
+// catches), so the refusal is an error and never a panic.
+func (m *packageModel) emitByValueNilChecks(b *strings.Builder, binding *binding) {
+	for _, param := range binding.Params {
+		if !param.Type.ByValue {
+			continue
+		}
+		message := "cppgo: " + displaySignature(binding.sym) + ": the argument " + param.Name + " is passed by value, and a nil " + param.Type.Go + " has no C++ object to copy"
+		fmt.Fprintf(b, "\tif %s == nil {\n", param.Name)
+		fmt.Fprintf(b, "\t\treturn %sfmt.Errorf(%q)\n", errorZeroPrefix(binding), message)
+		b.WriteString("\t}\n")
+	}
+}
+
+// byValueNote is the ownership sentence every binding that crosses a record by
+// value carries. It is the whole rule, stated where the caller reads it: who
+// allocated the object, who destroys it, and what the copy does not promise.
+func byValueNote(binding *binding) string {
+	var notes []string
+	if binding.OutObject != nil {
+		notes = append(notes, "The returned "+binding.OutObject.GoName+" is Go-owned: the shim constructs it from the callee's result, Close runs the C++ destructor once, and the type's own copy semantics decide what the copy shares with its source.")
+	}
+	for _, param := range binding.Params {
+		if !param.Type.ByValue {
+			continue
+		}
+		notes = append(notes, "The value of "+param.Name+" is copied into the call by the shim, so the callee never holds the Go object; the caller keeps ownership and closes it.")
+	}
+	return strings.Join(notes, " ")
+}
+
 // emitLengthChecks writes the pre-call length comparison for every slice group
 // that feeds one C++ length parameter.
 func (m *packageModel) emitLengthChecks(b *strings.Builder, binding *binding) {
@@ -864,6 +916,37 @@ func (m *packageModel) emitLengthChecks(b *strings.Builder, binding *binding) {
 		}
 		b.WriteString("\t}\n")
 	}
+}
+
+// emitObjectResult writes the delivery of a record Go cannot mirror that the
+// callee returns by value. The object is Go's: its storage is allocated here,
+// the shim constructs the value into it through the out-pointer, and the
+// destructor the record declares runs at Close, once, through the same
+// trampoline Close uses. A call that failed constructed nothing, so the release
+// closure is told so and does not run a destructor over raw storage.
+func (m *packageModel) emitObjectResult(b *strings.Builder, binding *binding, call string, ctx callContext) {
+	record := binding.OutObject
+	b.WriteString("\tvar cppgoObject *cppgo.Object\n")
+	if record.Dtor != nil {
+		b.WriteString("\tconstructed := false\n")
+		fmt.Fprintf(b, "\tcppgoObject = cppgo.NewObject(%d, %d, func() {\n", record.Size, record.Align)
+		b.WriteString("\t\tif !constructed {\n\t\t\treturn\n\t\t}\n")
+		b.WriteString("\t\tcppgo.ProbeStack()\n")
+		fmt.Fprintf(b, "\t\t%s(%s, cppgoObject.Addr())\n", record.Dtor.Trampoline, record.Dtor.SymbolVar)
+		b.WriteString("\t})\n")
+	} else {
+		// A record with no declared destructor needs none: the storage is the
+		// whole object, and nothing has to be undone when the call fails, so the
+		// guard flag the destructor's closure uses is not declared.
+		fmt.Fprintf(b, "\tcppgoObject = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
+	}
+	fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
+	m.emitKeepAlive(b, binding, ctx)
+	fmt.Fprintf(b, "\tif cppgoStatus != 0 {\n\t\tcppgoObject.Release()\n\t\treturn nil, cppgoCallError(%q)\n\t}\n", binding.sym.QualifiedName)
+	if record.Dtor != nil {
+		b.WriteString("\tconstructed = true\n")
+	}
+	fmt.Fprintf(b, "\treturn &%s{obj: cppgoObject}, nil\n", record.GoName)
 }
 
 // emitViewReturn turns the address C++ returned into a view of the receiver:
@@ -920,10 +1003,66 @@ func (m *packageModel) emitKeepAlive(b *strings.Builder, binding *binding, ctx c
 			names = append(names, arg.keep)
 		}
 	}
+	// The values packed into the block are Go memory C++ reads after the call
+	// has started, so they are pinned for as long as the block lives.
+	for _, arg := range binding.Block {
+		if arg.keep != "" && arg.label != "this" {
+			names = append(names, arg.keep)
+		}
+	}
 	if len(names) == 0 {
 		return
 	}
 	fmt.Fprintf(b, "\tcppgo.KeepAlive(%s)\n", strings.Join(names, ", "))
+}
+
+// blockAssignments is the Go code that fills an over-full call's argument
+// block: one field per C++ argument, in declaration order, written with the
+// expression the register version would have passed. The implicit this and a
+// clone's hidden source come from the Go receiver, exactly as the wire version
+// fills them.
+func (m *packageModel) blockAssignments(binding *binding, ctx callContext) []string {
+	if len(binding.Block) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(binding.Block)+1)
+	out = append(out, "var cppgoBlock "+binding.BlockType)
+	cloneSource := binding.IsClone
+	for _, arg := range binding.Block {
+		expr := arg.expr
+		switch {
+		case arg.label == "this":
+			expr = ctx.thisExpr
+		case cloneSource:
+			expr = ctx.recvExpr
+			cloneSource = false
+		}
+		out = append(out, "cppgoBlock."+arg.cName+" = "+expr)
+	}
+	return out
+}
+
+// emitArgumentBlocks writes the struct each over-full call packs its arguments
+// into. The C++ side declares the same fields, of the same widths, in the same
+// order, and asserts sizeof and every offset: one layout, checked by both
+// compilers.
+func (m *packageModel) emitArgumentBlocks(b *strings.Builder) {
+	for _, binding := range m.bindings {
+		if len(binding.Block) == 0 {
+			continue
+		}
+		fmt.Fprintf(b, "\n// %s is the argument block of %s: the %d argument words the\n// register file cannot hold, in declaration order. The shim declares the same\n// fields and asserts every offset.\n",
+			binding.BlockType, displaySignature(binding.sym), len(binding.Block))
+		fmt.Fprintf(b, "type %s struct {\n", binding.BlockType)
+		for _, arg := range binding.Block {
+			fmt.Fprintf(b, "\t%s %s\n", arg.cName, arg.slotType)
+		}
+		b.WriteString("}\n")
+		fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Sizeof(%s{})]byte{}\n", binding.BlockSize, binding.BlockType)
+		for i, arg := range binding.Block {
+			fmt.Fprintf(b, "var _ [%d]byte = [unsafe.Offsetof(%s{}.%s)]byte{}\n", binding.BlockOffsets[i], binding.BlockType, arg.cName)
+		}
+	}
 }
 
 // emitTrampolineDeclarations declares every assembly trampoline.
