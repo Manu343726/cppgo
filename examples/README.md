@@ -4,7 +4,7 @@ Three C++ libraries bound with `cppgo`, each owning its build, plus the tests
 that prove the generated packages work. `mathx` and `stats` are the executable
 half of the [tutorial](https://manu343726.github.io/cppgo/tutorials/first-binding/);
 `full` is the complete project, from a CMake-built library to a running Go
-program.
+program, and has [a tutorial of its own](https://manu343726.github.io/cppgo/tutorials/full-project/).
 
 | Example | What it shows |
 |---|---|
@@ -58,6 +58,7 @@ ignored.
 ## Documentation
 
 - [Bind your first C++ class](https://manu343726.github.io/cppgo/tutorials/first-binding/) — the tutorial that uses `mathx`.
+- [Build a complete Go + C++ project](https://manu343726.github.io/cppgo/tutorials/full-project/) — the tutorial that uses `full`.
 - [Generated API](https://manu343726.github.io/cppgo/reference/generated-api/) — the shape of the packages these examples contain.
 - [Architecture](https://manu343726.github.io/cppgo/explanation/architecture/) — how the generated files work together.
 - [Performance](https://manu343726.github.io/cppgo/explanation/benchmarks/) — what a call costs.
