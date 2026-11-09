@@ -10,6 +10,38 @@ provides the concrete types it uses. The reason for the split is
 [in Architecture]({{< ref "explanation/architecture.md" >}}#templates-why-two-phases);
 this page is the procedure.
 
+## The header
+
+The template is declared in a header, and that header is what `cppgo gen` reads.
+This is `box::Box`, the fixture the two-phase flow is measured on, in
+[`internal/gen/testdata/box/box.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/box/box.hpp):
+
+```cpp
+namespace box {
+
+template <typename T>
+class Box {
+public:
+    Box() : value_() {}
+    Box(T value) : value_(value) {}
+    Box(const Box &other) = delete;
+    ~Box() {}
+    T get() const { return value_; }
+    void set(T value) { value_ = value; }
+    T add(T other) const { return value_ + other; }
+    T *echo(T *value) const { return value; }
+    const T *peek(const T *value) const { return value; }
+    void consume(const T &value) { value_ = value; }
+    static T identity(T value) { return value; }
+
+private:
+    T secret() const { return value_; }
+    T value_;
+};
+
+} // namespace box
+```
+
 ## Phase one: generate the generic API
 
 ```console
@@ -45,7 +77,35 @@ A non-type template parameter has no Go equivalent, so a fixed dimension is a
 names a runtime dimension. `Eigen::Matrix<double, 4, 4>` is
 `Matrix[float64, D4, D4]` in the generated API.
 
-## Phase two: collect what the program uses
+## Phase two: the call, and the instantiations it needs
+
+The program instantiates the generic API, and that is the input the second
+command needs. These are the first calls of the measured program in
+[`internal/gen/template_e2e_test.go`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/template_e2e_test.go),
+which `cppgo build -scan` loads as a Go package:
+
+```go
+func Run() (int32, float64, int64, int32, error) {
+	b, err := box.NewBox[int32](7)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	defer b.Close()
+	if err := b.Set(9); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	added, err := b.Add(4)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	got, err := b.Get()
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+```
+
+`box::Box<int32>` is not in the C++ side yet, so the second command is what
+provides it:
 
 ```console
 $ cppgo build -header include/box.hpp -package box -out ./box -scan ./cmd/mytool
