@@ -89,7 +89,7 @@ reports failure into a Go `error`.
 |---|---|---|
 | the full error projection | `std::error_code` (a library's own error value), `std::expected` (a value, or the error instead), `errno` (C's per-thread error number), `std::variant` (one of several types), a configured `bool` + out-parameter, custom result types | exceptions and `-status` become Go errors; a function returning `std::error_code` is refused at generation time |
 | generics breadth, operators, inheritance | class templates bind for scalar type arguments and non-type dimensions (a template parameter that is a value rather than a type); operators, member templates, base classes and enums are refused | every refusal names the declaration and the fix |
-| the OpenCV, ArrayFire and Eigen integrations | a generated binding tested against each real library | the two-phase template flow the Eigen integration needs exists ([Architecture]({{< ref "explanation/architecture.md" >}}#templates-why-two-phases)) |
+| the image, array and matrix work of the three target libraries | `cv::Mat`, `af::array` and Eigen's matrix types: the generator refuses a record that declares something it cannot carry, and an Eigen matrix specialization is not a record it can read | each library ships a slice that binds and tests the declarations the generator carries today: [OpenCV](https://github.com/Manu343726/cppgo/tree/main/examples/opencv), [ArrayFire](https://github.com/Manu343726/cppgo/tree/main/examples/arrayfire), [Eigen](https://github.com/Manu343726/cppgo/tree/main/examples/eigen) |
 | embedded generated packages | `cppgo.OpenFS` works; `Open`, the load function `cppgo gen` writes, does not call it yet | deploy the two C++ files, or use the runtime directly |
 
 ## What is not a limit

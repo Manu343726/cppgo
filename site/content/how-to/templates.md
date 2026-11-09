@@ -460,9 +460,15 @@ pipeline.
 | A template that derives from a base | the template is emitted, but only its own members: the inherited ones are not in the Go API. Bind the base separately, or expose them through the derived class |
 
 Each of those is a construct this build does not bind, not a configuration you
-have missed. The [limits page]({{< ref "explanation/limits.md" >}}) lists each
-one, and the Eigen binding, which the two-phase flow exists for, is designed and
-not available yet.
+have missed, and the [limits page]({{< ref "explanation/limits.md" >}}) lists
+each one. The Eigen module in
+[`examples/eigen`](https://github.com/Manu343726/cppgo/tree/main/examples/eigen)
+binds the library's configuration enums and thread functions in one `cppgo gen`
+pass, because none of them is a template. Its matrix types are class templates,
+and the two-phase flow meets Eigen's own wall there: the explicit instantiation
+it writes instantiates every constructor, and Eigen's constructors static-assert
+the vector sizes they are declared for, so no matrix size compiles. That is why
+no matrix type is in the module.
 
 ## What you just did
 
