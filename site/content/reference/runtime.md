@@ -76,7 +76,7 @@ whether the loader answered with an address or with an error. `Close` waits for
 no call already running inside the library, so closing a library that another
 goroutine is still calling is a **use-after-free** — the address of a function in
 an object the loader has already unmapped is called. Close once, after the work
-is over. Every later call fails with `ErrClosed`, the sentinel
+is over. Every later `Symbol` call fails with `ErrClosed`, the sentinel
 [Errors](#errors) documents.
 
 `LastError` returns `nil` when the library exports no message accessor (a
@@ -146,9 +146,9 @@ library it links against have to be unpacked together. The files are reused whil
 they are unchanged, and the cache path is refused with `ErrInsecureCache` (see
 [Errors](#errors)) if it is not a private directory. `CacheDir` is for a message
 or a test that has to name the cache; `CleanCache` is for a program that is the
-cache's only user, normally at startup or shutdown. A generated package does not call `OpenFS` today: the
-call belongs to a hand-written binding, or to a program that controls how its
-library is opened. The steps are in
+cache's only user, normally at startup or shutdown. A generated package does not
+call `OpenFS`: the call belongs to a hand-written binding, or to a program that
+controls how its library is opened. The steps are in
 [Embed the C++ side in the Go binary]({{< ref "how-to/embed.md" >}}).
 
 ## Stack headroom
@@ -297,7 +297,7 @@ foreign call returns.
 
 | Type or value | Cause | Fix |
 |---|---|---|
-| `ErrClosed` | a `Library` method after `Close`, a second `Close`, or a method on a nil or closed generated value | close once, after the work; never use the value or the library afterwards |
+| `ErrClosed` | a `Symbol` call after `Close`, a second `Close`, or a generated method that returns an error, called on a nil or closed value; a generated method with no error return panics in that state instead | close once, after the work; never use the value or the library afterwards |
 | `*OpenError` | a library that could not be loaded. `Path` and `Err` | check that the path names the object, that it is readable, and that its dependencies resolve |
 | `*SymbolError` | a symbol that could not be resolved. `Name` and `Err` | the name is absent from the object's dynamic symbol table: check it, or regenerate the binding |
 | `*ExtractError` | an embedded object that could not be materialized. `Name`, `Dir`, `Err` | check the embedded set holds the name, the disk space and the cache permissions |
@@ -307,8 +307,12 @@ foreign call returns.
 | `*NativeError` | a failure the library reported, with the message verbatim in `Message` | read the message: it is the text the C++ side stored, normally an exception's |
 | `*CallError` | a bound call that failed. `Symbol` names the C++ declaration, `Err` wraps the native failure | read the message; `Err` is normally a `*NativeError` |
 
-All of them implement `Unwrap` except the sentinels, so `errors.As` finds the
-inner failure and `errors.Is` works on `ErrClosed` and `ErrInsecureCache`.
+`*OpenError`, `*SymbolError`, `*ExtractError`, `*SearchError` and `*CallError`
+implement `Unwrap`, so `errors.As` finds the loader or native failure inside
+them. `*NativeError` and `*DependencyError` do not: neither wraps another error,
+the first carrying the library's message verbatim and the second the object and
+the missing `DT_NEEDED` entry. `ErrClosed` and `ErrInsecureCache` are plain
+values, and `errors.Is` matches them through any error that wraps them.
 
 ```go
 type CallError struct {
