@@ -181,6 +181,9 @@ func (b *builder) assignNames() error {
 
 // baseName is the name a binding gets before overloads are told apart.
 func (b *builder) baseName(binding *binding) (string, error) {
+	if binding.fieldName != "" {
+		return binding.fieldName, nil
+	}
 	if binding.IsDestructor {
 		return "Close", nil
 	}

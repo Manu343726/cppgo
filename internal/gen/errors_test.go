@@ -45,7 +45,6 @@ func TestGenerationErrors(t *testing.T) {
 		{"smartparam.hpp", "smart-pointer parameter"},
 		{"smartresult.hpp", "smart-pointer result"},
 		{"stdinout.hpp", "non-const standard-library reference"},
-		{"staticdata.hpp", "static data member"},
 		{"tempdependent.hpp", "not a type this build classifies"},
 		{"templfuncdependent.hpp", "not a type this build classifies"},
 		{"tempmembertemplate.hpp", "member function template"},

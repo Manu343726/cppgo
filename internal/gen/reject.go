@@ -80,10 +80,6 @@ func (b *builder) rejectUnimplemented() error {
 			return recordError(rec, pending(
 				"inherited members and base views are not emitted by this build yet",
 				"bind the base class directly, or expose the derived members through a C++ wrapper"))
-		case len(rec.StaticFields) > 0:
-			return recordError(rec, pending(
-				fmt.Sprintf("the static data member %s is not emitted by this build yet", rec.StaticFields[0].Name),
-				"expose it through a static member function or a free function"))
 		case len(rec.MemberTemplates) > 0:
 			return recordError(rec, pending(
 				fmt.Sprintf("the member function template %s is not emitted by this build yet", rec.MemberTemplates[0].QualifiedName),

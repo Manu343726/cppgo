@@ -237,6 +237,16 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 	if binding.Owner != nil {
 		owner = binding.Owner.CxxName
 	}
+	if binding.staticField != nil {
+		qualified := "::" + binding.Owner.CxxName + "::" + binding.staticField.Name
+		if !binding.staticWrite {
+			return qualified, nil
+		}
+		if len(args) != 1 {
+			return "", pending("a static data member's setter takes exactly one value", "fix the declaration")
+		}
+		return qualified + " = " + args[0], nil
+	}
 	switch binding.sym.Kind {
 	case cxx.Constructor:
 		return "new (self) ::" + owner + "(" + list + ")", nil

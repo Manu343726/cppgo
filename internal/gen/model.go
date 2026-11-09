@@ -190,6 +190,15 @@ type binding struct {
 	// IsClone is true for the binding emitted as Clone(): a copy constructor
 	// whose single source argument is the Go receiver.
 	IsClone bool
+	// staticField is the static data member a binding reads or writes, nil for
+	// every other binding. A static member is a package function
+	// <Type><Field>(), plus <Type>Set<Field>(v) when it is mutable, and the
+	// thunk is what reads or writes the storage: its address is not a function.
+	staticField *cxx.StaticField
+	// staticWrite is true for the setter half of a static data member.
+	staticWrite bool
+	// fieldName overrides the Go base name a static data member takes.
+	fieldName string
 
 	Carrier carrier
 	Reason  string
@@ -395,6 +404,9 @@ func build(cfg Config) (*packageModel, error) {
 		return nil, err
 	}
 	if err := b.buildBindings(); err != nil {
+		return nil, err
+	}
+	if err := b.buildStaticFields(); err != nil {
 		return nil, err
 	}
 	for i, entry := range b.cfg.Status {
@@ -1519,7 +1531,14 @@ func (m *packageModel) report() []string {
 	lines := make([]string, 0, len(m.bindings)+len(m.templates)+len(m.instantiations))
 	for _, binding := range m.bindings {
 		symbol := binding.Symbol
-		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", displaySignature(binding.sym), binding.Carrier, symbol, binding.Reason))
+		declaration := displaySignature(binding.sym)
+		if binding.staticField != nil {
+			declaration = binding.sym.QualifiedName
+			if binding.staticWrite {
+				declaration += " = <value>"
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", declaration, binding.Carrier, symbol, binding.Reason))
 	}
 	for _, tmpl := range m.templates {
 		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s generic API, %d binding(s)", tmpl.CxxName+"<"+paramNames(tmpl)+">", "tmpl", "-", len(tmpl.bindings())))

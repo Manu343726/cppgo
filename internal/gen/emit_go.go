@@ -792,7 +792,7 @@ func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, desc
 	if mangled == "" {
 		mangled = "synthesized"
 	}
-	evidence := "//\n// C++: " + displaySignature(binding.sym) + ", " + mangled
+	evidence := "//\n// C++: " + m.declaration(binding) + ", " + mangled
 	evidence += " (" + binding.Carrier.String()
 	if binding.Carrier.shimCarried() {
 		evidence += " " + binding.Thunk
@@ -804,9 +804,27 @@ func (m *packageModel) emitBindingDoc(b *strings.Builder, binding *binding, desc
 	fmt.Fprintf(b, "%s\n", evidence)
 }
 
+// declaration is the C++ declaration the evidence line names. A static data
+// member is not a function, so it is spelled as the member itself.
+func (m *packageModel) declaration(binding *binding) string {
+	if binding.staticField == nil {
+		return displaySignature(binding.sym)
+	}
+	if binding.staticWrite {
+		return binding.sym.QualifiedName + " = <value>"
+	}
+	return binding.sym.QualifiedName
+}
+
 // docLine is the generated description of a call binding.
 func docLine(record *recordModel, binding *binding) string {
 	name := simpleName(binding.sym.QualifiedName)
+	if binding.staticField != nil {
+		if binding.staticWrite {
+			return fmt.Sprintf("%s sets %s.", binding.GoName, binding.sym.QualifiedName)
+		}
+		return fmt.Sprintf("%s reads %s.", binding.GoName, binding.sym.QualifiedName)
+	}
 	if record != nil {
 		return fmt.Sprintf("%s calls %s.", binding.GoName, record.CxxName+"::"+name)
 	}
