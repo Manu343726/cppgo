@@ -4,14 +4,19 @@ description: "The command, the compilation configuration, and what a generation 
 weight: 10
 ---
 
-You have a C++ library with headers and you want a Go package that calls it.
-This guide assumes you have read
-[Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}}) or already
-know what `cppgo gen` produces.
+You have a C++ library that builds, and you want a Go package that calls it.
+Binding it means three things: name the header, tell cppgo how that header is
+compiled, and run one command. This guide is those three steps, what the command
+reports back, and what it refuses.
 
-The commands use the example library in
-[`examples/mathx`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx);
-substitute your own paths where it has its own.
+Use it when you are binding your own library. If you have not bound anything
+yet, [Bind your first C++ class]({{< ref "tutorials/first-binding.md" >}}) is the
+same flow at teaching pace, with every output explained as it appears.
+
+The scenario is the `mathx` library in
+[`examples/mathx`](https://github.com/Manu343726/cppgo/tree/main/examples/mathx):
+one header, one source file, a `Makefile`, and the generated package committed
+beside them. Substitute your own paths where the guide uses its own.
 
 ## 1. The header you bind
 

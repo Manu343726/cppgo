@@ -9,11 +9,15 @@ have to stay together. `cppgo.OpenFS` removes that: it takes a file system of
 embedded files, unpacks them once into a cache private to your user, and loads
 one of them by name. The C++ side then travels inside the Go binary.
 
-**Status.** `OpenFS` is implemented and tested in the runtime. The package
-`cppgo gen` writes **does not call it yet**: its `Open` loads the two files from
-the filesystem, and connecting `OpenFS` to generated packages is recorded as
-future work. So today this page is for code that uses the runtime directly; a
-generated binding still deploys as described in
+Use it when the program must arrive as a single file and you control the code
+that opens the library. The scenario is a small tool that embeds its shim — the
+C++ library cppgo builds — and the library it calls, then loads both from the
+embedded file system at start-up, which is what the example below does.
+
+`OpenFS` is a runtime function today: the package `cppgo gen` writes does not
+call it yet, and a generated `Open` still loads the two files from the
+filesystem. So this guide is for code that uses the runtime directly; a generated
+binding deploys as described in
 [Ship a program that uses a binding]({{< ref "how-to/deploy.md" >}}).
 
 ## The call

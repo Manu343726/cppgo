@@ -6,15 +6,23 @@ weight: 20
 
 This lesson assembles the whole path in one project: an ordinary C++ library
 built by CMake, the Go package `cppgo` generates from its header, a Go program
-that calls it, and the tests that prove the calls work.
+that calls it, and the tests that prove the calls work. The library is
+deliberately small — one declaration of each kind the generator supports — so
+the whole mapping from C++ to Go is visible in one place.
+
+## What you will build
+
+By the end you will have built the library, generated the binding, run a program
+that prints one line per construct, and run the suite twice.
+
+## The scenario
 
 The project is in the repository, at
 [`examples/full`](https://github.com/Manu343726/cppgo/tree/main/examples/full),
 and every command below is a target of its `Makefile`, so you can run the lesson
-while you read it.
-
-By the end you will have built the library, generated the binding, run a program
-that prints one line per construct, and run the suite twice.
+while you read it. The library it binds is called `metrics`, and the program in
+[`cmd/app`](https://github.com/Manu343726/cppgo/tree/main/examples/full/cmd/app)
+calls every declaration in it.
 
 ## What you need
 

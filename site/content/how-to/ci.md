@@ -7,7 +7,12 @@ weight: 60
 A generated package is one more artefact whose sources are in the repository, so
 a pipeline has two questions to answer: *are the committed sources current?* and
 *does the package still work?* `cppgo` answers the first with `cppgo check` and
-the second with the same two test passes the project runs on itself.
+the second with two test passes, one with cgo disabled and one with the race
+detector.
+
+Use this guide when your repository commits the generated sources and runs its
+tests in CI. The scenario is the `full` example: its `make check` and `make test`
+targets are the two steps below.
 
 ## 1. Pin the toolchain
 
@@ -23,7 +28,9 @@ step:
 
 Use an image or a runner with these versions pinned rather than taking whatever
 the runner happens to have. That is the least surprising option, and the only one
-that keeps generation reproducible across machines.## 2. Build your library first
+that keeps generation reproducible across machines.
+
+## 2. Build your library first
 
 Generation reads what your library exports, so the library has to exist before
 `cppgo gen` runs. This is your build's step, not cppgo's:
@@ -35,11 +42,19 @@ $ cmake --build build --target mylib      # or: make lib
 ## 3. Commit the generated sources and check them
 
 The generated sources are reproducible for the same inputs, so commit them and
-fail the pipeline when they drift:
+fail the pipeline when they drift. The example's check target is a single
+command:
 
 ```console
-$ cppgo gen   -header include/mylib/api.hpp -package mylib \
-              -library build/libmylib.so -out ./mylib
+$ make check
+build/cppgo check -header include/metrics/metrics.hpp -package metrics -library build/libmetrics.so -compile-commands build/compile_commands.json -out ./gen -status metrics::validate_name -scan ./cmd/... -scan-dir .
+./gen: generated files are up to date
+```
+
+Your own command repeats the flags you pass to `cppgo gen`, with `check` in place
+of `gen`:
+
+```console
 $ cppgo check -header include/mylib/api.hpp -package mylib \
               -library build/libmylib.so -out ./mylib
 ./mylib: generated files are up to date
@@ -60,11 +75,11 @@ A stale file is named:
 cppgo check: ./mylib is out of date (run "cppgo gen"): zz_cppgo_shim.cpp
 ```
 
-For a template-heavy package, check has to scan the same program the build scans:
-
-```console
-$ cppgo check -header include/box.hpp -package box -out ./box -scan ./cmd/mytool
-```
+For a template-heavy package, check has to scan the same program the build
+scans, or it will find the specializations missing. The example's `make check`
+above already does it, because its target passes `-scan ./cmd/... -scan-dir .`.
+The page on the two phases is
+[Bind a C++ template library]({{< ref "how-to/templates.md" >}}).
 
 ## 4. Test in two passes
 
@@ -84,9 +99,9 @@ path before the first call:
 
 ```go
 func init() {
-	path := os.Getenv("CPPGO_MATHX_LIB")
+	path := os.Getenv("CPPGO_METRICS_LIB")
 	if path == "" {
-		path = filepath.Join("build", "libmathx.so")
+		path = filepath.Join("build", "libmetrics.so")
 	}
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
