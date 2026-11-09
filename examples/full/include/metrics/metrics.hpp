@@ -13,8 +13,8 @@
 //   - the opaque class has private state, out-of-line construction and
 //     destruction, noexcept accessors, methods that can throw, a static member
 //     and std::string / std::vector on both sides of the call;
-//   - Point is a POD passed by value, which the direct carrier can do because
-//     it is register-representable;
+//   - Point is a POD passed by value: the thunk copies it into the call and the
+//     result into Go storage;
 //   - ratio throws, so its Go signature returns an error;
 //   - validate_name reports failure as a 32-bit status code, which -status
 //     turns into an error too;
