@@ -81,15 +81,14 @@ func TestUnimplementedErrorShape(t *testing.T) {
 	assert.Contains(t, err.Error(), "outside the emitted table")
 }
 
-// TestInheritedAndNestedRejections covers the two constructs the verifier saw
-// silently omitted.
-func TestInheritedAndNestedRejections(t *testing.T) {
+// TestInheritanceRejection covers the construct left refused: inherited members
+// and base views are the next workstream's, and the message names them.
+func TestInheritanceRejection(t *testing.T) {
 	cases := []struct {
 		header string
 		want   string
 	}{
 		{"inherited.hpp", "inherited members and base views"},
-		{"nestedtype.hpp", "nested inside a record"},
 	}
 	for _, tc := range cases {
 		tc := tc

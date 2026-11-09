@@ -706,6 +706,9 @@ func (b *builder) buildBindings() error {
 			if sym.IsDeleted {
 				continue
 			}
+			if !b.allocatable(owner) {
+				continue
+			}
 			switch {
 			case sym.IsCopyConstructor:
 				clone, err := b.newBinding(sym, owner)
@@ -761,7 +764,7 @@ func (b *builder) buildBindings() error {
 		if len(owner.Ctors) > 0 || owner.Mirrored {
 			continue
 		}
-		if !b.defaultConstructible(owner) {
+		if !b.defaultConstructible(owner) || !b.allocatable(owner) {
 			continue
 		}
 		ctor := b.syntheticConstructor(owner)
@@ -772,7 +775,7 @@ func (b *builder) buildBindings() error {
 	// constructor still gets one, because the implicit copy is callable.
 	for _, name := range b.order {
 		owner := b.records[name]
-		if owner.Mirrored || owner.Clone != nil || !owner.CopyConstructible {
+		if owner.Mirrored || owner.Clone != nil || !owner.CopyConstructible || !b.allocatable(owner) {
 			continue
 		}
 		if b.rawRecord(owner.CxxName).IsAbstract {
@@ -807,6 +810,21 @@ func (b *builder) symbolSelected(sym cxx.Symbol) bool {
 		}
 	}
 	return true
+}
+
+// allocatable reports whether the Go side can allocate storage for a record:
+// New<Type>, Clone and a factory in general need sizeof and alignof, and a
+// record whose layout libclang could not complete has neither. Such a record is
+// still reachable as a view of a field or of a borrowed result, so the emitter
+// omits the factory and says so rather than emitting an allocation of -1 bytes.
+func (b *builder) allocatable(owner *recordModel) bool {
+	if owner.Size > 0 && owner.Align > 0 {
+		return true
+	}
+	b.warnings = append(b.warnings, fmt.Sprintf(
+		"%s has no layout the Go side can allocate (sizeof or alignof is unknown), so no factory is generated for it; reach it as a view of a field or of a borrowed result",
+		owner.CxxName))
+	return false
 }
 
 // defaultConstructible reports whether the implicit default constructor can be
@@ -881,8 +899,44 @@ func (b *builder) syntheticClone(owner *recordModel) *binding {
 	return clone
 }
 
+// qualifyNestedParams rewrites a type name that libclang spelled against the
+// template pattern — Box<T>::Slot inside Box<double>::slot — to the
+// specialization's own nested type, which is what the model indexes. A name the
+// model already knows is left alone, so a namespace-scope type keeps its name.
+func (b *builder) qualifyNestedParams(sym cxx.Symbol, owner *recordModel) cxx.Symbol {
+	if owner == nil {
+		return sym
+	}
+	var fix func(p *cxx.Param)
+	fix = func(p *cxx.Param) {
+		if p == nil {
+			return
+		}
+		if p.RecordName != "" {
+			_, recordKnown := b.records[p.RecordName]
+			_, enumKnown := b.enums[p.RecordName]
+			if !recordKnown && !enumKnown {
+				candidate := owner.CxxName + "::" + simpleName(p.RecordName)
+				if _, ok := b.records[candidate]; ok {
+					p.RecordName = candidate
+				} else if _, ok := b.enums[candidate]; ok {
+					p.RecordName = candidate
+				}
+			}
+		}
+		fix(p.Pointee)
+		fix(p.Element)
+	}
+	fix(&sym.Result)
+	for i := range sym.Params {
+		fix(&sym.Params[i])
+	}
+	return sym
+}
+
 // newBinding computes one binding's Go shape, carrier and wire arguments.
 func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, error) {
+	sym = b.qualifyNestedParams(sym, owner)
 	binding := &binding{sym: sym, Owner: owner, This: sym.Kind == cxx.Method || sym.Kind == cxx.Constructor || sym.Kind == cxx.Destructor}
 	binding.IsConstructor = sym.Kind == cxx.Constructor
 	binding.IsDestructor = sym.Kind == cxx.Destructor

@@ -65,7 +65,6 @@ func nestedRecords(records []cxx.Record) map[string]bool {
 // Adding a construct means implementing it and removing its entry here; a
 // construct must never fall through to a guess.
 func (b *builder) rejectUnimplemented() error {
-	nested := nestedRecords(b.rawRecords)
 	for _, rec := range b.rawRecords {
 		switch {
 		case rec.IsTemplate:
@@ -76,10 +75,6 @@ func (b *builder) rejectUnimplemented() error {
 			return recordError(rec, pending(
 				"inherited members and base views are not emitted by this build yet",
 				"bind the base class directly, or expose the derived members through a C++ wrapper"))
-		case nested[rec.QualifiedName]:
-			return recordError(rec, pending(
-				"a type nested inside a record is not emitted by this build yet",
-				"move the nested type to namespace scope, or bind the outer type through a C++ wrapper"))
 		case len(rec.MemberTemplates) > 0:
 			return recordError(rec, pending(
 				fmt.Sprintf("the member function template %s is not emitted by this build yet", rec.MemberTemplates[0].QualifiedName),

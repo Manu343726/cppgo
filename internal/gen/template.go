@@ -301,6 +301,15 @@ func (b *builder) newTemplate(rec cxx.Record) (*templateModel, error) {
 				"operators and conversion operators are not emitted by this build yet",
 				"give it a named member function"))
 		}
+		if b.namesNestedType(sym) {
+			// A member whose signature names a type declared inside the
+			// template has one answer per instantiation, so it cannot be part
+			// of the generic API. The concrete specialization carries it.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is not part of the generic API: its signature names a type declared inside %s, and each instantiation has its own; the specialization carries it",
+				displaySignature(sym), rec.QualifiedName))
+			continue
+		}
 		switch sym.Kind {
 		case cxx.Constructor:
 			if sym.IsDeleted || sym.IsCopyConstructor || sym.IsMoveConstructor {
@@ -410,6 +419,38 @@ func (b *builder) newTemplateFunction(sym cxx.Symbol) (*templateModel, error) {
 	binding.IsStatic = true
 	tmpl.Func = binding
 	return tmpl, nil
+}
+
+// namesNestedType reports whether a declaration's signature names a record or
+// enum the generated API does not hold — which, inside a template pattern, is a
+// type declared inside the template itself: libclang spells it against the
+// pattern, and every instantiation has its own.
+func (b *builder) namesNestedType(sym cxx.Symbol) bool {
+	var unknown func(p cxx.Param) bool
+	unknown = func(p cxx.Param) bool {
+		if p.RecordName == "" {
+			if p.Pointee != nil {
+				return unknown(*p.Pointee)
+			}
+			return false
+		}
+		if _, ok := b.records[p.RecordName]; ok {
+			return false
+		}
+		if _, ok := b.enums[p.RecordName]; ok {
+			return false
+		}
+		return true
+	}
+	if unknown(sym.Result) {
+		return true
+	}
+	for _, param := range sym.Params {
+		if unknown(param) {
+			return true
+		}
+	}
+	return false
 }
 
 // newTemplateBinding computes one generic binding. Only a bare type parameter,

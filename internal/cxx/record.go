@@ -415,6 +415,14 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 		decl = definition
 	}
 	typ := e.l.f.getCanonicalType(e.l.f.getCursorType(decl))
+	if e.l.f.typeGetSizeOf(typ) < 0 {
+		// An explicit instantiation's definition cursor is the pattern, whose
+		// type is dependent and has no size. The instantiation's own type is
+		// the one the compiler completed.
+		if direct := e.l.f.getCanonicalType(e.l.f.getCursorType(cursor)); e.l.f.typeGetSizeOf(direct) >= 0 {
+			typ = direct
+		}
+	}
 	rec.SizeBytes = e.l.f.typeGetSizeOf(typ)
 	rec.AlignBytes = e.l.f.typeGetAlignOf(typ)
 	rec.IsPOD = e.l.f.isPODType(typ) != 0

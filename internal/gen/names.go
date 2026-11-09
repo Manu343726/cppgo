@@ -222,18 +222,47 @@ func validGoPackage(name string) bool {
 // DESIGN.md specifies: mathx::Box<int> -> BoxInt, Box<mathx::Vector> ->
 // BoxVector, Pair<int, double> -> PairIntFloat64.
 func goRecordName(qualified string) string {
-	if open := strings.Index(qualified, "<"); open >= 0 {
-		closing := strings.LastIndex(qualified, ">")
+	// Only the type's own name carries its template arguments: the "<" of an
+	// enclosing specialization (Outer<int>::Slot) is not this type's.
+	simple := qualified
+	if i := lastQualifiedSeparator(qualified); i >= 0 {
+		simple = qualified[i+2:]
+	}
+	if open := strings.Index(simple, "<"); open >= 0 {
+		closing := strings.LastIndex(simple, ">")
 		if closing > open {
 			var b strings.Builder
-			b.WriteString(exportName(simpleName(qualified[:open])))
-			for _, arg := range splitTemplateArgs(qualified[open+1 : closing]) {
+			b.WriteString(exportName(simple[:open]))
+			for _, arg := range splitTemplateArgs(simple[open+1 : closing]) {
 				b.WriteString(typeSuffix(cppArgGoName(arg)))
 			}
 			return b.String()
 		}
 	}
-	return exportName(simpleName(qualified))
+	return exportName(simple)
+}
+
+// lastQualifiedSeparator returns the index of the last "::" outside a template
+// argument list, or -1. A plain simpleName splits at the last "::" anywhere,
+// which reads Box<std::size_t> as "size_t>".
+func lastQualifiedSeparator(name string) int {
+	depth, last := 0, -1
+	for i := 0; i+1 < len(name); i++ {
+		switch name[i] {
+		case '<':
+			depth++
+		case '>':
+			if depth > 0 {
+				depth--
+			}
+		case ':':
+			if name[i+1] == ':' && depth == 0 {
+				last = i
+				i++
+			}
+		}
+	}
+	return last
 }
 
 // splitTemplateArgs splits a template argument list at its top-level commas.
