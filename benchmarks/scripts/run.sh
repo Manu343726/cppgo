@@ -62,6 +62,15 @@ max_freq="$(read_or_missing /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_fre
 toolchain="$(go version)"
 compiler="$("$CXX" --version | head -n 1)"
 
+# The tree is read into a variable before the block below runs: the block's own
+# redirect truncates results/environment.txt, which is tracked, so a
+# `git diff --quiet` evaluated inside it would always report the run's own
+# output as a modification.
+tree="$(git rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout')"
+if ! git diff --quiet 2>/dev/null; then
+  tree="$tree (dirty)"
+fi
+
 {
   printf 'CPU: %s, %s logical CPUs\n' "$cpu_model" "$logical_cpus"
   printf 'Kernel: %s %s\n' "$(uname -sr)" "$(uname -m)"
@@ -73,7 +82,7 @@ compiler="$("$CXX" --version | head -n 1)"
   printf 'Tuning: none — no pinning, no governor change, no boost change, default GOMAXPROCS\n'
   printf 'Runs: %s per arm; each cell is the median of those runs, the range is their min–max\n' "$COUNT"
   printf 'Command: go test -run %s -bench . -benchmem -count=%s -timeout=%s\n' "'^\$'" "$COUNT" "$TIMEOUT"
-  printf 'Tree: %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout')$(git diff --quiet 2>/dev/null || echo ' (dirty)')"
+  printf 'Tree: %s\n' "$tree"
   printf 'Date: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > results/environment.txt
 
