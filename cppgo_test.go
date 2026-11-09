@@ -121,6 +121,50 @@ func TestSymbolEmptyName(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty symbol name")
 }
 
+// TestSymbolCacheAnswersRepeatably is the cache's contract: the second lookup of
+// a name answers exactly as the first did, whether the loader found the name or
+// not. The cache holds the loader's failure too, so a name the library does not
+// export keeps failing instead of being retried into a different answer.
+func TestSymbolCacheAnswersRepeatably(t *testing.T) {
+	lib := openFixture(t, testlib.Full)
+
+	cases := []struct {
+		name    string
+		wantErr bool
+	}{
+		{name: "cppgo_fixture_add"},
+		{name: "cppgo_fixture_exported_data"},
+		{name: "cppgo_fixture_no_such_symbol", wantErr: true},
+		{name: "", wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			first, firstErr := lib.Symbol(tc.name)
+			second, secondErr := lib.Symbol(tc.name)
+
+			if tc.wantErr {
+				require.Error(t, firstErr)
+				require.Error(t, secondErr)
+				assert.Zero(t, first)
+				assert.Zero(t, second)
+				assert.EqualError(t, secondErr, firstErr.Error())
+
+				var symErr *cppgo.SymbolError
+				require.ErrorAs(t, secondErr, &symErr)
+				assert.Equal(t, tc.name, symErr.Name)
+
+				return
+			}
+
+			require.NoError(t, firstErr)
+			require.NoError(t, secondErr)
+			assert.NotZero(t, first)
+			assert.Equal(t, first, second, "the cached address differs from the one the loader returned")
+		})
+	}
+}
+
 func TestSymbolAfterClose(t *testing.T) {
 	lib := openFixture(t, testlib.Full)
 	require.NoError(t, lib.Close())
@@ -136,6 +180,42 @@ func TestSymbolAfterClose(t *testing.T) {
 
 	// Path stays readable after Close.
 	assert.NotEmpty(t, lib.Path())
+}
+
+// TestSymbolCacheFollowsTheLibrary covers what the cache must never outlive: a
+// name resolved before Close still answers for another library, and answers
+// with ErrClosed — never the cached address — for the one that closed. A cache
+// shared between libraries or consulted before the closed flag would fail here.
+func TestSymbolCacheFollowsTheLibrary(t *testing.T) {
+	const name = "cppgo_fixture_add"
+
+	survivor := openFixture(t, testlib.Full)
+	closing := openFixture(t, testlib.Full)
+
+	want, err := survivor.Symbol(name)
+	require.NoError(t, err)
+	require.NotZero(t, want)
+
+	// Same object, so the loader hands out the same address; resolving it
+	// fills the closing library's cache with it.
+	cached, err := closing.Symbol(name)
+	require.NoError(t, err)
+	require.Equal(t, want, cached)
+
+	require.NoError(t, closing.Close())
+
+	addr, err := closing.Symbol(name)
+	require.ErrorIs(t, err, cppgo.ErrClosed)
+	assert.Zero(t, addr, "a closed library returned an address from its cache")
+
+	// The cache is per library: the survivor still answers.
+	again, err := survivor.Symbol(name)
+	require.NoError(t, err)
+	assert.Equal(t, want, again)
+
+	// LastError reads the same cache and must stay quiet on a closed
+	// library, exactly as it did before the cache existed.
+	assert.NoError(t, cppgo.LastError(closing))
 }
 
 func TestMustSymbol(t *testing.T) {
