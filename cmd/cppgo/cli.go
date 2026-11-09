@@ -444,9 +444,10 @@ func (c *cli) printFlags(w io.Writer, m mode) {
 // printUsage is the top-level help.
 func (c *cli) printUsage(w io.Writer) {
 	fmt.Fprintln(w, "cppgo generates a type-safe Go package from C++ headers and calls into")
-	fmt.Fprintln(w, "them through one assembly trampoline per binding, plus a shim cppgo itself")
-	fmt.Fprintln(w, "generates and compiles for everything the direct ABI cannot express. The")
-	fmt.Fprintln(w, "user's build is never touched and no cgo is involved.")
+	fmt.Fprintln(w, "them through one assembly trampoline per binding that does not pass a Go")
+	fmt.Fprintln(w, "function, plus the free trampoline. A shim cppgo itself generates and")
+	fmt.Fprintln(w, "compiles carries everything the direct ABI cannot express. The user's")
+	fmt.Fprintln(w, "build is never touched and no cgo is involved.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "usage:")
 	fmt.Fprintln(w, "  cppgo gen   -header <path> -package <name> [-library <file>] [-out <dir>]")
@@ -483,7 +484,8 @@ func (c *cli) printGenUsage(w io.Writer) {
 	shimSource := filepath.Join(gen.ShimDirName, gen.ShimSourceFileName)
 	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, gen.GenFileName, "the Go API, the generated Open and the trampoline")
 	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, "", "declarations")
-	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, gen.AsmFileName, "one NOSPLIT trampoline per binding")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, gen.AsmFileName, "one NOSPLIT trampoline per binding that passes no Go")
+	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, "", "function, plus cppgoFree")
 	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, shimHeader, "the extern \"C\" thunk declarations")
 	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, shimSource, "the thunks")
 	fmt.Fprintf(w, "  %-*s %s\n", fileColumn, gen.ShimLibraryName("<package>"), "the shim cppgo compiles and links against")
