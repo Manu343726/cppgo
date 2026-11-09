@@ -250,10 +250,12 @@ extern "C" int32_t cppgo_thunk_492cf416925a(const char * name_data, size_t name_
 	}
 }
 
-// The specializations the Go program instantiates. cppgo build collected
-// them from the program; adding one here is what makes its members exist.
-template class ::metrics::Accumulator<double>;
-template class ::metrics::Accumulator<std::int32_t>;
+// No class-level explicit instantiation is written. Each thunk below
+// names the specialization in its own call, so the compiler instantiates
+// exactly the members the API exposes. `template class T;` would also
+// instantiate every member the generic API skips — an operator that
+// static-asserts on the specialization, as Eigen's Matrix does — and the
+// translation unit would not compile for a type the API does not use.
 
 extern "C" size_t cppgo_tmpl_3b9b2aa1cf71(void) {
 	return sizeof(::metrics::Accumulator<double>);

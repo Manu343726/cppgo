@@ -521,17 +521,18 @@ func cppgoTemplateSymbol(tmpl, binding, key string) string {
 	return "cppgo_tmpl_" + cppgoTemplateHash(tmpl+"|"+binding+"|"+key)
 }
 
-// cppgoTemplateLine is the explicit instantiation that would make the
-// specialization exist, which is the line the failure names.
-func cppgoTemplateLine(tmpl, cxxArgs string) string {
-	return "template struct ::" + tmpl + "<" + cxxArgs + ">;"
+// cppgoTemplateName is the C++ specialization a generic wrapper reaches: the
+// name a missing thunk reports, so the reader sees which instantiation the last
+// cppgo build -scan did not collect.
+func cppgoTemplateName(tmpl, cxxArgs string) string {
+	return "::" + tmpl + "<" + cxxArgs + ">"
 }
 
 // cppgoTemplateFunc resolves one instantiation's thunk and caches it. A
 // missing thunk is the contract's failure mode: the Go program instantiated a
-// type the shim has no C++ counterpart for, and the error names the line to
-// add, never a nil call.
-func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
+// type the shim has no C++ counterpart for, and the error names the
+// specialization to rebuild for, never a nil call.
+func cppgoTemplateFunc(symbol, what, name string) (uintptr, error) {
 	cppgoMu.Lock()
 	addr, ok := cppgoTemplateSymbols[symbol]
 	cppgoMu.Unlock()
@@ -546,7 +547,7 @@ func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
 	cppgoMu.Unlock()
 	got, err := shim.Symbol(symbol)
 	if err != nil {
-		return 0, fmt.Errorf("cppgo: %s has no C++ instantiation in the shim: add %q to the header and run `cppgo build -scan <package>`: %w", what, line, err)
+		return 0, fmt.Errorf("cppgo: %s has no C++ counterpart in the shim: %s was not collected by the last `cppgo build -scan <package>`; run it again after the program uses the type: %w", what, name, err)
 	}
 	cppgoMu.Lock()
 	cppgoTemplateSymbols[symbol] = got
@@ -557,12 +558,12 @@ func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
 // cppgoTemplateLayout resolves an instantiation's sizeof and alignof thunks,
 // which is how the generic constructor allocates the object without knowing
 // the type's size at generation time.
-func cppgoTemplateLayout(tmpl, key, what, line string) (uintptr, uintptr, error) {
-	size, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "size", key), what, line)
+func cppgoTemplateLayout(tmpl, key, what, name string) (uintptr, uintptr, error) {
+	size, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "size", key), what, name)
 	if err != nil {
 		return 0, 0, err
 	}
-	align, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "align", key), what, line)
+	align, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "align", key), what, name)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -678,16 +679,16 @@ func NewAccumulator[T any](start T) (*Accumulator[T], error) {
 	key := cppgoAccumulatorKey[T]()
 	cxxArgs, _ := cppgoAccumulatorArgs[T]()
 	what := "metrics::Accumulator<" + cxxArgs + ">"
-	line := cppgoTemplateLine("metrics::Accumulator", cxxArgs)
-	size, align, err := cppgoTemplateLayout("metrics::Accumulator", key, what, line)
+	name := cppgoTemplateName("metrics::Accumulator", cxxArgs)
+	size, align, err := cppgoTemplateLayout("metrics::Accumulator", key, what, name)
 	if err != nil {
 		return nil, err
 	}
-	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "a163a3ab30c1", key), what, line)
+	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "a163a3ab30c1", key), what, name)
 	if err != nil {
 		return nil, err
 	}
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "fa077bd7e957", key), what, line)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "fa077bd7e957", key), what, name)
 	if err != nil {
 		return nil, err
 	}
@@ -726,16 +727,16 @@ func NewAccumulatorDefault[T any]() (*Accumulator[T], error) {
 	key := cppgoAccumulatorKey[T]()
 	cxxArgs, _ := cppgoAccumulatorArgs[T]()
 	what := "metrics::Accumulator<" + cxxArgs + ">"
-	line := cppgoTemplateLine("metrics::Accumulator", cxxArgs)
-	size, align, err := cppgoTemplateLayout("metrics::Accumulator", key, what, line)
+	name := cppgoTemplateName("metrics::Accumulator", cxxArgs)
+	size, align, err := cppgoTemplateLayout("metrics::Accumulator", key, what, name)
 	if err != nil {
 		return nil, err
 	}
-	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "a163a3ab30c1", key), what, line)
+	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "a163a3ab30c1", key), what, name)
 	if err != nil {
 		return nil, err
 	}
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "f83ade276b83", key), what, line)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "f83ade276b83", key), what, name)
 	if err != nil {
 		return nil, err
 	}
@@ -784,8 +785,8 @@ func (a *Accumulator[T]) Add(value T) error {
 	key := cppgoAccumulatorKey[T]()
 	cxxArgs, _ := cppgoAccumulatorArgs[T]()
 	what := "metrics::Accumulator<" + cxxArgs + ">"
-	line := cppgoTemplateLine("metrics::Accumulator", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "eec66ca8a1da", key), what, line)
+	name := cppgoTemplateName("metrics::Accumulator", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "eec66ca8a1da", key), what, name)
 	if err != nil {
 		return err
 	}
@@ -816,8 +817,8 @@ func (a *Accumulator[T]) Total() (T, error) {
 	key := cppgoAccumulatorKey[T]()
 	cxxArgs, _ := cppgoAccumulatorArgs[T]()
 	what := "metrics::Accumulator<" + cxxArgs + ">"
-	line := cppgoTemplateLine("metrics::Accumulator", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "b807a12e120a", key), what, line)
+	name := cppgoTemplateName("metrics::Accumulator", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "b807a12e120a", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -845,8 +846,8 @@ func AccumulatorIdentity[T any](value T) (T, error) {
 	key := cppgoAccumulatorKey[T]()
 	cxxArgs, _ := cppgoAccumulatorArgs[T]()
 	what := "metrics::Accumulator<" + cxxArgs + ">"
-	line := cppgoTemplateLine("metrics::Accumulator", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "2fbc770ad31d", key), what, line)
+	name := cppgoTemplateName("metrics::Accumulator", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::Accumulator", "2fbc770ad31d", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -891,8 +892,8 @@ func Twice[T any](arg0 T) (T, error) {
 	key := cppgoTwiceKey[T]()
 	cxxArgs, _ := cppgoTwiceArgs[T]()
 	what := "metrics::twice<" + cxxArgs + ">"
-	line := cppgoTemplateLine("metrics::twice", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::twice", "1cc1fb8e8e6d", key), what, line)
+	name := cppgoTemplateName("metrics::twice", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("metrics::twice", "1cc1fb8e8e6d", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
