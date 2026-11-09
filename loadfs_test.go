@@ -941,16 +941,18 @@ func TestOpenFSLibraryPathOverride(t *testing.T) {
 	assert.Equal(t, explicit, lib.Path())
 	assert.EqualValues(t, 5, callInt(t, fn(t, lib, "cppgo_fixture_add"), [6]uintptr{2, 3}))
 
-	t.Run("override that does not load", func(t *testing.T) {
+	t.Run("a stale override falls through to the set", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "libcppgo_absent.so")
 		t.Setenv(cppgo.LibraryPathEnv, missing)
 
-		_, err := cppgo.OpenFS(fstest.MapFS{}, "libdoes_not_exist.so")
-		require.Error(t, err)
+		dir := buildEmbedded(t)
+		base := isolateCache(t)
+		lib, err := cppgo.OpenFS(embeddedObjects(t, dir), embeddedMainName)
+		require.NoError(t, err)
+		defer func() { _ = lib.Close() }()
 
-		var openErr *cppgo.OpenError
-		require.ErrorAs(t, err, &openErr)
-		assert.Equal(t, missing, openErr.Path)
+		assert.Equal(t, cacheRoot(base), filepath.Dir(filepath.Dir(lib.Path())),
+			"the embedded set is the deployment, not the override that found nothing")
 	})
 }
 

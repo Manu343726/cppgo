@@ -26,6 +26,11 @@ import (
 // the symbols private to the process's own resolution graph (RTLD_LOCAL).
 const openFlags = purego.RTLD_NOW | purego.RTLD_LOCAL
 
+// preloadFlags is how a set cppgo has to load bottom-up is loaded: the symbols go
+// into the global scope, so an object loaded afterwards resolves its DT_NEEDED
+// entries from the ones already mapped.
+const preloadFlags = purego.RTLD_NOW | purego.RTLD_GLOBAL
+
 var (
 	// ErrClosed is returned by every Library method once Close has run.
 	ErrClosed = errors.New("library is closed")
@@ -102,6 +107,31 @@ func Open(path string) (*Library, error) {
 
 // Path returns the path the library was opened with.
 func (l *Library) Path() string { return l.path }
+
+// Preload loads the shared object at path with its symbols in the global scope
+// and returns its handle.
+//
+// The caller owns the handle, exactly as it owns one from Open: a preloaded
+// object is what a later object's DT_NEEDED entry resolves against, so it has to
+// stay mapped for as long as the object that needs it. Loading a set bottom-up
+// this way is what makes a transitive dependency resolve to the copy the program
+// extracted, instead of to a search that would end in the build tree or in
+// nothing.
+//
+// A second Preload of the same file is a second reference to the same mapping,
+// which the loader counts; it costs a refcount and no memory.
+func Preload(path string) (*Library, error) {
+	if path == "" {
+		return nil, &Error{Op: "dlopen", Err: errEmptyPath}
+	}
+
+	handle, err := dlopen(path, preloadFlags)
+	if err != nil {
+		return nil, &Error{Op: "dlopen", Path: path, Err: err}
+	}
+
+	return &Library{handle: handle, path: path}, nil
+}
 
 // Symbol resolves name to its address in the library.
 //

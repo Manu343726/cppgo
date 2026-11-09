@@ -15,15 +15,20 @@ import (
 	"strings"
 )
 
-// LibraryPathEnv is the environment variable that overrides OpenFS with an
-// explicit library path. When it is non-empty, OpenFS extracts nothing and loads
-// that path instead, which is how a development build points the same program at
-// the library the C++ build left in place:
+// LibraryPathEnv is the environment variable that overrides cppgo's search with
+// an explicit list of locations, separated the way LD_LIBRARY_PATH is (":" on
+// Linux). Each entry is a directory, which is searched for the requested name,
+// or the object itself:
 //
-//	CPPGO_LIBRARY_PATH=/path/to/libmathx.so ./my-program
+//	CPPGO_LIBRARY_PATH=/home/me/build/libmathx.so ./my-program
+//	CPPGO_LIBRARY_PATH=/home/me/build:/opt/lib ./my-program
 //
-// The override names the object to load. Its own dependencies still resolve
-// through the dynamic loader's search path.
+// Entries are tried in order and the first one that holds the name is the one
+// loaded. It is the highest-priority override after the generated package's
+// CppgoLibraryPath variable, and it applies to OpenFS as well as to a library
+// loaded by name. When no entry holds the name the search falls through to the
+// embedded set or to the dynamic loader's own search, so a stale override cannot
+// hide a properly deployed library.
 const LibraryPathEnv = "CPPGO_LIBRARY_PATH"
 
 const (
@@ -39,7 +44,9 @@ const (
 	cacheDirPerm  fs.FileMode = 0o700
 	cacheFilePerm fs.FileMode = 0o600
 
-	// sharedObjectSuffix is the only kind of file OpenFS extracts.
+	// sharedObjectSuffix is the part of a file name that marks a shared
+	// object. A soname carries a version after it (".so.1.2"), which is why
+	// the test that recognises one is not a plain suffix test.
 	sharedObjectSuffix = ".so"
 
 	// tempPattern is the prefix os.CreateTemp fills in for the file that is
@@ -95,13 +102,21 @@ func CleanCache() error {
 // ".so" entries of fsys.
 //
 // Every ".so" entry of fsys is extracted, not only name, and the entries are
-// flattened into one directory. A shared object resolves its dependencies from
-// the directory it was loaded from, so the C++ side has to be complete and side by
-// side for the load to work. A dependency left out of the embedded set (libc,
-// libm, libstdc++, libgcc_s, or any system library the C++ side linked against)
-// still comes from the system's own search path: embedding makes the C++ side one
-// file to ship, and leaves the Go binary dynamically linked to libc. Two entries
-// with one base name are an error, and files that do not end in ".so" are ignored.
+// flattened into one directory. The set is then loaded bottom-up before the
+// object the caller asked for: each object's DT_NEEDED entries are resolved from
+// the set itself, in dependency order, and a dependency the set does not carry
+// comes from the dynamic loader's own search. That is what makes a transitive
+// dependency — not only the shim's direct one — resolve from the extraction
+// directory rather than from the build tree. A dependency that neither the set
+// nor the loader provides is a *DependencyError naming it, raised before the
+// object that needs it is mapped.
+//
+// A dependency left out of the embedded set (libc, libm, libstdc++, libgcc_s, or
+// any system library the C++ side linked against) still comes from the system's
+// own search path: embedding makes the C++ side one file to ship, and leaves the
+// Go binary dynamically linked to libc. Two entries with one base name are an
+// error, and a file whose name is not a shared object — ".so" followed by nothing
+// or by a version suffix — is ignored.
 //
 // # The cache
 //
@@ -116,8 +131,8 @@ func CleanCache() error {
 // there.
 //
 // For a library the C++ build already produced, Open is the call. LibraryPathEnv
-// overrides this function with an explicit path. How the extraction works is the
-// subject of ADR-0003.
+// overrides this function with an explicit list of locations. How the extraction
+// works is the subject of ADR-0003.
 func OpenFS(fsys fs.FS, name string) (*Library, error) {
 	if name == "" {
 		return nil, &OpenError{Path: name, Err: errEmptyPath}
@@ -125,10 +140,16 @@ func OpenFS(fsys fs.FS, name string) (*Library, error) {
 	if fsys == nil {
 		return nil, &OpenError{Path: name, Err: errNilFileSystem}
 	}
-	if override := os.Getenv(LibraryPathEnv); override != "" {
-		return Open(override)
+	if path, _ := explicitPath("", name); path != "" {
+		return Open(path)
 	}
 
+	return openEmbedded(fsys, name)
+}
+
+// openEmbedded extracts an embedded set and loads one object from it, the rest of
+// the set preloaded underneath in dependency order.
+func openEmbedded(fsys fs.FS, name string) (*Library, error) {
 	objects, err := scan(fsys)
 	if err != nil {
 		return nil, err
@@ -153,7 +174,17 @@ func OpenFS(fsys fs.FS, name string) (*Library, error) {
 		return nil, err
 	}
 
-	return Open(filepath.Join(dir, objects[index].name))
+	handle, preloaded, err := preload(dir, objects, objects[index].name)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Library{
+		lib:       handle,
+		path:      filepath.Join(dir, objects[index].name),
+		preloaded: preloaded,
+		symbols:   make(map[string]symbolEntry),
+	}, nil
 }
 
 // object is one shared object found in an embedded file system.
@@ -166,6 +197,34 @@ type object struct {
 	size int64
 	// digest is the SHA-256 of its contents.
 	digest [sha256.Size]byte
+}
+
+// isSharedObject reports whether name names a shared object: the suffix followed
+// by nothing, or by a numeric version. A soname is spelled "libfoo.so.1.2", and
+// extracting only exact ".so" names would drop the library the shim needs; the
+// digit keeps a backup or a debug file ("libfoo.so.bak") out of the set.
+func isSharedObject(name string) bool {
+	index := strings.LastIndex(name, sharedObjectSuffix)
+	if index < 0 {
+		return false
+	}
+
+	rest := name[index+len(sharedObjectSuffix):]
+	if rest == "" {
+		return true
+	}
+	if rest[0] != '.' || len(rest) < 2 || rest[1] < '0' || rest[1] > '9' {
+		return false
+	}
+
+	// The version itself is digits and dots: "1", "1.2", "1.2.3".
+	for _, r := range rest[1:] {
+		if r != '.' && (r < '0' || r > '9') {
+			return false
+		}
+	}
+
+	return true
 }
 
 // scan lists the shared objects of fsys in a deterministic order.
@@ -187,7 +246,7 @@ func scan(fsys fs.FS) ([]object, error) {
 		}
 
 		name := path.Base(p)
-		if !strings.HasSuffix(name, sharedObjectSuffix) {
+		if !isSharedObject(name) {
 			return nil
 		}
 		if previous, duplicate := sources[name]; duplicate {

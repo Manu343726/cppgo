@@ -16,6 +16,7 @@
 package cppgo
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/Manu343726/cppgo/internal/asm"
@@ -50,6 +51,10 @@ type Library struct {
 	lib    *rtl.Library
 	path   string
 	closed bool
+	// preloaded are the handles an embedded set was loaded with, oldest
+	// first. They are closed with the library, after its own handle: a
+	// dependency has to outlive the object that needs it.
+	preloaded []*rtl.Library
 	// symbols is the per-library cache, keyed by the name as it was asked
 	// for. It is guarded by mu: read under the read lock, written under the
 	// write lock by load. It is never nil once Open has returned.
@@ -92,6 +97,9 @@ func (l *Library) Path() string { return l.path }
 
 // Close unloads the library. Every later Symbol call fails with ErrClosed, and
 // so does a second Close.
+//
+// A library opened from an embedded set also releases the handles its set was
+// preloaded with: they stay mapped exactly as long as this library is open.
 func (l *Library) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -104,7 +112,13 @@ func (l *Library) Close() error {
 	// a use-after-free.
 	l.closed = true
 
-	return l.lib.Close()
+	errs := make([]error, 0, 1+len(l.preloaded))
+	errs = append(errs, l.lib.Close())
+	for _, preloaded := range l.preloaded {
+		errs = append(errs, preloaded.Close())
+	}
+
+	return errors.Join(errs...)
 }
 
 // Symbol resolves name to the address of the foreign function or variable.
