@@ -18,9 +18,11 @@ hand, so you end up writing the binding anyway — in C, per construct. The seco
 is the build: cgo means a C compiler in the Go build, and the package becomes
 harder to cross-compile and to reason about.
 
-The per-call overhead is the other half. cgo is roughly an order of magnitude
-slower than a cppgo direct call; [Performance]({{< ref "explanation/benchmarks.md" >}})
-has the comparison.
+The per-call overhead is the other half: on the same call the direct carrier is
+about 2.6× faster than cgo (40.9 ns against 107.8 ns), and several
+standard-library paths are faster than cgo as well.
+[Performance]({{< ref "explanation/benchmarks.md" >}}) has the measured table,
+including the paths where cppgo is currently slower.
 
 **A hand-written binding over a foreign-function library.** Packages such as
 `purego` can call an address without cgo, and you write the declaration yourself:
@@ -65,7 +67,7 @@ Easier:
 - your build gains no step, so a header-only, template-heavy library works;
 - the generated package is ordinary Go, with no cgo;
 - exceptions become Go errors, `std::` types have stated ownership, and integer
-  and pointer arguments cost a few nanoseconds per call.
+  and pointer arguments cross without a copy.
 
 Harder, and stated plainly:
 

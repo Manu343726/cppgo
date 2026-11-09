@@ -90,6 +90,33 @@ shows up as a Go signature you can read:
 The exact shapes, per declaration, are in
 [Generated API](https://manu343726.github.io/cppgo/reference/generated-api/).
 
+## Performance
+
+cppgo exists partly because of what cgo costs per call, so the comparison is
+measured rather than claimed. The benchmark suite runs the same C++ function
+through cgo and through a cppgo package, plus a plain-Go baseline, on one machine:
+[Performance](https://manu343726.github.io/cppgo/explanation/benchmarks/) has the
+table.
+
+What it shows:
+
+- **The direct carrier is about 2.6× faster than cgo** on the same call: 40.9 ns
+  against 107.8 ns.
+- **A call that has to report a status costs close to cgo** (94.2 ns on the same
+  arithmetic), not the direct price.
+- **Several standard-library paths are faster than cgo** — an in/out `string`, a
+  small `vector`, a successful status call, a method call on a live object.
+- **Callbacks and object creation and close are currently slower than cgo's**;
+  the page names the causes.
+- Where the work dominates — a 1024-element vector in and out — cgo and cppgo
+  are within about 10% of each other.
+
+The value proposition is the build (no cgo, no `import "C"`, your library
+untouched) plus a direct carrier that is faster than cgo and a thunk that lands
+near its price — not an order-of-magnitude win on every operation. The suite is
+in [`benchmarks/`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/README.md),
+and its raw results are committed beside it.
+
 ## Errors
 
 **A call that can fail returns `(T, error)`; a call that cannot fail returns no

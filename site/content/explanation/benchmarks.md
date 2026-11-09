@@ -1,68 +1,107 @@
 ---
 title: "Performance"
-description: "What a call costs, compared with cgo and with calling Go directly."
+description: "What a call costs: cppgo against cgo and against calling Go directly."
 weight: 28
 ---
 
 cgo's per-call overhead is one of the reasons cppgo exists, so the comparison is
-part of the product, not a footnote. This page states what a cppgo call costs
-next to cgo and next to a plain Go call, and it is where the full benchmark
-comparison lives.
+part of the product. This page compares the same C++ work, compiled once,
+reached three ways: a plain Go function, cgo, and the package cppgo generates.
 
-## What is compared
+The comparison comes from the benchmark suite in
+[`benchmarks/`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/README.md).
+That page documents every arm, the raw `go test` output the numbers are taken
+from, the ranges behind each median, and how to run it again.
 
-- **plain Go**: an indirect call to a Go function, the baseline;
-- **cgo**: a call to a trivial C function through the cgo path;
-- **cppgo, direct**: a call to a C++ function that can be called without a C++
-  frame;
-- **cppgo, through the C++ side**: a call that needs one, for example anything
-  that may throw;
-- **cppgo, callback-capable**: a call that lets the C++ side call back into Go;
-- **object lifecycle**: constructing and closing a C++ object;
-- **errors**: the cost of a failed call that has to become a Go error;
-- **data**: what passing a Go slice or string adds to the call.
+## What each arm measures
 
-## Characteristics
-
-- A **direct** cppgo call stays in the same order of magnitude as an indirect Go
-  call.
-- **cgo is roughly an order of magnitude slower** than a cppgo direct call.
-- A call that goes **through the C++ side** adds one C++ call frame inside the
-  library; the Go side pays the same call either way.
-- A **callback-capable** call costs about ten times a direct one and allocates one
-  small argument block per call, because a callback may grow the goroutine stack.
-- **Passing a slice or a string costs nothing beyond the pointer and the length**;
-  passing a value type copies it.
-- **Constructing and closing an object are calls like any other**, so a
-  constructor plus a destructor costs about two calls.
-
-## Measured
-
-Both tables were measured on an 8-core x86-64 Linux machine running Go 1.27. The
-first pinned the CPU clock, which inflates its absolute nanoseconds by about
-4.5×, so the ratio is the number to read there; the second ran unpinned.
-
-Plain Go, cgo, and a cppgo direct call, same run:
-
-| Path | ns/op | ~cycles |
-|---|---|---|
-| Go indirect call (baseline) | 2.1 | 2 |
-| cgo (Go → C, same function) | 105 | 101 |
-| cppgo call, direct | 13.9 | 13 |
-
-The cppgo carriers, side by side, same run:
-
-| Path | ns/op |
+| Arm | How Go reaches the function |
 |---|---|
-| cppgo call, direct | 15.9 |
-| cppgo call, callback-capable | 151 |
-| callback round trip | 481 |
+| `go_direct` | no C++: a plain Go function called directly (`//go:noinline`, so it is a real call) |
+| `go_indirect` | the same Go function behind a `func` value — the baseline where a callback makes a value unavoidable |
+| `cgo` / `cgo_thunk` | the C++ library through a hand-written `extern "C"` shim and cgo, with and without `noexcept` |
+| `cppgo_direct` | the generated package, for a declaration the direct carrier can take |
+| `cppgo_thunk` | the same arithmetic with `noexcept` removed, so the call pays the status and out-parameter shape a throwing declaration has |
+| `cppgo` | the generated package, on the carrier its declaration gets |
 
-A call through the C++ side is not in either table as a separate row: it is a
-direct call plus one C++ frame in the library.
+Every arm calls the same compiled C++ library, built once with the library's own
+flags. Nothing is mocked and nothing is reimplemented for an arm: where two arms
+differ, it is because their declarations differ.
 
-## What is still to be published
+The cgo wrapper is the fastest correct wrapper for this work — borrowed Go
+memory is passed as `(pointer, length)` rather than `C.CString`/`C.CBytes`, and
+results are copied out once. The cppgo numbers are the generated API as shipped,
+entry point included, because that is what a caller pays.
 
-The suite that measures object construction and destruction, the error paths and
-the data-passing cases is being assembled; those rows are not published here
-until there are real runs behind them.
+## Environment
+
+- CPU: AMD Ryzen 7 6800HS with Radeon Graphics, 16 logical CPUs.
+- OS and kernel: Linux 6.12 x86-64; Go 1.27; g++ (GCC) 16.2.1.
+- Frequency scaling on: governor `powersave`, CPU 0 at 964830 kHz of a 3201000 kHz
+  maximum when the run started.
+- No tuning: no pinning, no governor change, no boost change, default `GOMAXPROCS`.
+- Six runs per arm. Each cell is the **median** of those runs; the suite records
+  the min–max and the allocations beside it.
+- Each arm runs in its own process, with the cgo mode it needs: `CGO_ENABLED=0`
+  for plain Go and cppgo, `CGO_ENABLED=1` for cgo.
+
+Absolute nanoseconds move with the machine and its clock state. The ratios are
+the reproducible claim.
+
+## The crossing
+
+`bench::add(int64, int64)` — one call, nothing else:
+
+| Arm | Median ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| `go_direct` | 6.33 | 0 | 0 |
+| `go_indirect` | 6.29 | 0 | 0 |
+| `cgo` | 107.8 | 0 | 0 |
+| `cgo_thunk` | 157.9 | 8 | 1 |
+| `cppgo_direct` | 40.9 | 0 | 0 |
+| `cppgo_thunk` | 94.2 | 8 | 1 |
+
+On the same call, the direct carrier costs 40.9 ns against cgo's 107.8 ns: about
+2.6× faster. The thunk shape costs 94.2 ns, close to cgo's 107.8 ns and far from
+the direct carrier's price — the difference is the status return and the
+out-parameter's allocation, not the call into C++.
+
+## The rest of the work
+
+Medians from the same run. The last column puts the cgo and cppgo medians side by
+side.
+
+| What is measured | Go | cgo | cppgo | cppgo vs cgo |
+|---|---:|---:|---:|---:|
+| `midpoint`: 16-byte POD by value in and out | 6.45 | 163.6 | 190.0 | 1.2× slower |
+| `blend`: 24-byte POD by value, result in memory | 7.33 | 199.6 | 211.7 | 1.1× slower |
+| `describe`: `std::string_view` in, `std::string` out | 309.4 | 1190 | 795.2 | 1.5× faster |
+| `doubled`, 8 elements: `std::vector` in and out | 104.3 | 786.2 | 430.1 | 1.8× faster |
+| `doubled`, 1024 elements | 5198 | 8728 | 9510 | 1.1× slower |
+| `throw`: an exception becomes a Go error | 75.9 | 5522 | 7405 | 1.3× slower |
+| `parse` succeeds (`-status`) | 9.51 | 134.7 | 71.8 | 1.9× faster |
+| `parse` fails (`-status`) | 143.8 | 912.4 | 2518 | 2.8× slower |
+| callback round trip: C++ calls a Go function once | 11.6 (`go_indirect`) | 356.3 | 1776 | 5.0× slower |
+| construct and destroy an opaque object | 32.3 | 466.9 | 2974 | 6.4× slower |
+| one `noexcept` method call on a live object | 6.35 | 153.0 | 43.3 | 3.5× faster |
+
+## What the numbers say
+
+- **The direct carrier is the cheapest way to call C++ from Go.** It beats cgo by
+  2.6× on the same call, and it beats cgo on a method call, on an in/out string,
+  on a small vector, and on a successful status-returning call.
+- **A thunk is close to cgo, not to the direct carrier.** A declaration that has
+  to report a status or can throw pays for it: 94.2 ns against 40.9 ns on the
+  same arithmetic. On the standard-library paths, where the copy dominates, cppgo
+  is faster than cgo anyway.
+- **Where the work dominates, the boundary stops mattering.** At 1024 elements
+  cgo and cppgo are within 10% of each other, because the vector copy is most of
+  the time.
+- **Two paths are currently slower than they should be.** A callback is 5× cgo's
+  cost because the generated binding registers and releases it per call; creating
+  and closing an object is 6.4× cgo's because every `Close` takes the error path,
+  which resolves a symbol per call. Both costs are in the generated binding, not
+  in the C++ call.
+- **By-value arguments allocate.** A POD passed by value costs 3 allocations
+  against cgo's 1; the small row's time does not show it, but it is garbage per
+  call.
