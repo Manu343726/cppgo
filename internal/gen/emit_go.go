@@ -394,9 +394,20 @@ func (m *packageModel) emitMirroredType(b *strings.Builder, record *recordModel)
 	}
 }
 
+// destroyNote is what Close does to the object, stated for the record the
+// sentence is written about. A record that declares a destructor has Close run
+// it; one that declares none releases the storage and runs nothing, because
+// there is no destructor to call.
+func destroyNote(record *recordModel) string {
+	if record.Dtor != nil {
+		return "Close destroys it"
+	}
+	return "Close releases the storage and runs no C++ destructor"
+}
+
 // emitOpaqueType writes the Go value that owns C++ storage.
 func (m *packageModel) emitOpaqueType(b *strings.Builder, record *recordModel) {
-	fmt.Fprintf(b, "%s\n", docBlock(record.GoName, fmt.Sprintf("%s is %s (sizeof %d). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.", record.GoName, record.CxxName, record.Size), record.Comment))
+	fmt.Fprintf(b, "%s\n", docBlock(record.GoName, fmt.Sprintf("%s is %s (sizeof %d). The object belongs to this Go value: obj is where it lives, %s, and a value obtained by value is a copy the shim constructed here.", record.GoName, record.CxxName, record.Size, destroyNote(record)), record.Comment))
 	fmt.Fprintf(b, "type %s struct {\n\tobj *cppgo.Object\n\t// view is the address of this value inside the object, 0 for the object itself.\n\taddr uintptr\n}\n\n", record.GoName)
 	fmt.Fprintf(b, `// cppgoAddr is the object address handed to C++, or 0 for a nil or closed
 // value.
@@ -905,7 +916,14 @@ func (m *packageModel) emitByValueNilChecks(b *strings.Builder, binding *binding
 func byValueNote(binding *binding) string {
 	var notes []string
 	if binding.OutObject != nil {
-		notes = append(notes, "The returned "+binding.OutObject.GoName+" is Go-owned: the shim constructs it from the callee's result, Close runs the C++ destructor once, and the type's own copy semantics decide what the copy shares with its source.")
+		// The record's own declaration decides the sentence: Close runs the
+		// destructor when the record declares one, and releases the storage
+		// alone when it does not.
+		closeNote := "Close runs the C++ destructor once"
+		if binding.OutObject.Dtor == nil {
+			closeNote = "Close releases the storage and runs no C++ destructor"
+		}
+		notes = append(notes, "The returned "+binding.OutObject.GoName+" is Go-owned: the shim constructs it from the callee's result, "+closeNote+", and the type's own copy semantics decide what the copy shares with its source.")
 	}
 	for _, param := range binding.Params {
 		if !param.Type.ByValue {

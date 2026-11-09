@@ -107,9 +107,17 @@ func TestNonPODByValueRecordShape(t *testing.T) {
 	assert.Contains(t, generated, "if counter == nil {")
 	assert.Contains(t, generated, "has no C++ object to copy")
 
-	// The ownership rule is the generated doc comment.
-	assert.Contains(t, generated, "The returned Counter is Go-owned")
+	// The ownership rule is the generated doc comment, and it follows the
+	// record's declaration: Counter declares a destructor, NoDtor does not.
+	assert.Contains(t, generated, "The returned Counter is Go-owned: the shim constructs it from the callee's result, Close runs the C++ destructor once")
+	assert.Contains(t, generated, "The returned NoDtor is Go-owned: the shim constructs it from the callee's result, Close releases the storage and runs no C++ destructor")
+	assert.NotContains(t, generated, "The returned NoDtor is Go-owned: the shim constructs it from the callee's result, Close runs the C++ destructor once")
 	assert.Contains(t, generated, "The value of counter is copied into the call by the shim")
+
+	// The type-level comment carries the same distinction: Close destroys a
+	// Counter, and only releases the storage of a NoDtor.
+	assert.Contains(t, generated, "Close destroys it, and a value obtained by value is a copy the shim constructed here.")
+	assert.Contains(t, generated, "Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.")
 
 	// The shim copies in, and constructs the result into Go's storage: the
 	// declaration's own copy constructor is what runs.

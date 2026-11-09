@@ -37,9 +37,9 @@ Counter make(std::int32_t value) noexcept;
 /// passthrough copies in and returns the copy: +1000 on the way out.
 Counter passthrough(Counter counter) noexcept;
 
-/// NoDtor is not a POD either, because its constructor is user-provided, but it
-/// declares no destructor: a value the Go side obtains by value releases the
-/// storage alone, and Close has no destructor to run.
+/// A record with no destructor: its constructor is user-provided, so it is not
+/// a POD either, but a value the Go side obtains by value releases the storage
+/// alone, and Close has no destructor to run.
 class NoDtor {
 public:
     explicit NoDtor(std::int32_t value) noexcept;

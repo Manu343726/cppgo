@@ -464,7 +464,7 @@ func (d *Drawable) Draw() {
 	cppgo.KeepAlive(d)
 }
 
-// Flat is inherit::Flat (sizeof 1). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// Flat is inherit::Flat (sizeof 1). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 //
 // A shape that is not polymorphic: no vtable, so no dynamic_cast.
 type Flat struct {
@@ -551,7 +551,7 @@ func (f *Flat) Level() int32 {
 	return int32(cppgoRet)
 }
 
-// Raised is inherit::Raised (sizeof 1). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// Raised is inherit::Raised (sizeof 1). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 //
 // The derived type of a non-polymorphic base.
 type Raised struct {

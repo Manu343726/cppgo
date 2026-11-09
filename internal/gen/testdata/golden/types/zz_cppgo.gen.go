@@ -427,7 +427,7 @@ func (c *Composed) Value() (int32, error) {
 	return cppgoResult, nil
 }
 
-// CopyNoDtor is types::CopyNoDtor (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// CopyNoDtor is types::CopyNoDtor (sizeof 4). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 type CopyNoDtor struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.
@@ -579,7 +579,7 @@ func (d *DeletedCtor) Close() error {
 	return cppgoCloseError("types::DeletedCtor::~DeletedCtor")
 }
 
-// DeletedDtor is types::DeletedDtor (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// DeletedDtor is types::DeletedDtor (sizeof 4). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 type DeletedDtor struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.
@@ -649,7 +649,7 @@ func (d *DeletedDtor) Close() error {
 	return nil
 }
 
-// Empty is types::Empty (sizeof 1). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// Empty is types::Empty (sizeof 1). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 type Empty struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.
@@ -897,7 +897,7 @@ func (m *Mover) Value() (int32, error) {
 	return cppgoResult, nil
 }
 
-// NoDtor is types::NoDtor (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
+// NoDtor is types::NoDtor (sizeof 4). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
 type NoDtor struct {
 	obj *cppgo.Object
 	// view is the address of this value inside the object, 0 for the object itself.

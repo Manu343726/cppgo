@@ -69,6 +69,10 @@ parentheses refers to the project's
 
 ### Fixed
 
+- **The by-value ownership comment follows the record's destructor.** A record
+  that declares none now has its generated doc comment — the type's and the
+  call's — say that `Close` releases the storage and runs no C++ destructor,
+  instead of claiming a destructor runs (#119).
 - A cache path that is not a private directory is reported as
   `cppgo.ErrInsecureCache` instead of a generic extraction error.
 - The error-configuration loader rejects unknown keys and refuses a fallible

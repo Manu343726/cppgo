@@ -33,8 +33,10 @@ func TestDocFixtureIsEmittedAsGoDoc(t *testing.T) {
 				"\tY float64",
 		},
 		{
+			// docs::Circle declares no destructor, so Close releases the storage
+			// and runs nothing; the sentence is the record's own.
 			name: "a class comment that does not open with the name",
-			want: "// Circle is docs::Circle (sizeof 1). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.\n" +
+			want: "// Circle is docs::Circle (sizeof 1). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.\n" +
 				"//\n" +
 				"// A circle.\n" +
 				"//\n" +
