@@ -1,7 +1,9 @@
 # Process
 
-How the project builds, checks and publishes itself, and what a contributor has
-to know before pushing a branch. Read it when you are adding a step to CI,
+How cppgo — a generator that writes a Go package from a C++ header, plus the
+runtime that package calls — builds, checks and publishes itself, and what a
+contributor has to know before pushing a branch. Read it when you are adding a
+step to CI,
 changing the toolchain image, touching coverage, building the documentation site,
 or asking whether a release can be cut. None of it belongs in the manual: a user
 of cppgo never sees a runner, an image tag or a coverage number.
@@ -18,11 +20,18 @@ them and the evidence for each claim.
 | **the gate** | the ordered set of checks a run must pass. A red gate is a tree nobody has seen work |
 | **workflow** | one YAML file that declares when CI runs and which steps it runs; its path is `.forgejo/workflows/ci.yml` here, with a copy under `.github/` for the mirror |
 | **runner** | the machine the platform assigns to a job. This repository's Forgejo has two, and either may take a job |
-| **image, tag, recipe** | a container image is the file system a job runs in. Its **tag** names one published build; here the tag is a **recipe** — the first 12 hexadecimal digits of `sha256(Dockerfile)` — so the same tag always means the same toolchain |
+| **image, tag, recipe** | a container image is the file system a job runs in. Its **tag** names one published build; here the tag is a **recipe** — the first 12 hexadecimal digits of `sha256(Dockerfile)`, a hash being a fixed-size fingerprint of the file's bytes — so the same tag always means the same toolchain. `ghcr.io` is GitHub's container registry |
+| **`go vet`** | Go's built-in static checker; it reports suspicious constructs the compiler accepts |
+| **Forgejo** | the self-hosted git service the project lives on, at <https://git.manu343726.com>; GitHub carries a mirror |
 | **`CGO_ENABLED`** | the environment variable that turns cgo on (`1`) or off (`0`). cgo is Go's built-in way to call C, and it needs cgo at build time |
+| **libclang** | the C library of the Clang compiler front end; the generator parses C++ headers with it |
+| **golangci-lint** | the Go linter that bundles many analyzers; it reports the file and line of each finding |
+| **`gofmt`** | Go's source formatter. `make fmt-check` fails when a file is not formatted with it |
+| **race detector** | Go's `-race` mode: it reports two goroutines touching the same memory without synchronisation |
+| **`-count=1`** | a `go test` flag that disables the test-result cache, so the tests run instead of being remembered |
 | **coverage, statement coverage** | the fraction of Go statements the tests executed at least once. It is measured with `-coverprofile` and reported as a percentage |
-| **coverage profile** | the file `-coverprofile` writes, one line per block of statements with the count of how often it ran; `scripts/coverage-gate.sh` reads it |
-| **Hugo** | the static-site generator that builds [`site/`](../../site). The *extended* edition is the one with the SCSS pipeline the site uses |
+| **coverage profile** | the file `-coverprofile` writes, one line per block of statements with the count of how often it ran; [`scripts/coverage-gate.sh`](../../scripts/coverage-gate.sh) reads it. `-covermode=atomic` makes the counts exact when goroutines run the same statement at once |
+| **Hugo** | the static-site generator that builds [`site/`](../../site). The *extended* edition adds the SCSS pipeline the site uses |
 
 ## The gate
 
@@ -108,9 +117,10 @@ run on its own. A package can therefore sit at 98.6% while the total passes.
 `make site` uses the `hugo` on `PATH`; CI and the deploy use the pinned one.
 
 [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml) installs
-`hugo_extended_0.169.0_linux-amd64.deb`, builds `site/` and deploys it to GitHub
-Pages. The Pages site has to be enabled once by hand (Settings → Pages → Source:
-GitHub Actions); the workflow builds either way and skips only the deploy.
+`hugo_extended_0.169.0_linux-amd64.deb` (a `.deb` is Debian's package format),
+builds `site/` and deploys it to GitHub Pages, GitHub's static-site hosting. The
+Pages site has to be enabled once by hand (Settings → Pages → Source: GitHub
+Actions); the workflow builds either way and skips only the deploy.
 
 The site's source must build with zero errors and zero warnings, and every
 internal link — including in-page anchors — must resolve. Check both before a
@@ -137,12 +147,13 @@ makes a trunk releasable and at which level. Until then, a change is consumed at
 
 [`.github/workflows/release.yml`](../../.github/workflows/release.yml) is the
 mechanism that exists for the day a tag is pushed: a `v*` tag re-runs the tests on
-`ubuntu-latest`, cross-builds the CLI for linux and darwin on amd64 and arm64,
+`ubuntu-latest` (GitHub's hosted runner label), cross-builds the CLI for linux and darwin on amd64 and arm64,
 writes `SHA256SUMS`, and publishes a GitHub release with generated notes. It
 runs on GitHub, not in the pinned image, so its test job installs `g++` and
 `libclang-dev` itself.
 
-The command's version is fixed at build time:
+The command's version is fixed at build time: `-X` sets a variable's value in
+the linker, so the binary prints `v1.2.3` instead of `dev`:
 
 ```console
 $ go build -ldflags "-X main.version=v1.2.3" ./cmd/cppgo

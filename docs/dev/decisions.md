@@ -1,10 +1,11 @@
 # Decisions and status
 
-The project's history, the decision records behind the design, the alternatives
-they rejected, and the state of the work that is designed but not shipped. Read
-it when you are about to change a mechanism and need to know why it is the way it
-is, or when a design document and the code disagree about what exists. It is
-developer material; the manual only states what exists today.
+The history of cppgo — a generator that writes a Go package from a C++ header,
+plus the runtime that package calls — the decision records behind its design, the
+alternatives they rejected, and the state of the work that is designed but not
+shipped. Read it when you are about to change a mechanism and need to know why it
+is the way it is, or when a design document and the code disagree about what
+exists. It is developer material; the manual only states what exists today.
 
 ## The words this page uses
 
@@ -19,7 +20,10 @@ developer material; the manual only states what exists today.
 | **carrier** | the route a binding takes across the boundary: the direct trampoline, a thunk in the shim, or the reentrant call |
 | **thunk** | a generated C++ function that calls a declaration the trampoline cannot carry and returns a status instead |
 | **shim** | the C++ library cppgo generates from the thunks and compiles itself, `libcppgo_<package>.so` |
-| **`_GLIBCXX_USE_CXX11_ABI`** | the libstdc++ macro that chooses between its two incompatible `std::string` layouts. Two objects built with different values cannot pass a `std::string` to each other |
+| **reentrant** | the carrier that lets C++ call back into Go: it goes through the runtime's cgo callback entry, which the direct trampoline cannot provide |
+| **goroutine, stack** | a goroutine is a Go function running with its own stack; the stack is where its frames live and may be copied when it grows |
+| **`std::`** | the namespace of the C++ standard library: `std::string`, `std::vector`, `std::error_code` and the rest are its types |
+| **`_GLIBCXX_USE_CXX11_ABI`** | the libstdc++ (the GNU C++ standard library) macro that chooses between its two incompatible `std::string` layouts. Two objects built with different values cannot pass a `std::string` to each other |
 | **`$ORIGIN`** | the dynamic loader's token for "the directory the object was loaded from", used so a shared object can find a sibling without an absolute path |
 | **`dlopen`, `dlsym`, `dlclose`** | the C library calls that open a shared object, look up a symbol in it and close it |
 | **`memfd_create`** | a Linux call that creates an anonymous file in memory, which a program can pass to `dlopen` as `/proc/self/fd/N` |
@@ -118,11 +122,12 @@ directories to the loader's search path. ADR-0002 made that two objects. The
 failure mode is a deployment bug: the build succeeds, the program starts, and the
 first binding fails at the customer with a message about a file nobody shipped.
 
-The decision: `cppgo.OpenFS(fsys, name)` materialises every `.so` in `fsys` — an
-`embed.FS`, the Go value that carries files inside the binary — in
-`os.UserCacheDir()/cppgo/<sha256>/`, then loads one from there. The directory
-name is a SHA-256 over the set's file names, sizes and contents, so two versions
-of the same object cannot collide.
+The decision: `cppgo.OpenFS(fsys, name)` takes `fsys`, an `embed.FS` (the Go
+value that carries files inside the binary), materialises every `.so` in it under
+`os.UserCacheDir()/cppgo/<sha256>/` — the per-user cache directory the operating
+system reports — then loads one from there. The directory name is a SHA-256 over
+the set's file names, sizes and contents, so two versions of the same object
+cannot collide.
 
 The rejected alternatives are worth keeping in mind, because each one is the
 obvious idea:
@@ -143,9 +148,9 @@ obvious idea:
 
 | Item | State | Tracked by |
 |---|---|---|
-| the full error projection (`std::error_code`, `std::expected`, `errno`, `std::variant`, configured out-parameters, custom result types) | the projection is implemented and tested in [`internal/errormap`](../../internal/errormap); the generator does not consume it | [#19](https://git.manu343726.com/manu343726/cppgo/issues/19) |
-| generics breadth, operators, inheritance, enums | two-phase templates work for scalar type arguments and dimensions; the rest are refused with a message | the wider generator work, under epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1) |
-| the OpenCV, ArrayFire and Eigen slices | designed as generated bindings tested against the real libraries, with build tags and a skip when a library is absent; nothing implemented | epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1) |
+| the full error projection: `std::error_code` (a library's own error value), `std::expected` (a value or an error), `errno` (C's per-thread error number), `std::variant` (one of several types), configured out-parameters and custom result types | the projection is implemented and tested in [`internal/errormap`](../../internal/errormap); the generator does not consume it | [#19](https://git.manu343726.com/manu343726/cppgo/issues/19) |
+| generics breadth, operators, inheritance, enums | two-phase templates work for scalar type arguments and dimensions; the rest are refused with a message | the wider generator work, under epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1), an issue that groups the work |
+| the OpenCV (computer vision), ArrayFire (GPU arrays) and Eigen (header-only linear algebra) slices | designed as generated bindings tested against the real libraries, with build tags (a `//go:build` line that selects files) and a skip when a library is absent; nothing implemented | epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1) |
 | embedding a *generated* package | `OpenFS` works; the generated `Open` does not call it yet | [ADR-0003](../adr/0003-embedded-libraries.md) |
 | a user-facing benchmark comparison | shipped: the suite in [`benchmarks/`](../../benchmarks) measures every arm and the manual publishes its medians | the fixes its findings asked for are tracked in [#51](https://git.manu343726.com/manu343726/cppgo/issues/51) |
 

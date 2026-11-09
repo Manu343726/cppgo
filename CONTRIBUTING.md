@@ -1,9 +1,10 @@
 # Contributing to cppgo
 
 This page takes you from a fresh clone to a change you can open a pull request
-for. It is for a Go or C++ developer who has never worked on this repository: it
-names every tool you need and why, gives the commands in the order that works,
-and says what a successful run looks like. The design behind those commands is in
+for. cppgo reads a C++ header and writes a Go package that calls the library at
+run time; it is for a Go or C++ developer who has never worked on this
+repository: it names every tool you need and why, gives the commands in the order
+that works, and says what a successful run looks like. The design behind those commands is in
 [Layout](docs/dev/layout.md) and [Process](docs/dev/process.md); this page is the
 practical half.
 
@@ -22,7 +23,10 @@ practical half.
 | **golden file** | a committed expected output that a test compares byte for byte. When the emitter changes, the golden files change with it |
 | **pull request (PR)** | the platform's request to merge a branch into `main`, and the place CI reports the result of that branch |
 | **Forgejo** | the self-hosted git service the project lives on, at <https://git.manu343726.com>; its issue tracker is where work is recorded |
-| **golangci-lint** | a linter that runs many Go analyzers in one pass and reports the file and line of each finding |
+| **golangci-lint, `go vet`** | linters. `go vet` is Go's built-in static checker; golangci-lint runs many analyzers in one pass and reports the file and line of each finding |
+| **CI** | continuous integration: the service that runs the checks on a pushed branch or a pull request and reports pass or fail |
+| **Conventional Commits** | the commit-message form `type(scope): imperative summary`, with a body that carries the evidence |
+| **`GOMAXPROCS`** | the maximum number of Go threads that execute Go code at the same time; the runtime sets it from the machine's CPUs |
 
 ## Prerequisites
 
@@ -35,7 +39,7 @@ practical half.
 | [CMake](https://cmake.org/) | 3.16 or newer, the minimum [`examples/full/CMakeLists.txt`](examples/full/CMakeLists.txt) declares | [`examples/full`](examples/full) is a CMake project; `make examples` drives it |
 | `nm` (binutils) | any | two tests inspect a shared object's exported symbols. They skip when it is missing, so it is optional |
 | [Docker](https://docs.docker.com/get-docker/) | optional | to build the pinned CI image, or to run the documentation site with the same Hugo |
-| [Hugo extended](https://gohugo.io/installation/) | 0.169 | only to build [`site/`](site) outside the pinned image |
+| [Hugo extended](https://gohugo.io/installation/) | 0.169 | only to build [`site/`](site) outside the pinned image. The *extended* edition is the one with the SCSS pipeline the site uses |
 
 On Debian and Ubuntu, take libclang from [apt.llvm.org](https://apt.llvm.org/):
 the distribution packages stop at 19, which cannot provide
@@ -116,9 +120,10 @@ $ make cover-gate
 PASS total coverage 99.1% >= 99.0%
 ```
 
-The gate is 99% on `./...`. If `coverage.out` does not exist, the target runs
-`make cover` first, which is another test pass with a coverage profile; that is
-why `make verify` takes longer than the sum of its parts. The exclusions (the
+The gate is 99% on `./...`. `coverage.out` is the coverage profile: one line per
+block of statements with the count of how often it ran. If it does not exist,
+the target runs `make cover` first, which is another test pass that writes it;
+that is why `make verify` takes longer than the sum of its parts. The exclusions (the
 generated files, the generated fixtures and the test scaffolding) are printed by
 the script with their reason.
 

@@ -25,12 +25,12 @@ C++ object lifetimes. These are the terms it needs, defined once:
 |---|---|
 | **FFI** | foreign function interface: Go calling code that was not compiled as Go |
 | **ABI** | application binary interface: which registers and which memory carry the arguments and the result of a compiled call |
-| **C++ object** | a value of a class type. It has a constructor and a destructor, and its bytes can be more than its fields: a vtable pointer, an internal pointer to one of its own members, an address registered elsewhere |
+| **C++ object** | a value of a class type. It has a constructor and a destructor, and its bytes can be more than its fields: a pointer to its virtual-function table (the **vtable**), an internal pointer to one of its own members, an address registered elsewhere |
 | **constructor, destructor** | the member functions that establish an object's invariant and release what it owns. The destructor runs when the object's lifetime ends |
 | **copy constructor** | the constructor that builds a new object as a copy of another. C++ runs it on a by-value argument, a return, and some copies the compiler inserts |
 | **special member functions** | the constructor, copy/move constructor, assignment operators and destructor the compiler may generate. A type whose author wrote one of them is "user-provided" for that member, and the compiler no longer treats the type as plain bytes |
 | **POD** | plain old data: a record with no constructors, no virtual functions and no destructor, whose fields Go can mirror and whose bytes can be copied |
-| **trivially copyable** | the C++ trait saying an object's bytes may be copied with `memcpy` and the copy is still a valid object. It is necessary for a value form (see § 2.1) and not sufficient |
+| **trivially copyable** | the C++ trait saying an object's bytes may be copied with `memcpy` (C's byte-copy function) and the copy is still a valid object. It is necessary for a value form (see § 2.1) and not sufficient |
 | **trivially relocatable** | the C++26 proposal (P2786) for types whose bytes may be moved to a new address and the old storage discarded without running a destructor. It is a stronger promise than "trivially copyable" once a user-provided member exists |
 | **placement new** | constructing an object in storage the caller supplies — `new (address) T(...)` — instead of allocating it |
 | **`this`** | the pointer to the object a member function was called on. A method registers it if the object stores it somewhere |
@@ -52,8 +52,18 @@ C++ object lifetimes. These are the terms it needs, defined once:
 | **trampoline, thunk, shim, carrier** | the trampoline is generated assembly that calls the C++ symbol directly; a thunk is generated C++ that adapts a declaration the trampoline cannot carry; the shim is the C++ library cppgo compiles from the thunks; the carrier is the route one binding takes (direct, thunk or reentrant) |
 | **`alloca`** | the C library function that allocates a frame object whose size is only known at run time. Go has no equivalent: every Go frame has a size fixed at compile time |
 | **arena** | a block of memory from which objects are carved without an individual allocation. Go's arena experiment is on hold, and its objects cannot be pinned |
+| **cgo** | Go's built-in way to call C, enabled with `CGO_ENABLED=1`. Its rules for Go pointers handed to C are quoted in § 5.3; cppgo's own calls go through assembly and are not checked, so the generator must keep them |
+| **libclang** | the C library of the Clang compiler front end. The generator reads a header with it; `sizeof(T)` arrives from the same parse |
+| **libstdc++** | the GNU implementation of the C++ standard library, the one `g++` uses |
+| **`static_assert`** | a C++ compile-time assertion: the build fails when its condition is false. The shim uses it to prove a layout matches Go's |
+| **`//go:noescape`** | a Go directive on a function declaration telling the compiler the function does not keep a pointer passed to it, so the argument may stay in the caller's frame |
+| **`//go:noinline`** | a Go directive forbidding the compiler from inlining a function, used here to keep an allocation opaque to the optimiser |
+| **`sync.Pool`** | a standard-library pool of reusable objects, shared per `P` |
 | **build tag** | a `//go:build` line that selects which files a build includes. `stackalloc` is the tag that keeps the prototypes out of the production build |
-| **`-benchmem`, ns/op, allocs/op** | the benchmark flags and columns: `-benchmem` adds bytes and allocations per operation; `ns/op` is nanoseconds per operation; `allocs/op` is heap allocations per operation. [Benchmarks](benchmarks.md) defines the whole harness |
+| **`-run '^$'`, `-benchtime`** | `-run '^$'` runs no tests, only benchmarks; `-benchtime 1s` asks each benchmark to run for at least one second |
+| **`-race`, `-benchmem`, ns/op, allocs/op** | `-race` is the race detector; `-benchmem` adds bytes and allocations per operation; `ns/op` is nanoseconds per operation; `allocs/op` is heap allocations per operation. [Benchmarks](benchmarks.md) defines the whole harness |
+| **qualified name** | a C++ name with its namespace and class: `mathx::Vector::dot` rather than `dot` |
+| **`gofmt`** | Go's source formatter; `make fmt-check` fails when a file is not formatted with it |
 
 ## The question and the verdicts
 
@@ -218,7 +228,7 @@ something cppgo can infer
 ([P2786R13 § 5.3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2786r13.html)).
 The vendor does not have it yet: g++ 16.2.1 with `-std=c++26` defines neither
 `__cpp_trivial_relocatability` nor `std::is_trivially_relocatable` (measured: the
-fixture reports `-1`). The competing design, P1144, treats "trivially
+fixture reports `-1`). The competing proposal, P1144, treats "trivially
 relocatable" as a holistic property rather than P2786's verb-like one; the
 difference, and the objections P2786's reading drew, are laid out in
 [P3233R0](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p3233r0.html)
@@ -411,8 +421,6 @@ borrowed because the inner vectors own. Only a container whose leaves are all
 trivially copyable scalars could in principle be traversed without copying, and
 even then its *own* metadata (size, capacity, allocation) is not the Go slice
 header, so there is nothing to adopt.
-
-`libstdc++` in the table is the GNU C++ standard library, the one `g++` uses.
 
 ### 5.3 The constraints, and where they come from
 
@@ -614,10 +622,11 @@ cd examples/mathx && CGO_ENABLED=0 go build -gcflags=-m .   # the emitted shapes
 
 The fixture needs `g++`; every test and benchmark skips when it is absent, like
 [`internal/testlib`](../../internal/testlib). `go vet -tags stackalloc
-./internal/stackalloc` reports one `unsafeptr` finding, at `stack_test.go`'s
-deliberate `uintptr` round-trip into `runtime.Pinner.Pin` — the line that
-demonstrates the pin is a no-op. It is expected, and it is why the experiment is
-outside the untagged `go vet ./...`.
+./internal/stackalloc` reports one `unsafeptr` finding — `go vet` is Go's static
+checker, and `unsafeptr` is its check for a pointer converted through `uintptr`
+— at `stack_test.go`'s deliberate round-trip into `runtime.Pinner.Pin`, the line
+that demonstrates the pin is a no-op. It is expected, and it is why the
+experiment is outside the untagged `go vet ./...`.
 
 ## 9. Sources
 

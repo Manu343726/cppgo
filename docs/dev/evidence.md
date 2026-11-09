@@ -1,8 +1,9 @@
 # Evidence
 
-Every behavioural claim in the manual is pinned by a test or a fixture. This page
-is the map: it says which test asserts which claim, what the test asserts, and
-how to run that test on its own. Read it when you change a claim — in
+Every behavioural claim in the manual — the user documentation, which is
+[`README.md`](../../README.md) and the site under [`site/`](../../site) — is
+pinned by a test or a fixture. This page is the map: it says which test asserts
+which claim, what the test asserts, and how to run that test on its own. Read it when you change a claim — in
 [`README.md`](../../README.md), a page under [`site/`](../../site) or
 [`DESIGN.md`](../../DESIGN.md) — and need the test that guards it, or when a test
 fails and you need to know which promise it is holding.
@@ -49,9 +50,12 @@ Two properties of this project's suite need their own commands:
 
 ## Carrier and construct claims
 
-The carriers — the mechanisms that carry a call across the boundary (a direct
-trampoline, a thunk in the shim, or the reentrant call) — are defined with their
-code in [Carriers](../../site/content/explanation/carriers.md).
+The carriers — the mechanisms that carry a call across the boundary — are
+defined with their code in
+[Carriers](../../site/content/explanation/carriers.md): the direct trampoline
+(generated assembly that calls the C++ symbol), a thunk (a generated C++ function
+inside the shim, the C++ library cppgo builds), or the reentrant call that lets
+C++ enter Go again for a callback.
 
 | Claim | Test | Package | What the test asserts |
 |---|---|---|---|
@@ -62,6 +66,7 @@ code in [Carriers](../../site/content/explanation/carriers.md).
 | a non-POD passed by value is copied inside the shim | [`TestNonPODByValue`](../../internal/shim/shim_test.go) | `internal/shim` | the copy constructor ran: the value arrives as 1007, not 7 |
 | exceptions become Go errors | [`TestExceptionsBecomeErrors`](../../internal/shim/shim_test.go) | `internal/shim` | a divide by zero is reported as status -1 and the last error is `"division by zero"` |
 | a callback reaches Go through a shim thunk | [`TestCallbackThroughTheShim`](../../internal/shim/shim_test.go) | `internal/shim` | the Go callback adds 40 and 2, the result is 42, and no panic was captured |
+| the reentrant carrier behaves like the direct one before a callback is involved | [`TestCallReentrantCallsAPlainFunction`](../../internal/callback/reentrant_test.go) | `internal/callback` | 40 + 2 through `CallReentrant` returns 42 |
 | a header-only template instantiation lives in the shim | [`TestTemplateInstantiation`](../../internal/shim/shim_test.go) | `internal/shim` | the user's library exports no `maxof` instantiation, and `shim_maxof_double` and `shim_maxof_int` return 2.5 and 9 |
 | the shim is an object of its own | [`TestArtifactModel`](../../internal/shim/shim_test.go) | `internal/shim` | the user's library contains no `cppgo` or `shim_` symbol, and the shim exports its thunks and `cppgo_last_error` |
 | the reentrant carrier reads its result from the return registers | [`TestReentrantResult`](../../internal/gen/reentrant_test.go) | `internal/gen` | the generated wrapper reads each result class from the right place: the integer result register (`RAX`) for integers, the first floating-point return register (`XMM0`) for `float64`, and the same word as a pointer for a pointer result |
@@ -76,9 +81,13 @@ code in [Carriers](../../site/content/explanation/carriers.md).
 
 ## Runtime claims
 
+`cppgo.OpenFS` is the runtime entry point these rows cover: it takes the
+`embed.FS` a program carries and materialises its shared objects in a private
+per-user directory, then loads one from there.
+
 | Claim | Test | Package | What the test asserts |
 |---|---|---|---|
-| an embedded shared object is extracted to a private cache and loaded from there | [`TestOpenFSEmbedded`](../../loadfs_test.go), [`TestOpenFSExtractsEverySharedObject`](../../loadfs_test.go) | repository root | the fixture's sibling object resolves through `$ORIGIN`, every shared object in the `embed.FS` is written, and the loaded object answers |
+| an embedded shared object is extracted to a private cache and loaded from there | [`TestOpenFSEmbedded`](../../loadfs_test.go), [`TestOpenFSExtractsEverySharedObject`](../../loadfs_test.go) | repository root | the fixture's sibling object resolves through `$ORIGIN` (the loader's token for the directory the object was loaded from), every shared object in the `embed.FS` — the Go value that carries files inside the binary — is written, and the loaded object answers |
 | two processes and many goroutines share one cache entry | [`TestOpenFSConcurrentGoroutines`](../../loadfs_test.go), [`TestOpenFSConcurrentProcesses`](../../loadfs_test.go) | repository root | concurrent extraction leaves one entry and every caller loads it |
 | a cache directory another user can write is refused | [`TestOpenFSRejectsInsecureCache`](../../loadfs_test.go) | repository root | the error is `cppgo.ErrInsecureCache`, not a generic extraction failure |
 | a name resolved through a `Library` is cached, including the failure | [`TestSymbolCacheAnswersRepeatably`](../../cppgo_test.go), [`TestSymbolCacheFollowsTheLibrary`](../../cppgo_test.go) | repository root | a repeated lookup returns the same address, a missing name returns the same error, and closing one library does not disturb another's cache |
@@ -97,7 +106,7 @@ exit status and the message.
 | a callback on the direct trampoline is fatal | [`TestCallbackOnTheDirectTrampolineIsFatal`](../../internal/callback/exception_test.go) | `internal/callback` | the child dies with `morestack on g0` or another runtime fatal error |
 | an exception the C++ code catches itself never reaches Go | [`TestExceptionThrownAndCaughtInCPPWorks`](../../internal/callback/exception_test.go) | `internal/callback` | the call returns normally, which is why a `noexcept` wrapper is a fix rather than a workaround |
 | a callback panic is captured and re-raised on the Go side | [`TestCallbackPanicIsCaptured`](../../internal/callback/panic_test.go), [`TestCallbackPanicReachesTheCaller`](../../internal/callback/panic_test.go) | `internal/callback` | the C caller sees a zero result, the panic value is retrievable, and the caller re-panics it |
-| building a `std::function` from a Go-side layout needs exported instantiations | [`TestStdFunctionFromGo`](../../internal/callback/stdfunction_test.go) | `internal/callback` | `sizeof(std::function<int(int,int)>)` is 32 there, and the library exports `_M_invoke` and `_M_manager` for the layout the test builds |
+| building a `std::function` — the C++ standard library's type for a callable value — from a Go-side layout needs exported instantiations | [`TestStdFunctionFromGo`](../../internal/callback/stdfunction_test.go) | `internal/callback` | `sizeof(std::function<int(int,int)>)` is 32 there, and the library exports libstdc++'s internal call helpers `_M_invoke` and `_M_manager` for the layout the test builds |
 
 ## Fixtures
 

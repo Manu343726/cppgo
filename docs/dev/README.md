@@ -11,8 +11,9 @@ reader already knows both languages and needs to know this repository.
 Start at [`CONTRIBUTING.md`](../../CONTRIBUTING.md). It has the prerequisites,
 the commands that build and test the tree, and the rules a change is held to.
 This folder is what a change needs next: how the project measures itself, where
-each behavioural claim is pinned by a test, what each package owns, how the gate
-and the site are built, and why the design is what it is.
+each behavioural claim is pinned by a test, what each package owns, how
+continuous integration (CI: the service that runs the checks on a branch) and
+the site are built, and why the design is what it is.
 
 The rules both the manual and this folder follow are in
 [`.agents/skills/extra/documentation-rules.md`](../../.agents/skills/extra/documentation-rules.md).
@@ -35,4 +36,5 @@ page, and nowhere in the manual.
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md) is the how-to for a first change;
 [`CHANGELOG.md`](../../CHANGELOG.md) records what changed, in the user's terms;
 [`DESIGN.md`](../../DESIGN.md) is the design contract, and [`docs/adr/`](../adr)
-holds one decision record per decision, never edited after acceptance.
+holds the architecture decision records (ADRs), one per decision, never edited
+after acceptance.

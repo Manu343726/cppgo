@@ -1,9 +1,11 @@
 # Layout
 
 Where the code lives, what each package owns, and why the runtime and the
-generator are kept apart. Read this when you need to know where a change
-belongs: a C++ declaration that is not bound, a call that crashes, a generated
-file you are tempted to edit, or a command-line flag.
+generator are kept apart. cppgo reads a C++ header and writes a Go package that
+calls the library at run time without cgo; this page is the map of the code that
+does it. Read it when you need to know where a change belongs: a C++ declaration
+that is not bound, a call that crashes, a generated file you are tempted to edit,
+or a command-line flag.
 
 It is developer material. The user-facing description of how a call works is
 [Architecture](../../site/content/explanation/architecture.md), and the decision
@@ -24,6 +26,17 @@ that produced the two layers is [ADR-0002](../adr/0002-cppgo-built-shim.md).
 | **shared object, `soname`** | a compiled library file (`.so` on Linux) the loader opens at run time, and the name recorded inside it that the loader resolves when another object depends on it |
 | **cgo** | Go's built-in way to call C: it needs `CGO_ENABLED=1` and a C compiler at build time. cppgo's runtime and generated packages are built with `CGO_ENABLED=0` |
 | **`NOSPLIT`** | an assembler flag on a Go function that forbids the stack-growth preamble. A trampoline carries it so the call cannot trigger a stack copy in the middle of the foreign call |
+| **ABI** | application binary interface: which registers and which memory carry the arguments and the result of a compiled call |
+| **libclang** | the C library of the Clang compiler front end; it parses a header into the declarations the generator emits from |
+| **`extern "C"`** | a C++ declaration with C linkage: the C calling convention and a name that is not mangled |
+| **mangled name** | the name a C++ compiler writes into the object for a symbol, encoding its namespace and parameter types: `_ZN5mathx6Vector4normEv` is `mathx::Vector::norm()` |
+| **`std::`** | the namespace of the C++ standard library (`std::string`, `std::vector`, …) |
+| **`dlopen`, `dlsym`, `dlclose`** | the C library calls that open a shared object, look a symbol up in it and close it |
+| **`ld.so`** | the Linux dynamic loader: the program that opens a shared object and resolves its symbols when a process starts |
+| **`DT_NEEDED`** | the list, inside a shared object, of the other shared objects it needs at load time |
+| **`runtime.cgocallback`** | the Go runtime's entry point for running a Go function that C called; the callback trampoline aims at it |
+| **`gofmt`, `go vet`** | Go's source formatter and its static checker. The `unsafeptr` check that `go vet` runs flags a pointer converted through `uintptr` |
+| **golden file** | a committed expected output that a test compares byte for byte |
 
 The carrier definitions, with the code of each, are in
 [Carriers](../../site/content/explanation/carriers.md).
@@ -51,8 +64,8 @@ time: the shim and the user's library.
 | Package | Owns | Why it is separate |
 |---|---|---|
 | [root](../../cppgo.go) (`cppgo`) | `Open`, `OpenFS`, `Library` and its symbol cache, `ProbeStack`, `Handle`/`Object` and the other storage types, `Ptr`/`StrPtr`/`KeepAlive`, the error types, the callback entry point | it is the only package a generated program imports, so its surface is the runtime's public contract |
-| [`internal/asm`](../../internal/asm) | the direct and reentrant call trampolines, and the stack probe, as Go assembly for amd64, with a non-amd64 fallback whose first foreign call panics | Go assembly is the one place that can enter the C ABI without cgo; keeping it behind a Go wrapper lets the rest of the runtime be ordinary Go |
-| [`internal/rtl`](../../internal/rtl) | `dlopen`, `dlsym` and `dlclose`, wrapped from `purego`, with errors that name the library and the symbol | it isolates the loader and the one unsafe conversion a symbol address needs, so `go vet`'s `unsafeptr` check has one place to allow |
+| [`internal/asm`](../../internal/asm) | the direct and reentrant call trampolines, and the stack probe, as Go assembly (the Go toolchain's own assembler syntax) for amd64, with a non-amd64 fallback whose first foreign call panics | Go assembly is the one place that can enter the C ABI without cgo; keeping it behind a Go wrapper lets the rest of the runtime be ordinary Go |
+| [`internal/rtl`](../../internal/rtl) | `dlopen`, `dlsym` and `dlclose`, wrapped from `purego`, with errors that name the library and the symbol | it isolates the loader and the one unsafe conversion a symbol address needs, so the `unsafeptr` check has one place to allow |
 | [`internal/callback`](../../internal/callback) | the C++→Go direction: the callback table, `runtime.cgocallback`'s trampoline, panic capture, the child-process tests for a callback that cannot be carried | the reentrant path is the only one that runs Go code inside a foreign call, and its failure mode is a process-wide `fatal error`; it is kept where it can be tested in a child process |
 | [`internal/elfdeps`](../../internal/elfdeps) | the `DT_NEEDED` closure of a shared object and the `ld.so` cache, read in pure Go | the runtime decides what an embedded set contains and in which order to preload it; that needs no cgo and no `ldd` process |
 
