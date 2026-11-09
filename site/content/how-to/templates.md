@@ -140,7 +140,7 @@ $ make gen
 build/cppgo gen -header include/metrics/metrics.hpp -package metrics -library build/libmetrics.so -compile-commands build/compile_commands.json -out ./gen -status metrics::validate_name
 ```
 
-The last lines of its report are the two templates:
+The report's last two declaration lines are the templates:
 
 ```
 metrics::Accumulator<T>                      tmpl   -                            generic API, 6 binding(s)

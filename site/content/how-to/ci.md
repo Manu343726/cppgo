@@ -99,9 +99,9 @@ path before the first call:
 
 ```go
 func init() {
-	path := os.Getenv("CPPGO_MATHX_LIB")
+	path := os.Getenv("CPPGO_METRICS_LIB")
 	if path == "" {
-		path = filepath.Join("build", "libmathx.so")
+		path = filepath.Join("build", "libmetrics.so")
 	}
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs

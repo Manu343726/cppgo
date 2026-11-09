@@ -118,7 +118,7 @@ out-parameter is the `bool` + out-parameters row below, not this one.
 
 ## What a full projection looks like (designed)
 
-The design maps eight conventions to those same two Go shapes. Only the exception
+The design maps nine conventions to those same two Go shapes. Only the exception
 and status rows work today.
 
 | C++ convention | Go result today | Go result, designed |
