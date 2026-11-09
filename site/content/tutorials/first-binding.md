@@ -335,8 +335,8 @@ $ cp build/libmathx.so .        # puts your library beside the generated one
 ```
 
 Here is a program that calls the package. Put it in a `main` package inside the
-example's module — a directory of your own beside the generated package — and
-run it with `go run ./<your-directory>`:
+example's module — a directory of your own beside the generated package, `demo`
+in this example — and run it with `go run ./demo`:
 
 ```go
 package main
