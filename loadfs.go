@@ -46,7 +46,7 @@ const (
 
 	// sharedObjectSuffix is the part of a file name that marks a shared
 	// object. A soname carries a version after it (".so.1.2"), which is why
-	// the test that recognises one is not a plain suffix test.
+	// the test that recognizes one is not a plain suffix test.
 	sharedObjectSuffix = ".so"
 
 	// tempPattern is the prefix os.CreateTemp fills in for the file that is
