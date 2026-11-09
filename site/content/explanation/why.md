@@ -24,9 +24,9 @@ to cross-compile and to reason about.
 The per-call overhead is the other half. On the same call, reaching a `noexcept`
 C++ function — one that promises never to throw — through the generated assembly
 instead of through a C wrapper is about 2.8 times faster than cgo: 10.5 ns
-against 29.6 ns, with neither allocating.
-[Performance]({{< ref "explanation/benchmarks.md" >}}) has the table, the ranges
-those medians come from, and the paths where cppgo is currently slower.
+against 29.6 ns, medians of six runs, and neither allocates.
+[Performance]({{< ref "explanation/benchmarks.md" >}}) has the table and the
+ranges behind those medians, and the paths where cppgo is currently slower.
 
 **A hand-written binding over a foreign-function library.** A *foreign-function
 library* is a Go package such as [`purego`](https://github.com/ebitengine/purego)
