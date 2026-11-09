@@ -114,6 +114,9 @@ name: CI
 #   * the same number is restated in `$GITHUB_STEP_SUMMARY` (Forgejo 17 persists and renders it)
 #     by the last step of `test`, so the run's headline survives the log;
 #   * benchmarks are not run here — `make bench` is a record, not a gate.
+#   * the `targets` job's `parsed` and `bound` lines, its per-library count and the
+#     example-module report are in that job's log and restated in its
+#     `$GITHUB_STEP_SUMMARY`.
 #
 # A JUnit XML is not produced by `go test` without a reporter neither image nor runner has, so
 # no step invents one.
@@ -251,6 +254,105 @@ jobs:
               echo "- coverage gate: $(sed -e 's/\x1b\[[0-9;]*m//g' coverage-gate.txt | grep -E '^(PASS|FAIL)' | tail -n 1)"
             else
               echo "- coverage gate: no output (the profile was not produced, or the gate did not run)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  targets:
+    name: targets
+    # The three compatibility targets' real headers, plus #42's example modules for them.
+    #
+    # `internal/gen/targets_smoke_test.go` (`-tags cppgo_targets`) parses Eigen 3.4, OpenCV 4.10
+    # and ArrayFire 3.10 CPU from the image and reports, per library, what the parse found and
+    # what the curated subset bound. It reads **one** include root, while the image keeps the
+    # three libraries under two — `/usr/include/eigen3`, `/usr/include/opencv4` and
+    # `/usr/local/include/af` — so the step merges them into `/tmp/targets` first. The merge is
+    # load-bearing: without it ArrayFire is not found and the smoke skips it, and a skip is not
+    # evidence.
+    #
+    # The smoke itself does not fail on a construct the emitter cannot carry — reporting what
+    # binds and what still refuses is its job — so the job counts the run's `parsed` lines and
+    # fails unless all three libraries were parsed. The pinned image carries all three; a
+    # different count is a finding about the environment, not a pass.
+    #
+    # `scripts/test-targets.sh` runs the test target of `examples/opencv`, `examples/arrayfire`
+    # and `examples/eigen` when #42 has landed them, and reports by name the ones still absent.
+    # It is decoupled from their landing on purpose: this job is green before they exist.
+    runs-on: docker
+    timeout-minutes: 60
+    container:
+      # The literal and not `${{ env.CI_IMAGE }}`: the `env` context is not available to
+      # `container.image` (GitHub's own table of contexts omits it), and the Forgejo runner's
+      # evaluation of it there is unmeasured. The rule the literal follows is stated once, in
+      # the header; `CI_IMAGE` in the workflow `env` is the summary's copy of the same string.
+      image: registry.docker.manu343726.com/homelab/cppgo-ci:recipe-79f9e9ad9528
+      credentials:
+        username: ${{ secrets.REGISTRY_USER }}
+        password: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - name: Checkout
+        # Same clone as in `test`, for the same reason: the image's own git, the job token
+        # through a credential helper, and `GITHUB_REF` so a pull request fetches the tree
+        # under test.
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git -c credential.helper='!f() { echo username=x-access-token; echo "password=${TOKEN}"; }; f' \
+            fetch --depth=1 origin "${GITHUB_REF}"
+          git checkout -q --detach FETCH_HEAD
+          git --no-pager log --oneline -1
+
+      - name: Target headers (Eigen, OpenCV, ArrayFire)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/targets
+          ln -sfn /usr/include/eigen3 /usr/include/opencv4 /usr/local/include/af /tmp/targets/
+          CPPGO_TARGETS_INCLUDE=/tmp/targets \
+            go test -tags cppgo_targets ./internal/gen -run TestTargetHeadersSmoke -v \
+            | tee /tmp/targets-smoke.log
+
+          # One `parsed <header>: ...` line per library the smoke read. Count them and refuse
+          # to be green on a skip: the image carries all three, so a missing line means the
+          # evidence for that library was not produced.
+          echo
+          echo "libraries parsed by the smoke:"
+          grep -oE '(eigen|opencv|arrayfire): parsed ' /tmp/targets-smoke.log | sed 's/: parsed //' | sort -u || true
+          parsed="$(grep -cE '(eigen|opencv|arrayfire): parsed ' /tmp/targets-smoke.log || true)"
+          if [[ ${parsed} -ne 3 ]]; then
+            echo "::error::the target smoke parsed ${parsed}/3 libraries; a skip is not evidence" >&2
+            exit 1
+          fi
+
+      - name: Target example modules (when they exist)
+        # #42's modules are the executable half of the target evidence. The script names the
+        # three libraries and skips the ones whose directory or Makefile is not there yet.
+        run: |
+          set -euo pipefail
+          ./scripts/test-targets.sh | tee /tmp/targets-examples.log
+
+      - name: The run's report
+        # The libraries this run exercised, restated where a later reader finds it without the
+        # log. `if: always()` so a failure still says what was parsed before it failed.
+        if: always()
+        continue-on-error: true
+        run: |
+          {
+            echo "## cppgo — targets"
+            echo
+            echo "- image: \`${CI_IMAGE}\`"
+            echo "- commit: \`$(git rev-parse HEAD)\`"
+            if [ -s /tmp/targets-smoke.log ]; then
+              libs="$(grep -oE '(eigen|opencv|arrayfire): parsed ' /tmp/targets-smoke.log | sed 's/: parsed //' | sort -u | tr '\n' ' ')"
+              echo "- libraries parsed: ${libs:-none}"
+            else
+              echo "- libraries parsed: the smoke did not run"
+            fi
+            if [ -s /tmp/targets-examples.log ]; then
+              echo "- example modules: $(grep '^targets:' /tmp/targets-examples.log | tail -n 1)"
+            else
+              echo "- example modules: the script did not run"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

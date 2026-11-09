@@ -169,6 +169,99 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  targets:
+    name: targets
+    # The three compatibility targets' real headers, plus #42's example modules for them.
+    #
+    # `internal/gen/targets_smoke_test.go` (`-tags cppgo_targets`) parses Eigen 3.4, OpenCV 4.10
+    # and ArrayFire 3.10 CPU out of the pinned image and reports, per library, what the parse
+    # found and what the curated subset bound. It reads one include root, while the image keeps
+    # the three under two — `/usr/include/eigen3`, `/usr/include/opencv4` and
+    # `/usr/local/include/af` — so the step merges them into `/tmp/targets`. The merge is
+    # load-bearing: without it ArrayFire is not found and the smoke skips it, and a skip is not
+    # evidence.
+    #
+    # The smoke does not fail on a construct the emitter cannot carry (reporting that is its
+    # job), so the job counts the run's `parsed` lines and fails unless all three libraries were
+    # parsed. The run says which libraries it exercised in its summary and uploads the log.
+    #
+    # `scripts/test-targets.sh` runs the test target of `examples/opencv`, `examples/arrayfire`
+    # and `examples/eigen` once #42 lands them, and names the ones still absent. It is decoupled
+    # from their landing on purpose: this job is green before they exist.
+    #
+    # It needs the image `test` waits for, so it takes the ref from `needs.image` and never
+    # builds one of its own.
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Target headers (Eigen, OpenCV, ArrayFire)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/targets
+          ln -sfn /usr/include/eigen3 /usr/include/opencv4 /usr/local/include/af /tmp/targets/
+          CPPGO_TARGETS_INCLUDE=/tmp/targets \
+            go test -tags cppgo_targets ./internal/gen -run TestTargetHeadersSmoke -v \
+            | tee /tmp/targets-smoke.log
+
+          # One `parsed <header>: ...` line per library the smoke read. Count them and refuse to
+          # be green on a skip: the image carries all three, so a missing line means that
+          # library's evidence was not produced.
+          echo
+          echo "libraries parsed by the smoke:"
+          grep -oE '(eigen|opencv|arrayfire): parsed ' /tmp/targets-smoke.log | sed 's/: parsed //' | sort -u || true
+          parsed="$(grep -cE '(eigen|opencv|arrayfire): parsed ' /tmp/targets-smoke.log || true)"
+          if [[ ${parsed} -ne 3 ]]; then
+            echo "::error::the target smoke parsed ${parsed}/3 libraries; a skip is not evidence" >&2
+            exit 1
+          fi
+
+      - name: Target example modules (when they exist)
+        run: |
+          set -euo pipefail
+          ./scripts/test-targets.sh | tee /tmp/targets-examples.log
+
+      - name: The run's report
+        if: always()
+        continue-on-error: true
+        run: |
+          {
+            echo "## cppgo — targets"
+            echo
+            echo "- image: \`${{ needs.image.outputs.ref }}\`"
+            echo "- commit: \`$(git rev-parse HEAD)\`"
+            if [ -s /tmp/targets-smoke.log ]; then
+              libs="$(grep -oE '(eigen|opencv|arrayfire): parsed ' /tmp/targets-smoke.log | sed 's/: parsed //' | sort -u | tr '\n' ' ')"
+              echo "- libraries parsed: ${libs:-none}"
+            else
+              echo "- libraries parsed: the smoke did not run"
+            fi
+            if [ -s /tmp/targets-examples.log ]; then
+              echo "- example modules: $(grep '^targets:' /tmp/targets-examples.log | tail -n 1)"
+            else
+              echo "- example modules: the script did not run"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the target smoke log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: targets-smoke
+          path: |
+            /tmp/targets-smoke.log
+            /tmp/targets-examples.log
+          if-no-files-found: warn
+          retention-days: 14
+
   build-latest-go:
     name: build with the latest Go
     # Forward-compatibility smoke test only: no coverage, no libclang. It answers
