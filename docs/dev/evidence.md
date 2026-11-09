@@ -73,6 +73,7 @@ C++ enter Go again for a callback.
 | every construct in the standard-library table round-trips through a generated package | [`TestStdFixtureEndToEnd`](../../internal/gen/std_test.go) | `internal/gen` | a generated package for [`testdata/std`](../../internal/gen/testdata/std) is compiled with `g++` and a real program calls every binding |
 | a POD and a MEMORY-class record cross by value | [`TestByValueRecordShape`](../../internal/gen/byvalue_test.go), [`TestByValueRecordShimCompiles`](../../internal/gen/byvalue_test.go) | `internal/gen` | the generated Go and shim have the expected shape for both record classes, and the shim compiles with `g++` |
 | the two-phase template flow works, and a missing instantiation names the line to add | [`TestTwoPhaseGenerics`](../../internal/gen/template_e2e_test.go), [`TestMissing`](../../internal/gen/template_e2e_test.go) | `internal/gen` | the end-to-end fixture generates, scans a Go program, compiles the specialisations and calls them; a type with no C++ counterpart fails with the exact `template struct ::box::Box<std::int64_t>;` line |
+| a non-POD record crosses by value, Go owns the copy, and the target libraries' main types cross that way | [`TestNonPODByValueRecordShape`](../../internal/gen/byvalue_test.go), [`TestNonPODByValueRoundTrip`](../../internal/gen/byvalue_test.go), [`TestTargetsByValueRoundTrip`](../../internal/gen/targets_smoke_test.go) | `internal/gen` | the fixture's copy constructor adds 1000 and `Close` runs its destructor once; with `-tags cppgo_targets` against the installed libraries, `MakeMat(2, 3)` totals 6, `MakeArray(2.5)` sums to 7.5, and `NewIOFormat(3, ...)` reads its fields back |
 | an enum, operator, smart pointer, argument block and the other refusals are generation errors | [`TestGenerationErrors`](../../internal/gen/errors_test.go) | `internal/gen` | each header under [`testdata/errors`](../../internal/gen/testdata/errors) is refused with the message that names the declaration and the fix |
 | the enum refusal names the declaration | [`TestEnumDiagnostic`](../../internal/gen/errors_test.go) | `internal/gen` | the message contains `err::Color: enums are not emitted` |
 | `-status` drops the integer, returns the callee's code and fails on non-zero | [`TestStatusConventionShape`](../../internal/gen/status_test.go), [`TestStatusEndToEnd`](../../internal/gen/status_test.go) | `internal/gen` | the Go signature is `func Parse(text string) error`, the wrapper tests the integer it got, and a real program observes both outcomes |
@@ -117,7 +118,7 @@ exit status and the message.
 | [`internal/gen/testdata/mathx/`](../../internal/gen/testdata/mathx), [`status/`](../../internal/gen/testdata/status), [`std/`](../../internal/gen/testdata/std), [`types/`](../../internal/gen/testdata/types), [`tmpl/`](../../internal/gen/testdata/tmpl), [`project/`](../../internal/gen/testdata/project), [`box/`](../../internal/gen/testdata/box), [`duplicate/`](../../internal/gen/testdata/duplicate), [`badshim/`](../../internal/gen/testdata/badshim) | the end-to-end fixtures |
 | [`internal/shim/testdata/`](../../internal/shim/testdata) | the user library and the shim, built as two objects by the tests |
 | [`internal/callback`](../../internal/callback) | the callback table, the child-process fatal tests and the exception tests |
-| [`examples/mathx`](../../examples/mathx), [`examples/stats`](../../examples/stats), [`examples/full`](../../examples/full) | the examples' own suites |
+| [`examples/mathx`](../../examples/mathx), [`examples/stats`](../../examples/stats), [`examples/full`](../../examples/full), [`examples/opencv`](../../examples/opencv), [`examples/arrayfire`](../../examples/arrayfire), [`examples/eigen`](../../examples/eigen) | the examples' own suites |
 
 The example suites assert what each example teaches:
 
@@ -126,6 +127,20 @@ The example suites assert what each example teaches:
 | [`mathx`](../../examples/mathx/mathx_test.go) | `TestConstructorAndAccessors`, `TestConstMethod`, `TestDirectMethod`, `TestMethodTakingSlice`, `TestThrowingMethod`, `TestPointByValue`, `TestSaxpy`, `TestObjectsAreIndependent`, `TestClone`, `TestCloseLifetime` |
 | [`stats`](../../examples/stats/stats_test.go) | `TestMean`, `TestStddev`, `TestCountAbove`, `TestHistogramWritesThroughTheSlice`, `TestHistogramErrorPath`, `TestSliceIsNotCopied`, `TestLargeInput` |
 | [`full`](../../examples/full/cmd/app/app_test.go) | `TestHistogramValues`, `TestCloneIsIndependent`, `TestPointByValue`, `TestVectorCopiesInAndOut`, `TestThrowingCall`, `TestStatusCall`, `TestCallback`, `TestGenericInstantiations`, `TestRun` |
+| [`opencv`](../../examples/opencv/opencv_test.go) | `TestVersion`, `TestNormTypes`, `TestTermCriteria`, `TestTickMeter`, `TestRuntimeConfiguration`, `TestCloseLifetime` |
+| [`arrayfire`](../../examples/arrayfire/arrayfire_test.go) | `TestDtypeConstants`, `TestSourceConstants`, `TestSizeOf`, `TestDevice` |
+| [`eigen`](../../examples/eigen/eigen_test.go) | `TestStorageOptions`, `TestComputationInfo`, `TestUpLoType`, `TestThreads` |
+
+The three target modules are the one case where a local green is not evidence. Each
+suite is behind a build tag (`cppgo_opencv`, `cppgo_arrayfire`, `cppgo_eigen`), so
+`go test ./...` at the root does not compile it, and the module's `make test` passes the
+tag and needs the library: on a machine without it, `TestMain` prints the missing path
+and exits zero, which is a skip. They are measured where the libraries are:
+[`scripts/test-targets.sh`](../../scripts/test-targets.sh) runs the three test targets by
+name, and the `targets` job of [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
+runs it in the pinned image, which carries OpenCV 4.10, ArrayFire 3.10's CPU backend and
+Eigen 3.4. The same job runs the real-header smoke, the only test that parses and binds
+all three headers.
 
 ## A document and the code disagree, as measured
 

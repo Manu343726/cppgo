@@ -221,11 +221,11 @@ Everything else is carried by a thunk in `zz_cppgo_shim.cpp`. The thunk is C++ c
 | template | instantiates the concrete *specialisation* — the version of the template with its parameters filled in — and calls it | `TestTemplateInstantiation` |
 | `std::string` / `std::vector` | constructs the C++ value, converts, copies in or out | `TestStdStringAndVector` |
 | `string_view` / `span` / `array` / `optional` / `unique_ptr` / `shared_ptr` | constructs the C++ value, converts, copies in or out | designed, not measured (see § *The per-construct mechanism table*) |
-| POD above 16 bytes / MEMORY class by value | copies it into the call; a result is written through an out-pointer | designed, not measured |
-| non-POD by value | copies the Go-held object in, or constructs the result in Go storage | `TestNonPODByValue` |
+| POD above 16 bytes / MEMORY class by value | copies it into the call; a result is written through the out-pointer the Go side supplies | `TestByValueRecordShape` (a 24-byte result), `TestByValueRecordShimCompiles` |
+| non-POD by value | the thunk passes the object Go holds, so C++ copies it into the call; a result is constructed into Go's pinned storage with placement new (the C++ form that constructs an object inside storage the caller already allocated, rather than allocating again), and `Close` runs the declared destructor once | `TestNonPODByValueRecordShape`, `TestNonPODByValueRoundTrip` |
 | exception-throwing call | wraps the call in `try`/`catch`, converts `std::exception` and `...` into a message held in thread-local storage, one instance per operating-system thread | `TestExceptionsBecomeErrors` |
 | multiple inheritance / virtual base | performs the `static_cast`/`dynamic_cast` that adjusts `this` | `TestMultipleInheritanceAdjustment` |
-| more than 6 INTEGER or 8 SSE arguments | takes a pointer to an argument block and unpacks it | designed, not measured |
+| more than 6 INTEGER or 8 SSE arguments | takes one pointer to an argument block and unpacks it; Go and C++ both assert the block's size and every offset | `TestArgumentBlockShape`, `TestArgumentBlockRoundTrip` |
 | anything with an out parameter | writes through the pointer the Go side provides | every row above |
 | a callback parameter | constructs the `std::function` from the Go function pointer | `TestCallbackThroughTheShim` |
 
@@ -452,12 +452,20 @@ generated trampoline calls the user's symbol; *shim* means the cppgo-built thunk
 | 3 | `std::optional<T>` | as a parameter `*T` (nil is `nullopt`); as a return `(T, bool)`, or `(T, error)` with `absent:`; the shim constructs and reads it | **designed, not measured** | the two axes are not the same type, and the return axis follows § *Errors from C++ to Go* |
 | 3 | `std::unique_ptr<T>` | a parameter consumes the Go value, a result is owning (`Close` destroys it) | **designed, not measured** | the deleter must be the default one |
 | 3 | `std::shared_ptr<T>` | a parameter shares (the reference count is copied), a result is owning | **designed, not measured** | a `shared_ptr` the *Go side* must construct out of nothing needs a control block only C++ can allocate: that is a shim entry point, not a layout trick |
-| 4 | POD above 16 bytes / MEMORY class by value | copied through the shim; an sret result — a result returned through a hidden pointer the caller supplies — goes into Go storage | **designed, not measured** | — |
-| 4 | more than 6 INTEGER or 8 SSE arguments | the shim takes an argument block and unpacks it | **designed, not measured** | a direct binding does not exist for this shape |
-| 4 | non-POD by value | constructed and copied inside the shim; a by-value result is constructed into Go storage through the sret pointer | `TestNonPODByValue` (the copy constructor's +1000 is observable) | the type's copy constructor and destructor must be visible to the shim, which they are when the header declares them |
+| 4 | POD above 16 bytes / MEMORY class by value | copied through the shim; an sret result — a result returned through a hidden pointer the caller supplies — goes into Go storage (`*static_cast<::err::Big *>(cppgo_result) = ::err::make()`) | `TestByValueRecordShape`, `TestByValueRecordShimCompiles` (g++ accepts the shim) | — |
+| 4 | more than 6 INTEGER or 8 SSE arguments | one pointer to a block of word fields replaces the input words. The fields keep the declaration's order; a word is 8 bytes, and a `float` is its own 4-byte word; the receiver is a field like any other, and a `std::string` parameter is built from the two words beside it. Go asserts the block's size and every offset with `unsafe.Sizeof`/`unsafe.Offsetof`, C++ with `sizeof`/`offsetof`, so a disagreement does not compile. Out-parameters stay thunk parameters, and a call whose out-parameters plus the block pointer no longer fit in six INTEGER words is refused at generation time rather than mis-passed | `TestArgumentBlockShape`, `TestArgumentBlockRoundTrip`, `TestBuildArgumentBlockRefusals`; `TestTargetsByValueRoundTrip` (the `Eigen::IOFormat` constructor, sixteen INTEGER words) | a direct binding does not exist for this shape |
+| 4 | non-POD by value | the record crosses as `*T`: a parameter's wire word is the object's address and the thunk passes the object, so C++ copies it into the call; a result is constructed into Go's pinned storage with placement new; the declared destructor runs **once, at `Close`** (a record that declares none releases the storage and runs nothing); a failed call releases the raw storage without running a destructor over it; a nil argument is refused before the thunk dereferences it; and because the copy runs inside the shim's `try`, the call carries a `(T, error)` channel even when the declaration is `noexcept`; the rule is repeated in the binding's generated doc comment, which says the returned value is Go-owned and that a parameter is copied into the call while the caller keeps ownership | `TestNonPODByValue` (the copy constructor's +1000), `TestNonPODByValueRecordShape`, `TestNonPODByValueRoundTrip`; `TestTargetsByValueRoundTrip` (`cv::Mat` rows, cols and total; `af::array` sum; `Eigen::IOFormat`) | the type's copy constructor and destructor must be visible to the shim, which they are when the header declares them |
 | 5 | exceptions | `try`/`catch` in the shim; the message travels in a thread-local string and arrives as a Go `error` | `TestExceptionsBecomeErrors` | **no direct binding may call a function that can throw**: measured, a throw with no C++ frame terminates the process (`TestExceptionFromCIsFatal`, `TestExceptionAfterACallbackIsFatal`, `TestExceptionThroughTheGoCallbackIsFatal`). A library that reports failures as `noexcept` + status needs no shim |
 | 6 | templates | the shim instantiates the specialisation the Go side asked for and calls it | `TestTemplateInstantiation`, `TestTwoPhaseGenerics` | the instantiation must be named: the Go generic API's instantiations are collected and the shim is emitted from that list; a Go instantiation with no C++ counterpart fails at load with the exact `template ...;` line to add |
 | 7 | inheritance / `As<Base>` | the shim's cast; `As<Derived>` is a `dynamic_cast` and reports `(*Derived, bool)` | `TestMultipleInheritanceAdjustment` | a `dynamic_cast` requires RTTI — the run-time type information it reads — so a library built with `-fno-rtti` reaches the shim only through `static_cast` |
+
+A **reference to a mirrored record** (`const Slot &` where the record is a Go struct) is a different
+shape from the rows above: it crosses as a plain pointer into the C++ subobject, with the right layout
+and no reference held, as `nested::Box<int>::slot()` in
+[`internal/gen/testdata/nested/nested.hpp`](internal/gen/testdata/nested/nested.hpp) does. Whether that
+pointer keeps its receiver alive, or is valid only while the receiver is open, is **not decided yet**
+([issue #115](https://git.manu343726.com/manu343726/cppgo/issues/115)); this design states no lifetime
+rule for it until that decision is recorded.
 
 ## Callbacks
 
@@ -818,7 +826,7 @@ not 64-bit is a generation error, not a silent reinterpretation.
 | `(T *p, size_t n)` | `[]T` | borrowed; `const` decides whether the callee may write |
 | `(char *p, size_t n)` | `string` | borrowed for the call; not NUL-terminated |
 | mirrorable record, by value | `T` | the Go struct *is* the C layout |
-| non-POD record, by value | `*T` | the shim copies into the call; `T` owns Go-pinned storage |
+| non-POD record, by value | `*T` | a parameter's word is the object's address and the shim passes it, so C++ copies it into the call; a result is placement-new'ed into Go's pinned storage, which `Close` destroys once; the call returns `(T, error)` whatever the declaration promises |
 | `T[N]` (record field) | `[N]T` | fixed-size array |
 | `std::string` | `string` | copied in and out |
 | `std::string_view` | `string` | borrowed for the call; **designed, not measured** |
