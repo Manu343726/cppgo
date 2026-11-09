@@ -81,9 +81,9 @@ functions present the library as something C can call, which is all cgo can reac
 [`benchmarks/cgo/cgo.go`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo/cgo.go)
 and the `extern "C"` surface in
 [`benchmarks/cgo/bench_c.h`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo/bench_c.h)
-(`extern "C"`: C++ functions with C linkage, so the C calling convention and a
-name that is not mangled). cgo's crossing needs a status code and an
-out-parameter around any call that can fail — a *status code* being an integer
+(`extern "C"`: C++ functions with C linkage, so they have the C calling
+convention and a name that is not mangled). cgo's crossing needs a status code and
+an out-parameter around any call that can fail — a *status code* being an integer
 return that says whether the call worked, an *out-parameter* a pointer the callee
 writes its result into — so the wrapper comes in two shapes:
 
