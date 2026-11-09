@@ -17,12 +17,13 @@ There are three kinds of limit, and they behave differently:
 
 ## Hard limits
 
-Three things in this table need saying first. An exception *unwinds*: it walks the
-frames above the `throw`, looking for a `catch` (a handler), and needs unwind
-information for every frame it crosses. A *foreign call* is a call from Go into
-machine code the Go toolchain never compiled. The *register file* is the fixed set
-of CPU registers a calling convention passes arguments in — nothing on the stack
-counts, and the callback path reads only those registers.
+Four things in this table need saying first. A **binding** is one C++ declaration
+turned into a callable Go function. An exception *unwinds*: it walks the frames
+above the `throw`, looking for a `catch` (a handler), and needs unwind information
+for every frame it crosses. A *foreign call* is a call from Go into machine code
+the Go toolchain never compiled. The *register file* is the fixed set of CPU
+registers a calling convention passes arguments in — nothing on the stack counts,
+and the callback path reads only those registers.
 
 | Limit | Why | What you can do |
 |---|---|---|
@@ -98,7 +99,8 @@ Two things look like limits and are not:
   without the project's real flags says so with a warning; a wrong include path
   binds a different program.
 - **A call that cannot use the direct path.** It is not a degradation of the API:
-  the shim carries the call, and the Go-side cost of it is the same
+  the shim — the C++ file cppgo generates — carries the call, and the Go-side
+  cost of it is the same
   ([Performance]({{< ref "explanation/benchmarks.md" >}})).
 
 ## Related

@@ -4,12 +4,15 @@ description: "How each C++ construct reaches C++, and which ones are supported."
 weight: 25
 ---
 
-A **carrier** is the mechanism that carries one call across the boundary from Go
-into C++: a few instructions of Go assembly that jump to the declaration, or a
-C++ function the generator writes into the shim, or a third form that enters C++
-the way cgo does so that C++ may call back into Go. There are exactly three, and
-every binding is assigned exactly one of them before anything is written — that
-assignment is the generator's central decision, and this page is about it.
+A **carrier** is the mechanism that carries one call from Go across the boundary
+into C++. There are exactly three: a few instructions of Go assembly that jump
+straight to the declaration; a C++ function that cppgo writes into its **shim** —
+the C++ file the generator creates and compiles beside your library — and that
+calls the declaration as C++; and a third form that enters C++ the way cgo does,
+so that C++ may call back into Go. Every **binding** — one C++ declaration turned
+into a callable Go function — is assigned exactly one of them before anything is
+written. That assignment is the generator's central decision, and this page is
+about it.
 
 So the page covers which carrier a declaration gets, what each of the three is,
 and the C++ constructs the generator supports today. It is the companion to
@@ -53,8 +56,9 @@ the C calling convention and a name that is not mangled — compiled by cppgo in
 the shim, and it calls the declaration as C++. Everything the direct path cannot
 express goes here: inline bodies (defined inside the class body, so the library
 exports no symbol for them), virtual members, `std::` types, by-value records,
-constructors and destructors, and every call that may throw. One such translation
-unit is
+constructors and destructors (the functions that create and destroy an object),
+and every call that may throw. One such translation unit — one `.cpp` file,
+compiled as a unit — is
 [`examples/mathx/cppgo_shim/zz_cppgo_shim.cpp`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx/cppgo_shim/zz_cppgo_shim.cpp).
 
 The thunk is where exceptions are caught: each one clears the error message

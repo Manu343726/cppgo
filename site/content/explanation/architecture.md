@@ -55,8 +55,9 @@ builds the C++ side. It is the only part that needs libclang — the C library o
 the Clang compiler front end, which parses C++ the way the compiler would — and
 a C++ compiler.
 
-A program built with a generated package needs neither. It needs the two shared
-objects at run time: the shim, and the library it links against.
+A program built with a generated package needs neither. It needs the two *shared
+objects* at run time — the two `.so` files that the dynamic loader opens — namely
+the shim, and the library it links against.
 
 ## Three artefacts
 
@@ -293,9 +294,12 @@ arguments into the call and the result back into Go storage.
 
 ## The `std::` ABI
 
-The C++ standard library's types — `std::string`, `std::vector` and the rest —
-never appear in Go. Their layout exists only in the shim, which is C++ and can
-legally construct them:
+The `std::` in that heading is the C++ standard library's namespace, and the
+*ABI* — *application binary interface* — is how a compiled call and a compiled
+value are laid out: which registers and which memory carry a call's arguments,
+and what bytes a value has in memory. The standard library's types never appear
+in Go for that second reason: their layout exists only in the shim, which is C++
+and can legally construct them:
 
 - a `std::string` parameter is copied into a `std::string` in the shim, and a
   result is copied out into a Go string;
@@ -375,7 +379,8 @@ cppgo: built libcppgo_mathx.so with /usr/bin/g++
 ```
 
 The columns are the C++ declaration, its carrier, the symbol the call goes to and
-the reason for that carrier. When `-library` names a readable file, a direct
+the reason for that carrier — `register class` there saying that the values fit
+the argument registers, so the call needs no memory on the way in. When `-library` names a readable file, a direct
 binding is cross-checked against the library's dynamic symbol table — the list of
 symbols a shared object publishes to the loader — and its generated comment ends
 `, verified against libmathx.so`. The last line names the compiler that built the

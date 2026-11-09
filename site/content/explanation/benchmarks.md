@@ -116,9 +116,10 @@ The same calls from the package `cppgo gen` wrote,
 [`benchmarks/cppgo`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cppgo).
 The **carrier** a declaration gets — the route the generator chose for it: the
 generated *trampoline* (a few instructions of Go assembly that jump straight to
-the C++ symbol), a function in the shim, or the reentrant call — decides the shape
-the Go signature has, and the two shapes exist side by side only on the crossing,
-where the same arithmetic is declared twice:
+the C++ symbol), a *thunk* in the shim (a C++ function that calls the declaration
+and returns a status instead), or the reentrant call — decides the shape the Go
+signature has, and the two shapes exist side by side only on the crossing, where
+the same arithmetic is declared twice:
 
 ```go
 func Add(a int64, b int64) int64
