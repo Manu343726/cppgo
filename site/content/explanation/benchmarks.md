@@ -5,13 +5,26 @@ weight: 28
 ---
 
 cgo's per-call overhead is one of the reasons cppgo exists, so the comparison is
-part of the product. This page measures the same C++ work, compiled once into
-one library, reached three ways: a plain Go function, cgo through a hand-written
-`extern "C"` wrapper, and the package cppgo generates.
+part of the product. This page measures the same C++ work, compiled once into one
+shared object, reached three ways: a plain Go function, cgo through a
+hand-written `extern "C"` wrapper, and the package cppgo generates.
+
+Four words carry the page. An **arm** is one of the implementations being
+compared — one Go package, one row of a results table. The **crossing** is the
+moment a call leaves Go and enters C++, and what it costs is what most rows
+isolate. A **foreign call** is a call from Go into code the Go toolchain never
+compiled. **FFI**, *foreign function interface*, is the general name for calling
+into another language at all; the page says "the FFI arms" where it means the cgo
+and cppgo rows of a scenario, as opposed to its plain-Go row.
 
 Every scenario below stands on its own: what it measures, the code of each arm,
 the results, and what the numbers mean. The scenarios are independent of each
 other, and a reader who needs one does not have to read the others.
+
+Every call's result is stored in a package-level *sink* variable (`sinkInt64`,
+`sinkErr`, `sinkPoint` and so on, visible in the code below). A benchmark whose
+result nobody keeps can be optimised away by the compiler, and a call the
+compiler removed measures nothing.
 
 ## Reading the tables
 
@@ -35,14 +48,18 @@ run, are the reproducible claim.
 ## The arms
 
 The names in the tables are benchmark sub-tests. Each arm is a Go package that
-calls the same compiled `libbench.so`, and each scenario quotes the call the arm
-makes before its table. The three groups are introduced here, once.
+calls the same compiled `libbench.so` — the C++ side built once, as a *shared
+object*, a `.so` file the loader opens at run time — and each scenario quotes the
+call the arm makes before its table. The three groups are introduced here, once.
 
 ### Plain Go — `go_direct` and `go_indirect`
 
 No foreign call anywhere. The Go side is
 [`benchmarks/internal/benchdata`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/internal/benchdata/benchdata.go),
-and the crossing floor is one function:
+the benchmark that calls it is
+[`benchmarks/gobase`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/gobase)
+(which is what the `// gobase` mark in the code below names), and the crossing
+floor is one function:
 
 ```go
 //go:noinline
@@ -58,12 +75,17 @@ boundary is involved.
 
 ### cgo — `cgo` and `cgo_thunk`
 
-The C++ library reached through a hand-written shim,
-[`benchmarks/cgo/cgo.go`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo/cgo.go),
-with the `extern "C"` surface in
-[`benchmarks/cgo/bench_c.h`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo/bench_c.h).
-cgo's crossing needs a status code and an out-parameter around any call that can
-fail, so the wrapper comes in two shapes:
+The C++ library reached through a hand-written **shim** — a C++ file whose
+functions present the library as something C can call, which is all cgo can reach
+— with the Go side in
+[`benchmarks/cgo/cgo.go`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo/cgo.go)
+and the `extern "C"` surface in
+[`benchmarks/cgo/bench_c.h`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cgo/bench_c.h)
+(`extern "C"`: C++ functions with C linkage, so they have the C calling
+convention and a name that is not mangled). cgo's crossing needs a status code and
+an out-parameter around any call that can fail — a *status code* being an integer
+return that says whether the call worked, an *out-parameter* a pointer the callee
+writes its result into — so the wrapper comes in two shapes:
 
 ```go
 func Add(a, b int64) int64 {
@@ -85,16 +107,19 @@ int32_t bench_add_thunk(int64_t a, int64_t b, int64_t *out);
 ```
 
 The wrapper is the fastest correct cgo wrapper for this work: borrowed Go memory
-crosses as `(pointer, length)` instead of a `CString` copy, and results are
-copied out once.
+crosses as `(pointer, length)` instead of through `CString` — cgo's helper that
+copies a Go string into memory C allocated — and results are copied out once.
 
 ### cppgo — `cppgo_direct`, `cppgo_thunk` and `cppgo`
 
 The same calls from the package `cppgo gen` wrote,
 [`benchmarks/cppgo`](https://github.com/Manu343726/cppgo/blob/main/benchmarks/cppgo).
-The carrier a declaration gets decides the shape the Go signature has, and the
-two shapes exist side by side only on the crossing, where the same arithmetic is
-declared twice:
+The **carrier** a declaration gets — the route the generator chose for it: the
+generated *trampoline* (a few instructions of Go assembly that jump straight to
+the C++ symbol), a *thunk* in the shim (a C++ function that calls the declaration
+and returns a status instead), or the reentrant call — decides the shape the Go
+signature has, and the two shapes exist side by side only on the crossing, where
+the same arithmetic is declared twice:
 
 ```go
 func Add(a int64, b int64) int64
@@ -103,15 +128,18 @@ func AddThunk(a int64, b int64) (int64, error)
 
 `cppgo_direct` is the `noexcept` declaration behind the generated trampoline and
 `cppgo_thunk` is the same body without it, through the shim's status and
-out-parameter. Every other scenario uses the carrier its declaration gets and
-labels the arm `cppgo`.
+out-parameter. *`noexcept`* is the C++ keyword by which a function promises not to
+throw, and it is what lets the trampoline call the function with no error channel
+at all. Every other scenario uses the carrier its declaration gets and labels the
+arm `cppgo`.
 
 ## Environment
 
 - CPU: AMD Ryzen 7 6800HS with Radeon Graphics, 16 logical CPUs.
 - OS and kernel: Linux 6.12 x86-64; Go 1.27; g++ (GCC) 16.2.1.
-- Frequency: governor `performance`, boost enabled, cores up to 4785000 kHz; CPU
-  0 was at 3602458 kHz when the run started.
+- Frequency: governor `performance` (the kernel's CPU frequency policy, set to
+  run at the top of its range), boost enabled, cores up to 4785000 kHz; CPU 0
+  was at 3602458 kHz when the run started.
 - Default `GOMAXPROCS`; no CPU pinning.
 - Six runs of every arm. Each cell is the median of those runs, with their
   min–max beside it.
@@ -199,8 +227,10 @@ worth counting at this scale, which matters for the callback scenario below.
 ### The scenario
 
 A two-`double` record, 16 bytes, passed by value in and out — the largest struct
-the C ABI still hands over in registers. It is the case where the boundary has
-to copy a Go value into memory C++ can read, and copy the answer back.
+the C ABI still hands over in registers. The *C ABI* is the calling surface a C
+compiler produces, and on this platform its convention passes a record of up to
+16 bytes in registers rather than in memory. It is the case where the boundary
+has to copy a Go value into memory C++ can read, and copy the answer back.
 
 Three arms: the Go function, cgo's wrapper, and cppgo's thunk.
 
@@ -267,9 +297,10 @@ boundary.
 
 ### The scenario
 
-A three-`double` record, 24 bytes: too big to be returned in registers, so the
-result comes back through memory the caller owns. The declaration is `noexcept`,
-so the call cannot fail, and there is no error channel on any arm.
+A three-`double` record, 24 bytes, which is above the *register class*: the size
+up to which the calling convention hands a record over in registers, and above
+which it goes through memory the caller owns. The declaration is `noexcept`, so
+the call cannot fail, and there is no error channel on any arm.
 
 Three arms: the Go function, cgo's wrapper, and cppgo's thunk.
 
@@ -318,11 +349,11 @@ func Blend(a Sample, b Sample, t float64) Sample
 24-byte result is allocated once on the cgo side and three times on the cppgo
 side, for 72 B against 24 B.
 
-**The nearest relative of the result travels beside it.** cgo allocates the
-24-byte result once; the generated binding allocates three times, for 72 B: the
-two by-value parameters' addresses escape to the heap, and so does the result's.
-The mechanism is the one the scenario above showed on two `double`s, repeated
-with three.
+**The three allocations are the two arguments and the result.** cgo allocates the
+24-byte result once; the generated binding takes the address of each by-value
+parameter to hand it to the thunk, and the result's address escapes to the heap
+as well, so all three end up there. It is the mechanism the scenario above showed
+on two `double`s, repeated with three.
 
 **`noexcept` is not a discount on the copy.** The generated `Blend` has no error
 to return, yet it is slower than `Midpoint`, which has one: 63.0 ns against
@@ -332,11 +363,12 @@ to return, yet it is slower than `Midpoint`, which has one: 63.0 ns against
 
 ### The scenario
 
-A borrowed `std::string_view` in, a `std::string` built in C++ and copied out.
-This is the standard-library case: the boundary has to construct a C++ string
-from bytes the caller owns, then copy the result into Go storage and free the
-C++ side. The work is the copy, not the crossing, and at 84 ns for the Go
-reference the two are the same order of magnitude.
+A borrowed `std::string_view` in — a *view*: a pointer and a length that own
+nothing — and a `std::string` built in C++ and copied out. This is the
+standard-library case: the boundary has to construct a C++ string from bytes the
+caller owns, then copy the result into Go storage and free the C++ side. The work
+is the copy, not the crossing, and at 84 ns for the Go reference the two are the
+same order of magnitude.
 
 Three arms: the Go function, cgo's wrapper, and cppgo's thunk.
 
@@ -508,8 +540,9 @@ into C++ in a loop.
 `bench::ratio` throws `std::domain_error` when the divisor is zero, and the call
 is made with a zero divisor every time: the benchmark measures the whole
 Go-visible operation, the error value included. On the C++ side that is a
-`throw`, a `catch` at the shim's boundary, and a message stored for the Go side
-to read; on the Go side, an error value built from that message.
+`throw` — C++'s way of raising an exception — a `catch` in the shim, which
+receives it at the language boundary, and a message stored for the Go side to
+read; on the Go side, an error value built from that message.
 
 Three arms: the Go function returning an error, cgo's wrapper, and cppgo's
 thunk.
@@ -665,11 +698,13 @@ cppgo's failure row, where the successful row's ratio was 8 times.
 
 ### The scenario
 
-`bench::fold` takes a `std::function` and calls it once. It is the C++ → Go
-round trip: Go enters C++, the shim builds the `std::function` from the exported
-Go function, and the call comes back into Go. A callback is only legal on a
-carrier that runs inside a foreign call, so the generated binding uses the
-reentrant carrier for it.
+`bench::fold` takes a `std::function` — C++'s owning wrapper around any callable,
+whatever its concrete type — and calls it once. It is the C++ → Go round trip: Go
+enters C++, the shim builds the `std::function` from the exported Go function (a
+Go function marked `//export`, which gives it a C symbol C can call by name), and
+the call comes back into Go. A callback is only legal on a carrier that runs
+inside a foreign call, so the generated binding uses the reentrant carrier for
+it.
 
 Three arms: the Go function behind a `func` value (`go_indirect` — there is no
 `go_direct` arm, because a callback is necessarily called through a value),
@@ -725,9 +760,13 @@ of it, and that is the 500 ns.
 ### The scenario
 
 An opaque `bench::Counter`: the constructor runs on the C++ heap, Go owns a
-handle, and closing it runs the destructor. Each iteration constructs one, bumps
-it, holds it in a sink and closes it, so the row is the whole lifecycle of an
-object — allocation, construction, one method call and destruction.
+handle, and closing it runs the destructor. *Opaque* means the type's layout is
+invisible to Go, so Go holds only a *handle* — a pointer to storage C++
+allocated; the *constructor* is the C++ function that creates an object and the
+*destructor* the one that runs when it is destroyed. Each iteration constructs
+one, bumps it, holds it in a sink and closes it, so the row is the whole
+lifecycle of an object — allocation, construction, one method call and
+destruction.
 
 All three arms: the Go type, cgo's handle, and cppgo's generated object.
 
@@ -806,7 +845,8 @@ operation pays the 205.7 ns every time.
 One `noexcept` method on a `bench::Counter` that is already alive, held by the
 package for the whole run. Construction is out of the way, so the row is the
 cost of a method call through the handle: the direct carrier with an implicit
-`this`.
+`this` — the object the method was called on, which C++ passes as a hidden first
+argument.
 
 All three arms: the Go method, cgo's handle, and cppgo's generated object.
 
