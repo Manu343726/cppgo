@@ -248,7 +248,11 @@ func TestByValue(t *testing.T) {
 			// is a `void *` behind a typedef and is reported, not refused; the
 			// default and dimensioned forms carry.
 			"af::array::array()", "af::array::array(dim_t, dtype)",
-			"af::array::array(const af_array)"},
+			"af::array::array(const af_array)",
+			// The two char * cases the issue names: the exception's
+			// constructors and what(), and infoString's result, cross as Go
+			// strings.
+			"af::exception", "af::infoString"},
 		expect: []string{
 			"type AfDtype",
 			"AfDtypeF32",
@@ -256,6 +260,9 @@ func TestByValue(t *testing.T) {
 			"func ArraySum(value *Array) (float64, error)",
 			"func NewArray() (*Array, error)",
 			"func NewArrayInt64AfDtype(",
+			"func NewExceptionString(msg string) (*Exception, error)",
+			"func (e *Exception) What() string",
+			"func InfoString(verbose bool) (string, error)",
 		},
 		install:   "libarrayfire-dev",
 		libraries: []string{"/usr/local/lib/libaf.so.3", "/usr/lib/libaf.so.3"},

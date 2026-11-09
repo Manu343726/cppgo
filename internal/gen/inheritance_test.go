@@ -20,7 +20,7 @@ func TestInheritedMethodsAndBaseViews(t *testing.T) {
 	shim := m[ShimSourceFileName]
 
 	// Inherited methods, including the virtual one the base declares.
-	assert.Contains(t, source, "func (r *Rect) Name() *int8 {")
+	assert.Contains(t, source, "func (r *Rect) Name() string {")
 	assert.Contains(t, source, "func (r *Rect) Id() int32 {")
 	assert.Contains(t, source, "func (r *Rect) Draws() int32 {")
 	assert.Contains(t, source, "func (r *Rect) Draw() {")
@@ -146,8 +146,8 @@ func TestInheritance(t *testing.T) {
 	}
 
 	// The base methods on the derived type, called through the derived pointer.
-	if got := rect.Name(); got == nil || *got != 's' {
-		t.Fatalf("Name = %v, want the first byte of \"shape\"", got)
+	if got := rect.Name(); got != "shape" {
+		t.Fatalf("Name = %q, want %q", got, "shape")
 	}
 	if got := rect.Draws(); got != 0 {
 		t.Fatalf("Draws = %v", got)

@@ -124,7 +124,7 @@ var (
 	cppgoSym_fe3a62f29761 uintptr
 	// cppgo_thunk_38f5d27773c8
 	cppgoSym_38f5d27773c8 uintptr
-	// _ZNK7inherit5Shape4nameEv
+	// cppgo_thunk_7ebbc7da6590
 	cppgoSym_7ebbc7da6590 uintptr
 	// cppgo_thunk_9786ecc85bec
 	cppgoSym_9786ecc85bec uintptr
@@ -249,7 +249,7 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_2d778d0dc0ff", addr: &cppgoSym_2d778d0dc0ff, shim: true},
 		{name: "cppgo_thunk_fe3a62f29761", addr: &cppgoSym_fe3a62f29761, shim: true},
 		{name: "cppgo_thunk_38f5d27773c8", addr: &cppgoSym_38f5d27773c8, shim: true},
-		{name: "_ZNK7inherit5Shape4nameEv", addr: &cppgoSym_7ebbc7da6590, shim: false},
+		{name: "cppgo_thunk_7ebbc7da6590", addr: &cppgoSym_7ebbc7da6590, shim: true},
 		{name: "cppgo_thunk_9786ecc85bec", addr: &cppgoSym_9786ecc85bec, shim: true},
 		{name: "cppgo_thunk_ef0755e3a70d", addr: &cppgoSym_ef0755e3a70d, shim: true},
 		{name: "cppgo_thunk_829b574f9ac5", addr: &cppgoSym_829b574f9ac5, shim: true},
@@ -321,6 +321,28 @@ func cppgoCloseError(symbol string) error {
 		return &cppgo.CallError{Symbol: symbol, Err: err}
 	}
 	return nil
+}
+
+// cppgoCString copies s into a NUL-terminated byte slice for a C++ char *
+// parameter, and returns the pointer and the slice to keep alive. A Go string
+// is immutable and not NUL-terminated, so the callee never sees Go's bytes.
+func cppgoCString(s string) (unsafe.Pointer, []byte) {
+	cppgoBytes := make([]byte, len(s)+1)
+	copy(cppgoBytes, s)
+	return unsafe.Pointer(&cppgoBytes[0]), cppgoBytes
+}
+
+// cppgoGoString copies a NUL-terminated C string into a Go string. The pointer
+// belongs to the library and is only read here, before the call returns.
+func cppgoGoString(p unsafe.Pointer) string {
+	if p == nil {
+		return ""
+	}
+	n := 0
+	for *(*byte)(unsafe.Add(p, n)) != 0 {
+		n++
+	}
+	return string(unsafe.Slice((*byte)(p), n))
 }
 
 // Drawable is inherit::Drawable (sizeof 4). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
@@ -802,12 +824,12 @@ func (r *Rect) Identity() *Rect {
 	return &Rect{obj: r.obj, addr: uintptr(cppgoRet)}
 }
 
-// Name calls inherit::Rect::name.
+// Name calls inherit::Rect::name. The result is copied out of the library's own C string before the call returns, so the Go string owns its bytes.
 //
 // The name every shape shares.
 //
 // C++: inherit::Shape::name() const noexcept, _ZNK7inherit5Shape4nameEv (thunk cppgo_thunk_fe3a62f29761, an inherited method: the shim's cast applies the base offset)
-func (r *Rect) Name() *int8 {
+func (r *Rect) Name() string {
 	if r == nil || r.obj == nil {
 		panic("cppgo: inherit::Shape::name() const noexcept on a closed Rect")
 	}
@@ -815,9 +837,10 @@ func (r *Rect) Name() *int8 {
 		panic(err)
 	}
 	cppgo.ProbeStack()
-	cppgoRet := cppgoCall_fe3a62f29761(cppgoSym_fe3a62f29761, r.cppgoAddr())
-	cppgo.KeepAlive(r)
-	return (*int8)(cppgoRet)
+	var cppgoResult unsafe.Pointer
+	cppgoCall_fe3a62f29761(cppgoSym_fe3a62f29761, r.cppgoAddr(), unsafe.Pointer(&cppgoResult))
+	cppgo.KeepAlive(r, &cppgoResult)
+	return cppgoGoString(cppgoResult)
 }
 
 // Weight calls inherit::Rect::weight.
@@ -1121,12 +1144,12 @@ func (s *Shape) Area() float64 {
 	return cppgoRet
 }
 
-// Name calls inherit::Shape::name.
+// Name calls inherit::Shape::name. The result is copied out of the library's own C string before the call returns, so the Go string owns its bytes.
 //
 // The name every shape shares.
 //
-// C++: inherit::Shape::name() const noexcept, _ZNK7inherit5Shape4nameEv (direct, noexcept, out of line, not virtual, register class)
-func (s *Shape) Name() *int8 {
+// C++: inherit::Shape::name() const noexcept, _ZNK7inherit5Shape4nameEv (thunk cppgo_thunk_7ebbc7da6590, a C string result: the thunk hands the bytes out and Go copies them)
+func (s *Shape) Name() string {
 	if s == nil || s.obj == nil {
 		panic("cppgo: inherit::Shape::name() const noexcept on a closed Shape")
 	}
@@ -1134,9 +1157,10 @@ func (s *Shape) Name() *int8 {
 		panic(err)
 	}
 	cppgo.ProbeStack()
-	cppgoRet := cppgoCall_7ebbc7da6590(cppgoSym_7ebbc7da6590, s.cppgoAddr())
-	cppgo.KeepAlive(s)
-	return (*int8)(cppgoRet)
+	var cppgoResult unsafe.Pointer
+	cppgoCall_7ebbc7da6590(cppgoSym_7ebbc7da6590, s.cppgoAddr(), unsafe.Pointer(&cppgoResult))
+	cppgo.KeepAlive(s, &cppgoResult)
+	return cppgoGoString(cppgoResult)
 }
 
 // Weight calls inherit::Shape::weight.
@@ -1387,12 +1411,12 @@ func (s *Square) Identity() *Rect {
 	return &Rect{obj: s.obj, addr: uintptr(cppgoRet)}
 }
 
-// Name calls inherit::Square::name.
+// Name calls inherit::Square::name. The result is copied out of the library's own C string before the call returns, so the Go string owns its bytes.
 //
 // The name every shape shares.
 //
 // C++: inherit::Shape::name() const noexcept, _ZNK7inherit5Shape4nameEv (thunk cppgo_thunk_38f5d27773c8, an inherited method: the shim's cast applies the base offset)
-func (s *Square) Name() *int8 {
+func (s *Square) Name() string {
 	if s == nil || s.obj == nil {
 		panic("cppgo: inherit::Shape::name() const noexcept on a closed Square")
 	}
@@ -1400,9 +1424,10 @@ func (s *Square) Name() *int8 {
 		panic(err)
 	}
 	cppgo.ProbeStack()
-	cppgoRet := cppgoCall_38f5d27773c8(cppgoSym_38f5d27773c8, s.cppgoAddr())
-	cppgo.KeepAlive(s)
-	return (*int8)(cppgoRet)
+	var cppgoResult unsafe.Pointer
+	cppgoCall_38f5d27773c8(cppgoSym_38f5d27773c8, s.cppgoAddr(), unsafe.Pointer(&cppgoResult))
+	cppgo.KeepAlive(s, &cppgoResult)
+	return cppgoGoString(cppgoResult)
 }
 
 // Weight calls inherit::Square::weight.
@@ -1875,13 +1900,13 @@ func cppgoCall_93c6ad214bbe(fn uintptr, this uintptr, a1 int64)
 func cppgoCall_2d778d0dc0ff(fn uintptr, this uintptr, a1 int64)
 
 // cppgoCall_fe3a62f29761 is the NOSPLIT trampoline for cppgo_thunk_fe3a62f29761.
-func cppgoCall_fe3a62f29761(fn uintptr, this uintptr) unsafe.Pointer
+func cppgoCall_fe3a62f29761(fn uintptr, this uintptr, out unsafe.Pointer)
 
 // cppgoCall_38f5d27773c8 is the NOSPLIT trampoline for cppgo_thunk_38f5d27773c8.
-func cppgoCall_38f5d27773c8(fn uintptr, this uintptr) unsafe.Pointer
+func cppgoCall_38f5d27773c8(fn uintptr, this uintptr, out unsafe.Pointer)
 
-// cppgoCall_7ebbc7da6590 is the NOSPLIT trampoline for _ZNK7inherit5Shape4nameEv.
-func cppgoCall_7ebbc7da6590(fn uintptr, this uintptr) unsafe.Pointer
+// cppgoCall_7ebbc7da6590 is the NOSPLIT trampoline for cppgo_thunk_7ebbc7da6590.
+func cppgoCall_7ebbc7da6590(fn uintptr, this uintptr, out unsafe.Pointer)
 
 // cppgoCall_9786ecc85bec is the NOSPLIT trampoline for cppgo_thunk_9786ecc85bec.
 func cppgoCall_9786ecc85bec(fn uintptr, this uintptr, out unsafe.Pointer) int32

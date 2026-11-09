@@ -331,6 +331,9 @@ type packageModel struct {
 	usesFree bool
 	// usesSpan is true when the generated shim needs <span> (C++20).
 	usesSpan bool
+	// usesCString is true when a C++ `char *` crosses as a Go string, which
+	// makes the generated package carry the NUL-termination helpers.
+	usesCString bool
 	// spans is the line range of every thunk in the generated translation unit,
 	// which is how a compiler diagnostic names the binding it belongs to.
 	spans []thunkSpan
@@ -393,8 +396,9 @@ type builder struct {
 	linkedName string
 	// flags are the compilation flags the headers were parsed with. The shim is
 	// compiled with the same ones.
-	flags    []string
-	usesFree bool
+	flags       []string
+	usesFree    bool
+	usesCString bool
 }
 
 // build loads the headers and turns the model into a package model.
@@ -1064,6 +1068,9 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				binding.StdResult = true
 				binding.hasStd = true
 			}
+			if result.CString {
+				b.usesCString = true
+			}
 		}
 	}
 	b.chooseCarrier(binding)
@@ -1106,7 +1113,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				cType:    "void *",
 				cName:    "cppgo_result",
 			})
-		case binding.Status || binding.Result.Kind == goRecord || binding.ViewResult:
+		case binding.Status || binding.Result.Kind == goRecord || binding.ViewResult || binding.Result.CString:
 			binding.Out = binding.Result
 			binding.OutLocal = outLocalType(binding.Result)
 			out := &wireArg{
@@ -1269,6 +1276,15 @@ func (b *builder) lowerParams(binding *binding) error {
 			b.callbackWire(binding, name, mapped, p, addWire)
 			continue
 		}
+		if mapped.CString {
+			if !p.Pointee.IsConst {
+				return fmt.Errorf("parameter %s: %w", p.Name, pending(
+					fmt.Sprintf("%q is a non-const char pointer", p.Spelling),
+					"take it as const char *: the Go string is immutable, so the callee's writes would not reach it"))
+			}
+			b.cStringParam(binding, name, mapped, p, addWire)
+			continue
+		}
 		if mapped.Kind == goRecord {
 			// A mirrored record is a Go value with the C layout: the thunk
 			// takes its address and copies it into the call, which is the one
@@ -1307,6 +1323,28 @@ func (b *builder) byValueParam(binding *binding, name string, mapped *goType, p 
 	}
 	add(arg)
 	binding.hasByValue = true
+}
+
+// cStringParam lowers a `const char *` parameter: the Go value is a string, and
+// the wire word is a NUL-terminated copy of it that the caller keeps alive for
+// the whole call. The copy is a declaration beside the call, not an argument
+// expression, because the callee may read the bytes until it returns.
+func (b *builder) cStringParam(binding *binding, name string, mapped *goType, p cxx.Param, add func(*wireArg)) {
+	ptr := "cppgo_" + name + "_cstr"
+	keep := ptr + "_keep"
+	binding.stdDecls = append(binding.stdDecls, ptr+", "+keep+" := cppgoCString("+name+")")
+	b.usesCString = true
+	add(&wireArg{
+		label:    "a" + itoa(len(binding.Wire)),
+		slotType: "unsafe.Pointer",
+		class:    classInt,
+		size:     8,
+		expr:     ptr,
+		keep:     keep,
+		cType:    mapped.C,
+		cName:    p.Name,
+		param:    p,
+	})
 }
 
 // callbackWire lowers a function-pointer or std::function parameter: the wire
@@ -1551,6 +1589,9 @@ func (b *builder) chooseCarrier(binding *binding) {
 	case binding.hasByValue:
 		binding.Carrier = thunk
 		binding.Reason = "a record passed or returned by value: the thunk copies it"
+	case binding.Result != nil && binding.Result.CString:
+		binding.Carrier = thunk
+		binding.Reason = "a C string result: the thunk hands the bytes out and Go copies them"
 	case sym.IsTemplate:
 		binding.Carrier = thunk
 		binding.Reason = "template: no symbol until it is instantiated"
@@ -1911,6 +1952,7 @@ func (b *builder) model() *packageModel {
 		flags:          b.flags,
 		usesFree:       b.usesFree,
 		usesSpan:       b.mapper.usesSpan,
+		usesCString:    b.usesCString,
 	}
 }
 
@@ -2057,6 +2099,13 @@ func outLocalType(result *goType) string {
 		// A C++ bool is one byte; an int8 local is the honest mirror and the
 		// wrapper converts it to a Go bool.
 		return "int8"
+	case goString:
+		if result.CString {
+			// The thunk writes the library's pointer; the wrapper copies the
+			// bytes out of it before the call returns.
+			return "unsafe.Pointer"
+		}
+		return result.Go
 	case goPointer:
 		return "unsafe.Pointer"
 	default:

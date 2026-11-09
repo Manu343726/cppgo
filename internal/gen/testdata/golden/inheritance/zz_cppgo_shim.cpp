@@ -192,12 +192,16 @@ extern "C" void cppgo_thunk_2d778d0dc0ff(void * self, int32_t id) {
 	static_cast<::inherit::Shape *>(self)->id = id;
 }
 
-extern "C" const int8_t * cppgo_thunk_fe3a62f29761(const void * self) {
-	return reinterpret_cast<const int8_t *>(static_cast<const ::inherit::Rect *>(self)->name());
+extern "C" void cppgo_thunk_fe3a62f29761(const void * self, const char * * cppgo_result) {
+	*cppgo_result = static_cast<const ::inherit::Rect *>(self)->name();
 }
 
-extern "C" const int8_t * cppgo_thunk_38f5d27773c8(const void * self) {
-	return reinterpret_cast<const int8_t *>(static_cast<const ::inherit::Square *>(self)->name());
+extern "C" void cppgo_thunk_38f5d27773c8(const void * self, const char * * cppgo_result) {
+	*cppgo_result = static_cast<const ::inherit::Square *>(self)->name();
+}
+
+extern "C" void cppgo_thunk_7ebbc7da6590(const void * self, const char * * cppgo_result) {
+	*cppgo_result = static_cast<const ::inherit::Shape *>(self)->name();
 }
 
 extern "C" int32_t cppgo_thunk_9786ecc85bec(const void * self, double * cppgo_result) {
