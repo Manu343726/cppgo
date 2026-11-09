@@ -12,6 +12,14 @@ You will not write a binding by hand. You will point `cppgo` at the header and a
 the way the project already compiles it, and it will write a Go package that
 calls the class.
 
+## What you will build
+
+By the end of the lesson you will have built the C++ library, generated the Go
+package that calls it, and run a program whose output includes the vector's norm,
+an error raised by an out-of-range index in C++, and the vector after a scale.
+The lesson closes with the example's own test suite passing, once with cgo
+disabled and once under the race detector.
+
 ## What you need
 
 | Tool | Why | Version |
@@ -25,10 +33,13 @@ libclang is needed only while generating. The program you ship does not link it
 and does not need it installed. The version floor is 20: older releases lack a
 function the generator uses, and generation fails at load time if yours is older.
 
+## The scenario
+
 The example below is in the repository:
 [`examples/mathx`](https://github.com/Manu343726/cppgo/blob/main/examples/mathx).
-Every command in this lesson is one of its `Makefile` targets, so you can run
-them while you read.
+It is a small C++17 library with one class, a two-dimensional vector, built by
+its own `Makefile`; nothing in it mentions cppgo. Every command in this lesson is
+one of that `Makefile`'s targets, so you can run them while you read.
 
 ## Step 1 — Look at the C++
 
