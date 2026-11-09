@@ -5,43 +5,59 @@
 | Status | accepted |
 | Date | 2026-11-08 |
 | Deciders | operator |
-| Supersedes | [ADR-0001](0001-header-first-bindings.md) |
+| Supersedes | [ADR-0001](0001-header-first-bindings.md), for the shim's build ownership |
 
 ## Context
 
-ADR-0001 made the shim generated infrastructure but left it in the **user's** build: `cppgo gen` wrote
-`zz_cppgo_shim.cpp`/`.h` and the user's C++ build compiled them into the library the Go side loads.
-The Go side stayed cgo-free, the API stayed complete, and the shim was parsed through libclang before
-it was written. On that basis the shim workstream landed (PR #12, `5b4fef7`, verified against base
-`67366f4`).
+[ADR-0001](0001-header-first-bindings.md) made the shim generated infrastructure but left it in the
+**user's** build: `cppgo gen` wrote `zz_cppgo_shim.cpp`/`.h` and the user's C++ build compiled them
+into the library the Go side loads. The Go side stayed cgo-free — cgo being Go's own way of calling
+C, which needs a C toolchain at build time — the API stayed complete, and the shim was parsed through
+libclang (the Clang front end's C library) before it was written. The shim workstream that decision
+set up then landed as [PR #12](https://git.manu343726.com/manu343726/cppgo/pulls/12) ("cppgo builds
+its own shim — phase 4a"), merge commit
+[`e110cb2`](https://git.manu343726.com/manu343726/cppgo/commit/e110cb2d1276d1c7929e90fcdad9165a959d5086).
+The v3 shim work whose behaviour v4 reuses is commit `5b4fef7` (`test(gen): compile every fixture
+shim with g++ and clang++`), branched from
+[`67366f4`](https://git.manu343726.com/manu343726/cppgo/commit/67366f41ab0325f31a54e4a6a34e819492d13f3d);
+that commit is **not on `main`**, so it is named here without a link.
 
 Three things then became true at once:
 
-1. **The operator's constraint for #14**: everything is generated on the Go side, and the user's
-   library is their own build, untouched by cppgo. Read alone, that forbids generated C++ anywhere.
-2. **The clarification of 2026-11-08**: the constraint concerns the *user's build*. cppgo may generate and compile a shim **itself**, into an object of its own that links
-   the user's library. The user writes no C++ and does not touch their build.
-3. **The target libraries** (#15): OpenCV, ArrayFire and above all Eigen. Eigen is header-only and
-   template-heavy, so the constructs that matter, instantiations, expression templates, by-value
-   fixed-size matrices, are exactly the ones the direct ABI cannot express, and a user's build that
-   has to compile a generated file is friction the product cannot afford.
+1. **The operator's constraint for [#14](https://git.manu343726.com/manu343726/cppgo/issues/14)**:
+   everything is generated on the Go side, and the user's library is their own build, untouched by
+   cppgo. Read alone, that forbids generated C++ anywhere.
+2. **The clarification of 2026-11-08**: the constraint concerns the *user's build*. cppgo may
+   generate and compile a shim **itself**, into an object of its own that links the user's library.
+   The user writes no C++ and does not touch their build.
+3. **The target libraries
+   ([#15](https://git.manu343726.com/manu343726/cppgo/issues/15))**: OpenCV, ArrayFire, and above all
+   Eigen. Eigen is header-only — it ships as headers with no `.so` to link — and template-heavy, so
+   the constructs that matter (instantiations, expression templates, by-value fixed-size matrices)
+   are exactly the ones the direct ABI cannot express. A user's build that has to compile a
+   generated file is friction the product cannot afford.
 
-Measured while answering #14 (all in this tree, `internal/callback` and `internal/shim`):
+Measured while answering #14, all in this tree:
 
-- C++→Go callbacks work with no cgo at build time, through `runtime.cgocallback`, **provided** the C
-  call was made through `runtime.cgocall`: on the direct trampoline the same callback kills the
-  process (`fatal error: morestack on g0`).
+- C++→Go callbacks work with no cgo at build time, through `runtime.cgocallback` (the Go runtime's
+  entry point for C code calling into Go), **provided** the C call was made through
+  `runtime.cgocall` (the runtime's entry point for Go code entering foreign code): on the direct
+  trampoline the same callback kills the process with `fatal error: morestack on g0`.
 - a C++ exception with no C++ frame terminates the process, including through a Go callback frame.
 - every construct the direct ABI cannot express (virtual dispatch, inline bodies, `std::` types,
   non-POD by value, templates, multiple inheritance, exception translation, `std::function`
   construction) is expressible in a C++ translation unit that cppgo compiles and links, with the
   user's library built separately and unchanged.
 
+The code that proves the first two is [`internal/callback`](../../internal/callback); the
+construct matrix that proves the third is [`internal/shim`](../../internal/shim).
+
 ## Decision
 
 **cppgo owns a third artefact.** For a bound header, cppgo emits and compiles `zz_cppgo_shim.cpp`
-into `libcppgo_shim.so` (or a `.a`), linked against the user's library, and the generated Go package
-loads the shim. The user's build and sources are never modified and never include generated code.
+into `libcppgo_<package>.so` — `libcppgo_metrics.so` for `-package metrics` — linked against the
+user's library, and the generated Go package loads the shim. The user's build and sources are never
+modified and never include generated code.
 
 Everything else in ADR-0001's decision survives, with the carrier rules now measured:
 
@@ -64,24 +80,30 @@ Everything else in ADR-0001's decision survives, with the carrier rules now meas
   package calls the thunks. A Go instantiation with no C++ counterpart is a load-time error naming
   the line to add.
 
-The v3 shim work from `5b4fef7` is reused as **semantics**. The by-value,
-`std::`-marshalling and copy-back behaviour it measured is the acceptance oracle for the v4 thunks,
-and its direct-carrier selection rule (an exported mangled name makes a header-only declaration
-direct) is kept with its tests. The file it generated for the user's build is not part of v4.
+The v3 shim work from `5b4fef7` — the commit named in the context, which is not on `main` — is reused
+as **semantics**. The by-value, `std::`-marshalling and copy-back behaviour it measured is
+the acceptance oracle for the v4 thunks, and its direct-carrier selection rule (an exported mangled
+name makes a header-only declaration direct) is kept with its tests. The file it generated for the
+user's build is not part of v4.
 
 ## Consequences
 
 Easier:
 
-- the user's build gains nothing, which is what makes a header-only library like Eigen usable at all. There is no library, only the shim.
+- the user's build gains nothing, which is what makes a header-only library like Eigen usable at all.
+  There is no library, only the shim.
 - exceptions, virtual dispatch, inline bodies, templates and `std::` types are supported by
   construction, because a C++ compiler is doing the work.
 - the shim can be validated by compiling it, which is a stronger check than parsing it.
 
 Harder, and stated plainly:
 
-- **cppgo needs a C++ compiler**, and it must match the library's. Same family, same standard library,
-  same `_GLIBCXX_USE_CXX11_ABI`. The generator records all three and rejects a mismatch.
+- **cppgo needs a C++ compiler**, and it must match the library's. Same family, same standard
+  library, same `_GLIBCXX_USE_CXX11_ABI` — the preprocessor macro that selects between libstdc++'s
+  two incompatible `std::string` implementations. The shim is compiled with the flags discovered for
+  the header, so a value the library was built with reaches it, and `-cxx` names the compiler. The
+  generator does not read the library's own choice back out or reject a mismatch yet: that is the
+  user's input today.
 - **Two objects ship instead of one**, and their load order matters. The shim links the library, so
   opening the shim brings the library in. A missing library is an `Open` error naming the shim and the
   library it needs.
@@ -89,7 +111,8 @@ Harder, and stated plainly:
   allocates 16 bytes per call, because the argument block cannot live on a goroutine stack a callback
   may grow.
 - **A callback carries at most six INTEGER and eight SSE arguments**, and **an exception with no C++
-  frame is fatal**. Both are measurements.
+  frame is fatal**. Both are measurements. INTEGER and SSE are the ABI's two register files: the six
+  for integer and pointer arguments, the eight `XMM` registers for floating-point ones.
 - **Determinism now spans a compiler.** The generated C++ is byte-identical for the same inputs, but
   the compiled shim is a build artefact: `cppgo check` diffs sources, and the shim's build is verified
   by compiling it, never by comparing binaries.
@@ -104,5 +127,6 @@ Harder, and stated plainly:
 - **Emit C++ into the user's tree but compile it ourselves with a generated makefile.** Same artefacts
   as this decision with an extra integration surface. The file lives in cppgo's output directory here.
 - **A Go-side `std::` layout layer** (build `std::string` and `std::function` from documented layouts
-  in Go). Measured to work only for types whose template instantiations the library happens to export.
-  rejected as the primary mechanism, kept as the recorded fallback in `internal/callback`.
+  in Go). Measured to work only for types whose template instantiations the library happens to export;
+  rejected as the primary mechanism, kept as the recorded fallback in
+  [`internal/callback`](../../internal/callback).
