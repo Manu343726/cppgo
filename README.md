@@ -26,9 +26,47 @@ You need:
 | A C++ compiler | C++17; the same family and standard library as your library | generating |
 | `make` | any | the repository's targets |
 
-Build the generator and run the example, which binds one small C++17 class. The
-example builds its own `cppgo`, so `bin/cppgo` is the one you use on your own
-project:
+The input is an ordinary C++ header — no annotations, no `extern "C"` block, no
+binding declarations. This is the class the quick start binds,
+[`examples/mathx/include/mathx/vector.hpp`](examples/mathx/include/mathx/vector.hpp):
+
+```cpp
+namespace mathx {
+
+class Vector {
+public:
+    Vector(double x, double y);
+
+    Vector(const Vector &other);
+
+    ~Vector();
+
+    double x() const { return x_; }
+
+    double y() const;
+
+    double norm() const;
+
+    double dot(const double *ys, std::size_t n) const;
+
+    double at(std::size_t index) const;
+
+    void validate() const;
+
+    void scale(double k) noexcept;
+
+    static int dims();
+
+private:
+    double x_;
+    double y_;
+};
+
+} // namespace mathx
+```
+
+Build the generator and run the example. The example builds its own `cppgo`, so
+`bin/cppgo` is the one you use on your own project:
 
 ```console
 $ make build                     # bin/cppgo, with CGO_ENABLED=0
@@ -43,8 +81,20 @@ $ build/cppgo gen -header include/mathx/vector.hpp -package mathx \
                   -library build/libmathx.so -out .
 ```
 
-It prints one line per function or method it bound. The package it wrote is
-ordinary Go:
+It prints one line per function or method it bound, and writes the Go package.
+These are the declarations that class became, copied from the generated
+[`examples/mathx/zz_cppgo.gen.go`](examples/mathx/zz_cppgo.gen.go):
+
+```go
+func NewVector(x float64, y float64) (*Vector, error)
+func (v *Vector) Norm() (float64, error)
+func (v *Vector) Scale(k float64)
+func (v *Vector) Close() error
+```
+
+`Norm` returns an error because `mathx::Vector::norm()` can throw; `Scale`
+returns nothing because `mathx::Vector::scale(double) noexcept` cannot fail.
+The package it wrote is ordinary Go:
 
 ```go
 v, err := mathx.NewVector(3, 4)
@@ -61,6 +111,7 @@ fmt.Println(norm)          // 5
 
 v.Scale(2)                 // no error to check: this call cannot fail
 ```
+
 
 Run the example's tests:
 
