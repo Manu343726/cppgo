@@ -265,7 +265,7 @@ that asserts values against the library itself:
 | Target | The module | What the slice binds |
 |---|---|---|
 | **OpenCV** | [`examples/opencv`](https://github.com/Manu343726/cppgo/tree/main/examples/opencv) ([README](https://github.com/Manu343726/cppgo/blob/main/examples/opencv/README.md)) | the `cv::NormTypes` and `cv::TermCriteria::Type` enums, the `cv::TermCriteria` class (both constructors, `isValid`, three fields), `cv::TickMeter`, and the scalar functions of `core.hpp`: version, tick frequency, thread count, CPU count and the optimization flag |
-| **ArrayFire** | [`examples/arrayfire`](https://github.com/Manu343726/cppgo/tree/main/examples/arrayfire) ([README](https://github.com/Manu343726/cppgo/blob/main/examples/arrayfire/README.md)) | the `af_dtype` and `af_source` enums, and the functions that report the library's configuration: `getDevice`, `getDeviceCount`, `getMemStepSize`, `getSizeOf`, `isDoubleAvailable`, `isHalfAvailable` |
+| **ArrayFire** | [`examples/arrayfire`](https://github.com/Manu343726/cppgo/tree/main/examples/arrayfire) ([README](https://github.com/Manu343726/cppgo/blob/main/examples/arrayfire/README.md)) | the `af_dtype` and `af_source` enums, `getSizeOf`, and the device functions `getDevice`, `getDeviceCount`, `getMemStepSize`, `isDoubleAvailable` and `isHalfAvailable` |
 | **Eigen** | [`examples/eigen`](https://github.com/Manu343726/cppgo/tree/main/examples/eigen) ([README](https://github.com/Manu343726/cppgo/blob/main/examples/eigen/README.md)) | the `StorageOptions`, `ComputationInfo` and `UpLoType` enums, and the thread functions `initParallel`, `nbThreads` and `setNbThreads`; Eigen is header-only, so the shim is the whole binary |
 
 Each module's README lists every declaration it binds and every one it refuses,

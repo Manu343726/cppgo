@@ -14,8 +14,8 @@ against the library itself.
 | [`mathx`](mathx/) | one C++17 class end to end: a constructor, a destructor, an accessor, methods that can fail, a method that cannot, a struct passed by value, and a function taking two slices |
 | [`stats`](stats/) | one header with five functions: four that cannot fail and one that can, all taking their data as `(pointer, length)` so nothing is copied |
 | [`full`](full/) | a complete project: a C++ library with its own CMake build (an opaque class, `std::string`, `std::vector`, a POD by value, a throw, a status code, a callback and templates), the generated Go, and a real `cmd/app` program with tests |
-| [`opencv`](opencv/) | a slice of an installed OpenCV 4.10: the `core.hpp` enums, `cv::TermCriteria`, `cv::TickMeter`, and the version, tick, thread and CPU functions |
-| [`arrayfire`](arrayfire/) | a slice of an installed ArrayFire 3.10 (CPU backend): the element-type and data-source enums, and the device functions that report the library's configuration |
+| [`opencv`](opencv/) | a slice of an installed OpenCV 4.10: the `core.hpp` enums, `cv::TermCriteria`, `cv::TickMeter`, and the version, tick, thread, CPU and optimization functions |
+| [`arrayfire`](arrayfire/) | a slice of an installed ArrayFire 3.10 (CPU backend): the element-type and data-source enums, and the type and device functions |
 | [`eigen`](eigen/) | a slice of an installed Eigen 3.4: three configuration enums and the thread functions; a header-only library, so the shim is the whole binary |
 
 Each target module's README lists every declaration its slice binds and every one
