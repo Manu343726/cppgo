@@ -264,7 +264,7 @@ that asserts values against the library itself:
 
 | Target | The module | What the slice binds |
 |---|---|---|
-| **OpenCV** | [`examples/opencv`](https://github.com/Manu343726/cppgo/tree/main/examples/opencv) ([README](https://github.com/Manu343726/cppgo/blob/main/examples/opencv/README.md)) | the `cv::NormTypes` and `cv::TermCriteria::Type` enums, the `cv::TermCriteria` record (both constructors, `isValid`, three fields), `cv::TickMeter`, and the scalar functions of `core.hpp`: version, tick frequency, thread count, CPU count and the optimization flag |
+| **OpenCV** | [`examples/opencv`](https://github.com/Manu343726/cppgo/tree/main/examples/opencv) ([README](https://github.com/Manu343726/cppgo/blob/main/examples/opencv/README.md)) | the `cv::NormTypes` and `cv::TermCriteria::Type` enums, the `cv::TermCriteria` class (both constructors, `isValid`, three fields), `cv::TickMeter`, and the scalar functions of `core.hpp`: version, tick frequency, thread count, CPU count and the optimization flag |
 | **ArrayFire** | [`examples/arrayfire`](https://github.com/Manu343726/cppgo/tree/main/examples/arrayfire) ([README](https://github.com/Manu343726/cppgo/blob/main/examples/arrayfire/README.md)) | the `af_dtype` and `af_source` enums, and the functions that report the library's configuration: `getDevice`, `getDeviceCount`, `getMemStepSize`, `getSizeOf`, `isDoubleAvailable`, `isHalfAvailable` |
 | **Eigen** | [`examples/eigen`](https://github.com/Manu343726/cppgo/tree/main/examples/eigen) ([README](https://github.com/Manu343726/cppgo/blob/main/examples/eigen/README.md)) | the `StorageOptions`, `ComputationInfo` and `UpLoType` enums, and the thread functions `initParallel`, `nbThreads` and `setNbThreads`; Eigen is header-only, so the shim is the whole binary |
 
@@ -274,10 +274,11 @@ with the generator's message.
 What a slice binds is what the generator carries today, not the whole library.
 `cv::Mat`, `af::array` and Eigen's matrix types are not bound by these modules,
 so no image is loaded or converted, no array is created, reduced or multiplied,
-and no matrix product is computed through them. A record binds only up to what
-can cross: `cv::Mat` and `af::array` keep no constructor set, because each
-declares one member the generator cannot carry, and an Eigen matrix
-specialization cannot be instantiated for the generator to read at all.
+and no matrix product is computed through them. A class binds only up to what
+can cross: `cv::Mat` and `af::array` come out without their constructors — there
+is no `NewMat` or `NewArray` — because each declares one member the generator
+cannot carry, and an Eigen matrix specialization cannot be instantiated for the
+generator to read at all.
 [Limits](https://manu343726.github.io/cppgo/explanation/limits/) names each
 refusal.
 

@@ -114,7 +114,9 @@ missing path and exits zero, so a run there is a skip and not evidence.
 
 [`scripts/test-targets.sh`](../../scripts/test-targets.sh) runs those three test targets
 by name, and the `targets` job of [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
-runs it, with the header smoke, in the pinned image that carries the three libraries.
+runs it, with the real-header smoke in
+[`internal/gen/targets_smoke_test.go`](../../internal/gen/targets_smoke_test.go) (the tag
+`cppgo_targets` selects the file), in the pinned image that carries the three libraries.
 The script names a library it cannot find as skipped, and the smoke step counts one
 `parsed` line per library, so a skip cannot pass for a measurement.
 
@@ -123,11 +125,11 @@ The slices stop where the generator does, and that boundary is
 
 - **`cv::Mat` and `af::array`** each declare something the generator cannot carry —
   `Mat(int, int, int, void *)`, and `array::set(af_array)` where `af_array` is `void *` —
-  and one such declaration refuses the record, so neither class brings its own
-  constructors. A by-value record crosses since
-  [#102](https://git.manu343726.com/manu343726/cppgo/issues/102), which is why the header
-  smoke hands Go a `cv::Mat` and an `af::array` through a C++ free function; the modules
-  bind neither.
+  and one such declaration refuses the whole class, so neither binds its constructors.
+  A by-value record crosses since
+  [#102](https://git.manu343726.com/manu343726/cppgo/issues/102), which is why the smoke
+  hands Go a `cv::Mat` and an `af::array` through a C++ free function; the modules bind
+  neither.
 - **Eigen's matrix types** are refused earlier. An explicit specialization is the only
   spelling libclang reports, and `template class Eigen::Matrix<...>;` does not compile:
   an explicit instantiation instantiates every constructor, and Eigen's constructors
