@@ -6,6 +6,7 @@
 #include "zz_cppgo_shim.h"
 
 #include "/usr/include/opencv4/opencv2/core.hpp"
+#include "/usr/include/opencv4/opencv2/imgproc.hpp"
 
 #include <array>
 #include <cstdint>
@@ -28,6 +29,172 @@ thread_local std::string cppgo_error_message;
 
 extern "C" const char *cppgo_last_error(void) {
 	return cppgo_error_message.c_str();
+}
+
+extern "C" void cppgo_thunk_0c4a3fd6dd37(void * self) {
+	new (self) ::cv::Mat();
+}
+
+extern "C" int32_t cppgo_thunk_95167f7605da(void * self, int32_t rows, int32_t cols, int32_t arg2) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::cv::Mat(rows, cols, arg2);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_ecd878d5e515(const void * self) {
+	return static_cast<const ::cv::Mat *>(self)->cols;
+}
+
+extern "C" void cppgo_thunk_e19c153fb4bb(void * self, int32_t cols) {
+	static_cast<::cv::Mat *>(self)->cols = cols;
+}
+
+extern "C" uint8_t * cppgo_thunk_31c24550b64c(const void * self) {
+	return reinterpret_cast<uint8_t *>(static_cast<const ::cv::Mat *>(self)->data);
+}
+
+extern "C" void cppgo_thunk_238021a3a248(void * self, uint8_t * data) {
+	static_cast<::cv::Mat *>(self)->data = data;
+}
+
+extern "C" const uint8_t * cppgo_thunk_1f65189ee6c3(const void * self) {
+	return reinterpret_cast<const uint8_t *>(static_cast<const ::cv::Mat *>(self)->dataend);
+}
+
+extern "C" void cppgo_thunk_0900c74b116a(void * self, const uint8_t * dataend) {
+	static_cast<::cv::Mat *>(self)->dataend = dataend;
+}
+
+extern "C" const uint8_t * cppgo_thunk_c232af678945(const void * self) {
+	return reinterpret_cast<const uint8_t *>(static_cast<const ::cv::Mat *>(self)->datalimit);
+}
+
+extern "C" void cppgo_thunk_82b3fe8fc47c(void * self, const uint8_t * datalimit) {
+	static_cast<::cv::Mat *>(self)->datalimit = datalimit;
+}
+
+extern "C" const uint8_t * cppgo_thunk_096a765a591c(const void * self) {
+	return reinterpret_cast<const uint8_t *>(static_cast<const ::cv::Mat *>(self)->datastart);
+}
+
+extern "C" void cppgo_thunk_6ee8626d51fb(void * self, const uint8_t * datastart) {
+	static_cast<::cv::Mat *>(self)->datastart = datastart;
+}
+
+extern "C" int32_t cppgo_thunk_86ce345eca01(const void * self) {
+	return static_cast<const ::cv::Mat *>(self)->dims;
+}
+
+extern "C" void cppgo_thunk_78852f97f9d7(void * self, int32_t dims) {
+	static_cast<::cv::Mat *>(self)->dims = dims;
+}
+
+extern "C" int32_t cppgo_thunk_9df9a8ccc5e9(const void * self) {
+	return static_cast<const ::cv::Mat *>(self)->flags;
+}
+
+extern "C" void cppgo_thunk_8ee4324b7a0f(void * self, int32_t flags) {
+	static_cast<::cv::Mat *>(self)->flags = flags;
+}
+
+extern "C" int32_t cppgo_thunk_5d85f7e35c3b(const void * self) {
+	return static_cast<const ::cv::Mat *>(self)->rows;
+}
+
+extern "C" void cppgo_thunk_1f8b09a2a529(void * self, int32_t rows) {
+	static_cast<::cv::Mat *>(self)->rows = rows;
+}
+
+extern "C" int32_t cppgo_thunk_d8ec3ec47e62(void * self, const void * value, void ** cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<void *>(&(static_cast<::cv::Mat *>(self)->setTo(*static_cast<const ::cv::_InputArray *>(value))));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_92864a2799f0(void * self, const void * value, const void * mask, void ** cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<void *>(&(static_cast<::cv::Mat *>(self)->setTo(*static_cast<const ::cv::_InputArray *>(value), *static_cast<const ::cv::_InputArray *>(mask))));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_418abb6b61a8(const void * self, uint64_t * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::cv::Mat *>(self)->total();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_5b1c7b078486(const void * self, int32_t startDim, uint64_t * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::cv::Mat *>(self)->total(startDim);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_1e2362235122(const void * self, int32_t startDim, int32_t endDim, uint64_t * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::cv::Mat *>(self)->total(startDim, endDim);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_ae2e7c20756e(const void * self, int32_t * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = static_cast<const ::cv::Mat *>(self)->type();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
 }
 
 extern "C" int32_t cppgo_thunk_d6a8db8dcb53(void * self) {
@@ -292,6 +459,108 @@ extern "C" int32_t cppgo_thunk_5a05377bfcb1(void * self) {
 	}
 }
 
+extern "C" int32_t cppgo_thunk_bf8922a8980f(void * self) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::cv::_InputArray();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_788f0c922a56(void * self, const void * m) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::cv::_InputArray(*static_cast<const ::cv::Mat *>(m));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_df895eeb7d91(void * self, const double * val) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::cv::_InputArray(*val);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" void cppgo_thunk_58c383f86947(void * self, void ** cppgo_result) {
+	*cppgo_result = static_cast<void *>(static_cast<::cv::_InputArray *>(static_cast<::cv::_OutputArray *>(self)));
+}
+
+extern "C" int32_t cppgo_thunk_7e51107baefb(void * self) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::cv::_OutputArray();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_d167bb95f59b(void * self, void * m) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::cv::_OutputArray(*static_cast<::cv::Mat *>(m));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_81b73d1d4521(const void * src, const void * dst, int32_t code) {
+	cppgo_error_message.clear();
+	try {
+		::cv::cvtColor(*static_cast<const ::cv::_InputArray *>(src), *static_cast<const ::cv::_OutputArray *>(dst), code);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_074b5dde5804(const void * src, const void * dst, int32_t code, int32_t dstCn) {
+	cppgo_error_message.clear();
+	try {
+		::cv::cvtColor(*static_cast<const ::cv::_InputArray *>(src), *static_cast<const ::cv::_OutputArray *>(dst), code, dstCn);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
 extern "C" int32_t cppgo_thunk_a1d4b1ffb1d2(int32_t * cppgo_result) {
 	cppgo_error_message.clear();
 	try {
@@ -352,6 +621,20 @@ extern "C" int32_t cppgo_thunk_6c70347b92be(int32_t * cppgo_result) {
 	cppgo_error_message.clear();
 	try {
 		*cppgo_result = ::cv::getVersionMinor();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_36ebf8bf9df0(const void * src1, int32_t normType, const void * mask, double * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*cppgo_result = ::cv::norm(*static_cast<const ::cv::_InputArray *>(src1), normType, *static_cast<const ::cv::_InputArray *>(mask));
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();

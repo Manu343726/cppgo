@@ -17,6 +17,78 @@ extern "C" {
  * stays valid until the next thunk call on the same thread. */
 const char *cppgo_last_error(void);
 
+/* cppgo_thunk_0c4a3fd6dd37: cv::Mat::Mat() */
+void cppgo_thunk_0c4a3fd6dd37(void * self);
+
+/* cppgo_thunk_95167f7605da: cv::Mat::Mat(int, int, int) */
+int32_t cppgo_thunk_95167f7605da(void * self, int32_t rows, int32_t cols, int32_t arg2);
+
+/* cppgo_thunk_ecd878d5e515: cv::Mat::cols() const noexcept */
+int32_t cppgo_thunk_ecd878d5e515(const void * self);
+
+/* cppgo_thunk_e19c153fb4bb: cv::Mat::cols(int) noexcept */
+void cppgo_thunk_e19c153fb4bb(void * self, int32_t cols);
+
+/* cppgo_thunk_31c24550b64c: cv::Mat::data() const noexcept */
+uint8_t * cppgo_thunk_31c24550b64c(const void * self);
+
+/* cppgo_thunk_238021a3a248: cv::Mat::data(uchar *) noexcept */
+void cppgo_thunk_238021a3a248(void * self, uint8_t * data);
+
+/* cppgo_thunk_1f65189ee6c3: cv::Mat::dataend() const noexcept */
+const uint8_t * cppgo_thunk_1f65189ee6c3(const void * self);
+
+/* cppgo_thunk_0900c74b116a: cv::Mat::dataend(const uchar *) noexcept */
+void cppgo_thunk_0900c74b116a(void * self, const uint8_t * dataend);
+
+/* cppgo_thunk_c232af678945: cv::Mat::datalimit() const noexcept */
+const uint8_t * cppgo_thunk_c232af678945(const void * self);
+
+/* cppgo_thunk_82b3fe8fc47c: cv::Mat::datalimit(const uchar *) noexcept */
+void cppgo_thunk_82b3fe8fc47c(void * self, const uint8_t * datalimit);
+
+/* cppgo_thunk_096a765a591c: cv::Mat::datastart() const noexcept */
+const uint8_t * cppgo_thunk_096a765a591c(const void * self);
+
+/* cppgo_thunk_6ee8626d51fb: cv::Mat::datastart(const uchar *) noexcept */
+void cppgo_thunk_6ee8626d51fb(void * self, const uint8_t * datastart);
+
+/* cppgo_thunk_86ce345eca01: cv::Mat::dims() const noexcept */
+int32_t cppgo_thunk_86ce345eca01(const void * self);
+
+/* cppgo_thunk_78852f97f9d7: cv::Mat::dims(int) noexcept */
+void cppgo_thunk_78852f97f9d7(void * self, int32_t dims);
+
+/* cppgo_thunk_9df9a8ccc5e9: cv::Mat::flags() const noexcept */
+int32_t cppgo_thunk_9df9a8ccc5e9(const void * self);
+
+/* cppgo_thunk_8ee4324b7a0f: cv::Mat::flags(int) noexcept */
+void cppgo_thunk_8ee4324b7a0f(void * self, int32_t flags);
+
+/* cppgo_thunk_5d85f7e35c3b: cv::Mat::rows() const noexcept */
+int32_t cppgo_thunk_5d85f7e35c3b(const void * self);
+
+/* cppgo_thunk_1f8b09a2a529: cv::Mat::rows(int) noexcept */
+void cppgo_thunk_1f8b09a2a529(void * self, int32_t rows);
+
+/* cppgo_thunk_d8ec3ec47e62: cv::Mat::setTo(InputArray) */
+int32_t cppgo_thunk_d8ec3ec47e62(void * self, const void * value, void ** cppgo_result);
+
+/* cppgo_thunk_92864a2799f0: cv::Mat::setTo(InputArray, InputArray) */
+int32_t cppgo_thunk_92864a2799f0(void * self, const void * value, const void * mask, void ** cppgo_result);
+
+/* cppgo_thunk_418abb6b61a8: cv::Mat::total() const */
+int32_t cppgo_thunk_418abb6b61a8(const void * self, uint64_t * cppgo_result);
+
+/* cppgo_thunk_5b1c7b078486: cv::Mat::total(int) const */
+int32_t cppgo_thunk_5b1c7b078486(const void * self, int32_t startDim, uint64_t * cppgo_result);
+
+/* cppgo_thunk_1e2362235122: cv::Mat::total(int, int) const */
+int32_t cppgo_thunk_1e2362235122(const void * self, int32_t startDim, int32_t endDim, uint64_t * cppgo_result);
+
+/* cppgo_thunk_ae2e7c20756e: cv::Mat::type() const */
+int32_t cppgo_thunk_ae2e7c20756e(const void * self, int32_t * cppgo_result);
+
 /* cppgo_thunk_d6a8db8dcb53: cv::TermCriteria::TermCriteria() */
 int32_t cppgo_thunk_d6a8db8dcb53(void * self);
 
@@ -86,6 +158,30 @@ int32_t cppgo_thunk_26c7d175f2a9(void * self);
 /* cppgo_thunk_5a05377bfcb1: cv::TickMeter::stop() */
 int32_t cppgo_thunk_5a05377bfcb1(void * self);
 
+/* cppgo_thunk_bf8922a8980f: cv::_InputArray::_InputArray() */
+int32_t cppgo_thunk_bf8922a8980f(void * self);
+
+/* cppgo_thunk_788f0c922a56: cv::_InputArray::_InputArray(const Mat &) */
+int32_t cppgo_thunk_788f0c922a56(void * self, const void * m);
+
+/* cppgo_thunk_df895eeb7d91: cv::_InputArray::_InputArray(const double &) */
+int32_t cppgo_thunk_df895eeb7d91(void * self, const double * val);
+
+/* cppgo_thunk_58c383f86947: cv::_OutputArray::AsInputArray() noexcept */
+void cppgo_thunk_58c383f86947(void * self, void ** cppgo_result);
+
+/* cppgo_thunk_7e51107baefb: cv::_OutputArray::_OutputArray() */
+int32_t cppgo_thunk_7e51107baefb(void * self);
+
+/* cppgo_thunk_d167bb95f59b: cv::_OutputArray::_OutputArray(Mat &) */
+int32_t cppgo_thunk_d167bb95f59b(void * self, void * m);
+
+/* cppgo_thunk_81b73d1d4521: cv::cvtColor(InputArray, OutputArray, int) */
+int32_t cppgo_thunk_81b73d1d4521(const void * src, const void * dst, int32_t code);
+
+/* cppgo_thunk_074b5dde5804: cv::cvtColor(InputArray, OutputArray, int, int) */
+int32_t cppgo_thunk_074b5dde5804(const void * src, const void * dst, int32_t code, int32_t dstCn);
+
 /* cppgo_thunk_a1d4b1ffb1d2: cv::getNumThreads() */
 int32_t cppgo_thunk_a1d4b1ffb1d2(int32_t * cppgo_result);
 
@@ -100,6 +196,9 @@ int32_t cppgo_thunk_c321d01b3d82(int32_t * cppgo_result);
 
 /* cppgo_thunk_6c70347b92be: cv::getVersionMinor() */
 int32_t cppgo_thunk_6c70347b92be(int32_t * cppgo_result);
+
+/* cppgo_thunk_36ebf8bf9df0: cv::norm(InputArray, int, InputArray) */
+int32_t cppgo_thunk_36ebf8bf9df0(const void * src1, int32_t normType, const void * mask, double * cppgo_result);
 
 /* cppgo_thunk_9c322b9e8647: cv::setNumThreads(int) */
 int32_t cppgo_thunk_9c322b9e8647(int32_t nthreads);

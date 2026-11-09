@@ -9,22 +9,24 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"unsafe"
 
 	"github.com/Manu343726/cppgo"
 )
 
 // The binding loads two objects: libcppgo_opencv.so, the shim cppgo compiled
-// from the generated sources, and OpenCV's core shared object, which that shim
-// names. The test names both, because the loader does not search the current
-// directory.
+// from the generated sources, and OpenCV's imgproc shared object, which that
+// shim names. imgproc names core among its own dependencies, so both modules
+// are loaded. The test names both, because the loader does not search the
+// current directory.
 //
 // The library is the system's, so its path is a variable: a distribution puts
-// libopencv_core.so under its own libdir, and CPPGO_OPENCV_LIB is how the
+// libopencv_imgproc.so under its own libdir, and CPPGO_OPENCV_LIB is how the
 // Makefile passes the one it found.
 func init() {
 	path := os.Getenv("CPPGO_OPENCV_LIB")
 	if path == "" {
-		path = "/usr/lib/x86_64-linux-gnu/libopencv_core.so"
+		path = "/usr/lib/x86_64-linux-gnu/libopencv_imgproc.so"
 	}
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
@@ -33,7 +35,7 @@ func init() {
 }
 
 // shimPath is libcppgo_opencv.so: the shared object cppgo compiled from the
-// generated shim and linked against libopencv_core.so.
+// generated shim and linked against libopencv_imgproc.so.
 func shimPath() string {
 	path := os.Getenv("CPPGO_OPENCV_SHIM")
 	if path == "" {
@@ -50,7 +52,7 @@ func shimPath() string {
 // cannot compile it and what this does on one that compiles but cannot load.
 func TestMain(m *testing.M) {
 	if _, err := os.Stat(CppgoLibraryPath); err != nil {
-		fmt.Fprintf(os.Stderr, "opencv: skipping, libopencv_core.so is missing: %v\n"+
+		fmt.Fprintf(os.Stderr, "opencv: skipping, libopencv_imgproc.so is missing: %v\n"+
 			"install libopencv-dev, or set CPPGO_OPENCV_LIB\n", err)
 		os.Exit(0)
 	}
@@ -350,6 +352,272 @@ func TestCloseLifetime(t *testing.T) {
 	}
 	if err := tc.Close(); !errors.Is(err, cppgo.ErrClosed) {
 		t.Errorf("second Close = %v, want cppgo.ErrClosed", err)
+	}
+}
+
+// Mat type codes, from opencv2/core/hal/interface.h:
+//
+//	#define CV_8U   0
+//	#define CV_8UC1 CV_MAKETYPE(CV_8U,1)   // 0
+//	#define CV_8UC3 CV_MAKETYPE(CV_8U,3)   // 16
+//
+// CV_MAKETYPE(depth, channels) is depth + ((channels-1) << CV_CN_SHIFT) with
+// CV_CN_SHIFT = 3, so one channel is 0 and three are 1<<3 = 8 above the depth
+// (core/hal/interface.h, and the "Basic structures" page of OpenCV's
+// documentation).
+const (
+	cv8UC1 int32 = 0
+	cv8UC3 int32 = 16
+)
+
+// TestMatConstruction covers cv::Mat's carryable construction and its geometry:
+// rows(), cols(), type(), total() and the field accessors generated for the
+// public members. It also covers the empty matrix, which is what a caller gets
+// before any image is loaded and what the error path below feeds to cvtColor.
+func TestMatConstruction(t *testing.T) {
+	m, err := NewMatInt32Int32Int32(2, 3, cv8UC3)
+	if err != nil {
+		t.Fatalf("NewMatInt32Int32Int32(2, 3, CV_8UC3): %v", err)
+	}
+	defer func() {
+		if err := m.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	if got := m.Rows(); got != 2 {
+		t.Errorf("Rows() = %d, want 2", got)
+	}
+	if got := m.Cols(); got != 3 {
+		t.Errorf("Cols() = %d, want 3", got)
+	}
+	if got, err := m.Type(); err != nil || got != cv8UC3 {
+		t.Errorf("Type() = %d, %v, want %d (CV_8UC3), nil", got, err, cv8UC3)
+	}
+	// total() is the product of the dimensions, counted in elements and not
+	// bytes: 2*3 pixels of three channels are 6 elements (mat.hpp's total()).
+	if got, err := m.Total(); err != nil || got != 6 {
+		t.Errorf("Total() = %d, %v, want 6, nil", got, err)
+	}
+	if got := m.Dims(); got != 2 {
+		t.Errorf("Dims() = %d, want 2", got)
+	}
+	if m.Data() == nil {
+		t.Error("Data() of a 2x3 CV_8UC3 Mat is nil, want the allocated buffer")
+	}
+
+	// The default constructor makes the empty matrix: every dimension zero and
+	// no buffer.
+	empty, err := NewMat()
+	if err != nil {
+		t.Fatalf("NewMat: %v", err)
+	}
+	defer empty.Close()
+	if got, err := empty.Total(); err != nil || got != 0 {
+		t.Errorf("Total() of an empty Mat = %d, %v, want 0, nil", got, err)
+	}
+	if got := empty.Rows(); got != 0 {
+		t.Errorf("Rows() of an empty Mat = %d, want 0", got)
+	}
+	if got := empty.Data(); got != nil {
+		t.Errorf("Data() of an empty Mat = %v, want nil", got)
+	}
+}
+
+// pixels is the buffer a cv::Mat owns, as a Go slice. data() is the generated
+// accessor for the public uchar* member; a CV_8UC(n) matrix stores its pixels
+// row-major with no padding because the constructor allocates it, so the buffer
+// is rows*cols*channels bytes (the layout the Basic structures page documents).
+// The slice does not own the memory: it is valid while the Mat is open.
+func pixels(t *testing.T, m *Mat, n int) []byte {
+	t.Helper()
+	data := m.Data()
+	if data == nil {
+		t.Fatalf("Data() is nil for a %dx%d Mat", m.Rows(), m.Cols())
+	}
+	return unsafe.Slice(data, n)
+}
+
+// TestMatPixels is the element operation: a pixel is written through the
+// matrix's buffer and read back, which is the round trip an image pipeline
+// needs before any library function is called.
+func TestMatPixels(t *testing.T) {
+	m, err := NewMatInt32Int32Int32(1, 2, cv8UC3)
+	if err != nil {
+		t.Fatalf("NewMatInt32Int32Int32(1, 2, CV_8UC3): %v", err)
+	}
+	defer m.Close()
+
+	// Two BGR pixels: red is (0, 0, 255) and green is (0, 255, 0), the channel
+	// order cv::imread's COLOR_BGR2GRAY conversion expects.
+	buf := pixels(t, m, 6)
+	copy(buf, []byte{0, 0, 255, 0, 255, 0})
+
+	for i, want := range []byte{0, 0, 255, 0, 255, 0} {
+		if buf[i] != want {
+			t.Errorf("pixel byte %d = %d, want %d", i, buf[i], want)
+		}
+	}
+}
+
+// TestSetTo fills every element of a matrix through cv::_InputArray's scalar
+// constructor: setTo(InputArray value) assigns value to every channel of every
+// pixel, so all nine bytes of a 1x3 CV_8UC3 matrix read back as 7.
+func TestSetTo(t *testing.T) {
+	m, err := NewMatInt32Int32Int32(1, 3, cv8UC3)
+	if err != nil {
+		t.Fatalf("NewMatInt32Int32Int32(1, 3, CV_8UC3): %v", err)
+	}
+	defer m.Close()
+
+	value := 7.0
+	scalar, err := NewInputArrayFloat64PtrRef(&value)
+	if err != nil {
+		t.Fatalf("NewInputArrayFloat64PtrRef: %v", err)
+	}
+	defer scalar.Close()
+
+	if _, err := m.SetToInputArrayPtrRef(scalar); err != nil {
+		t.Fatalf("SetTo(7): %v", err)
+	}
+
+	for i, got := range pixels(t, m, 9) {
+		if got != 7 {
+			t.Errorf("byte %d after SetTo(7) = %d, want 7", i, got)
+		}
+	}
+}
+
+// TestCvtColorBGR2GRAY converts two known BGR pixels to luminance. cvtColor is
+// the enum-coded form: COLOR_BGR2GRAY is 6 in ColorConversionCodes
+// (imgproc.hpp), and the conversion is
+//
+//	Y = 0.299 R + 0.587 G + 0.114 B
+//
+// which is the formula OpenCV's COLOR_BGR2GRAY documents (imgproc.hpp, the
+// "Color conversions" section of the imgproc reference; the coefficients are
+// BT.601's). Pure red is 0.299*255 = 76.245 and pure green is 0.587*255 =
+// 149.685, rounded to 76 and 150 by the 8-bit conversion.
+func TestCvtColorBGR2GRAY(t *testing.T) {
+	if ColorConversionCodesCOLORBGR2GRAY != 6 {
+		t.Errorf("COLOR_BGR2GRAY = %d, want 6", ColorConversionCodesCOLORBGR2GRAY)
+	}
+
+	src, err := NewMatInt32Int32Int32(1, 2, cv8UC3)
+	if err != nil {
+		t.Fatalf("NewMatInt32Int32Int32(1, 2, CV_8UC3): %v", err)
+	}
+	defer src.Close()
+	copy(pixels(t, src, 6), []byte{0, 0, 255, 0, 255, 0})
+
+	dst, err := NewMatInt32Int32Int32(1, 2, cv8UC1)
+	if err != nil {
+		t.Fatalf("NewMatInt32Int32Int32(1, 2, CV_8UC1): %v", err)
+	}
+	defer dst.Close()
+
+	in, err := NewInputArrayMatPtrRef(src)
+	if err != nil {
+		t.Fatalf("NewInputArrayMatPtrRef: %v", err)
+	}
+	defer in.Close()
+	out, err := NewOutputArrayMatPtrRef(dst)
+	if err != nil {
+		t.Fatalf("NewOutputArrayMatPtrRef: %v", err)
+	}
+	defer out.Close()
+
+	if err := CvtColor(in, out, int32(ColorConversionCodesCOLORBGR2GRAY), 0); err != nil {
+		t.Fatalf("CvtColor: %v", err)
+	}
+
+	// The destination is the Mat the OutputArray wraps: length runs the call, it
+	// does not replace the object.
+	if got := dst.Rows(); got != 1 {
+		t.Errorf("dst Rows() after CvtColor = %d, want 1", got)
+	}
+	if got := dst.Cols(); got != 2 {
+		t.Errorf("dst Cols() after CvtColor = %d, want 2", got)
+	}
+	gray := pixels(t, dst, 2)
+	// 76.245 and 149.685 rounded to the nearest 8-bit value; the tolerance is
+	// the rounding, not a fudge.
+	if diff := math.Abs(float64(gray[0]) - 76.245); diff > 0.5 {
+		t.Errorf("gray of pure red = %d, want 76 (0.299*255 = 76.245)", gray[0])
+	}
+	if diff := math.Abs(float64(gray[1]) - 149.685); diff > 0.5 {
+		t.Errorf("gray of pure green = %d, want 150 (0.587*255 = 149.685)", gray[1])
+	}
+}
+
+// TestNorm computes the L2 norm of a matrix through cv::norm. The four bytes
+// are chosen so the answer is exact: 3^2 + 4^2 = 25, and sqrt(25) = 5.
+// NormTypes::NORM_L2 is 4 in NormTypes (core/base.hpp).
+func TestNorm(t *testing.T) {
+	m, err := NewMatInt32Int32Int32(2, 2, cv8UC1)
+	if err != nil {
+		t.Fatalf("NewMatInt32Int32Int32(2, 2, CV_8UC1): %v", err)
+	}
+	defer m.Close()
+	copy(pixels(t, m, 4), []byte{3, 4, 0, 0})
+
+	in, err := NewInputArrayMatPtrRef(m)
+	if err != nil {
+		t.Fatalf("NewInputArrayMatPtrRef: %v", err)
+	}
+	defer in.Close()
+	empty, err := NewInputArray()
+	if err != nil {
+		t.Fatalf("NewInputArray: %v", err)
+	}
+	defer empty.Close()
+
+	got, err := Norm(in, int32(NormTypesNORML2), empty)
+	if err != nil {
+		t.Fatalf("Norm: %v", err)
+	}
+	if !approx(got, 5) {
+		t.Errorf("Norm(NORM_L2) of [3 4 0 0] = %v, want 5", got)
+	}
+
+	// The L1 norm of the same matrix is 3+4 = 7 (NormTypes::NORM_L1 = 2).
+	got, err = Norm(in, int32(NormTypesNORML1), empty)
+	if err != nil {
+		t.Fatalf("Norm: %v", err)
+	}
+	if !approx(got, 7) {
+		t.Errorf("Norm(NORM_L1) of [3 4 0 0] = %v, want 7", got)
+	}
+}
+
+// TestCvtColorError is the library's own failure reaching Go: cvtColor on an
+// empty source is invalid, OpenCV raises cv::Exception, and the thunk turns it
+// into an error instead of letting it unwind into Go.
+func TestCvtColorError(t *testing.T) {
+	empty, err := NewMat()
+	if err != nil {
+		t.Fatalf("NewMat: %v", err)
+	}
+	defer empty.Close()
+	dst, err := NewMatInt32Int32Int32(1, 1, cv8UC1)
+	if err != nil {
+		t.Fatalf("NewMatInt32Int32Int32: %v", err)
+	}
+	defer dst.Close()
+
+	in, err := NewInputArrayMatPtrRef(empty)
+	if err != nil {
+		t.Fatalf("NewInputArrayMatPtrRef: %v", err)
+	}
+	defer in.Close()
+	out, err := NewOutputArrayMatPtrRef(dst)
+	if err != nil {
+		t.Fatalf("NewOutputArrayMatPtrRef: %v", err)
+	}
+	defer out.Close()
+
+	if err := CvtColor(in, out, int32(ColorConversionCodesCOLORBGR2GRAY), 0); err == nil {
+		t.Error("CvtColor on an empty Mat returned nil, want the library's error")
 	}
 }
 
