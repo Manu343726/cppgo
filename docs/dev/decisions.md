@@ -67,8 +67,10 @@ The costs, in the record:
 - cppgo needs a C++ compiler that matches the library's family, standard library
   and `_GLIBCXX_USE_CXX11_ABI`;
 - two objects ship instead of one, and their load order matters;
-- a callback-capable binding costs about ten times a direct one, because it
-  enters through `runtime.cgocall`;
+- a callback-capable binding costs far more than a direct call: the record's ~10×
+  priced the trampoline alone, and the suite measures the generated binding at
+  ~43× (1776 ns against 40.9 ns) because it registers the callback per call —
+  see [Benchmarks](benchmarks.md);
 - determinism now spans a compiler: the generated C++ is byte-identical, and the
   compiled shim is verified by compiling it, never by comparing binaries.
 
@@ -108,7 +110,7 @@ obvious idea:
 | generics breadth, operators, inheritance, enums | two-phase templates work for scalar type arguments and dimensions; the rest are refused with a message | the wider generator work, under epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1) |
 | the OpenCV, ArrayFire and Eigen slices | designed as generated bindings tested against the real libraries, with build tags and a skip when a library is absent; nothing implemented | epic [#1](https://git.manu343726.com/manu343726/cppgo/issues/1) |
 | embedding a *generated* package | `OpenFS` works; the generated `Open` does not call it yet | [ADR-0003](https://github.com/Manu343726/cppgo/blob/main/docs/adr/0003-embedded-libraries.md) |
-| a user-facing benchmark suite | the manual publishes the runs that exist; the full comparison (lifecycle, errors, data passing) is being built | [#39](https://git.manu343726.com/manu343726/cppgo/issues/39) |
+| a user-facing benchmark comparison | shipped: the suite in `benchmarks/` measures every arm and the manual publishes its medians | the fixes its findings asked for are tracked in [#51](https://git.manu343726.com/manu343726/cppgo/issues/51) |
 
 ## Known defects
 
