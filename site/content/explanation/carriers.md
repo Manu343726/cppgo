@@ -154,7 +154,7 @@ pointers in, and **SSE**, the eight floating-point registers beside them.
 | `std::unique_ptr`, `std::shared_ptr` | — | **refused**: they are owning pointers, which free their object |
 | POD ≤ 16 bytes by value | thunk | supported |
 | POD > 16 bytes / MEMORY class by value | thunk, through an sret pointer (a hidden first argument through which the callee writes a large result) | generated and compiled, not executed |
-| non-POD by value | thunk, copied into Go's storage (a *T the Go side owns) | measured, supported: `Close` runs the destructor once |
+| non-POD by value | thunk, copied into Go's storage (a *T the Go side owns) | measured, supported: `Close` runs the declared destructor once; a record that declares none releases the storage and runs nothing |
 | a record Go cannot mirror: a bitfield, a packed struct, a union, a private or mixed-access field | thunk, one getter and setter per public field | supported as an opaque record: Go holds the pointer and the fields are methods |
 | more than 6 INTEGER / 8 SSE arguments | thunk, through an argument block both sides assert | supported |
 | exception-throwing call | thunk (`try`/`catch`) | supported |
