@@ -92,7 +92,7 @@ These are not part of a shipped program:
 
 | Path | Contents |
 |---|---|
-| [`examples/`](../../examples) | three executable projects, each with its own build: [`mathx`](../../examples/mathx) (a class), [`stats`](../../examples/stats) (slices and a free function), [`full`](../../examples/full) (CMake, templates, callbacks, errors) |
+| [`examples/`](../../examples) | six executable projects, each with its own build: [`mathx`](../../examples/mathx) (a class), [`stats`](../../examples/stats) (slices and a free function), [`full`](../../examples/full) (CMake, templates, callbacks, errors), and the three target modules [`opencv`](../../examples/opencv), [`arrayfire`](../../examples/arrayfire) and [`eigen`](../../examples/eigen) |
 | [`benchmarks/`](../../benchmarks) | the cppgo vs cgo vs plain-Go comparison suite and its committed results |
 | [`site/`](../../site) | the Hugo sources of the manual, in four sections: tutorials, how-to, reference and explanation |
 | [`docs/adr/`](../adr) | one decision record per decision, never edited after acceptance |
@@ -101,6 +101,37 @@ These are not part of a shipped program:
 | [`Dockerfile`](../../Dockerfile) | the pinned CI toolchain image |
 | [`.forgejo/workflows/`](../../.forgejo/workflows) | the gate the project's own forge runs |
 | [`.github/workflows/`](../../.github/workflows) | the GitHub mirror: the same gate, the image build, Pages, and the tag-triggered release |
+
+## The target modules
+
+[`examples/opencv`](../../examples/opencv), [`examples/arrayfire`](../../examples/arrayfire)
+and [`examples/eigen`](../../examples/eigen) bind a slice of a real, installed library
+rather than a fixture in the tree. There is no C++ source in those directories: the
+library is the system's, so the module's `make test` generates the package from the
+installed headers, builds the shim against the library, and asserts values the library
+itself defines. On a machine without the library every target of the module prints the
+missing path and exits zero, so a run there is a skip and not evidence.
+
+[`scripts/test-targets.sh`](../../scripts/test-targets.sh) runs those three test targets
+by name, and the `targets` job of [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
+runs it, with the header smoke, in the pinned image that carries the three libraries.
+The script names a library it cannot find as skipped, and the smoke step counts one
+`parsed` line per library, so a skip cannot pass for a measurement.
+
+The slices stop where the generator does, and that boundary is
+[#112](https://git.manu343726.com/manu343726/cppgo/issues/112)'s subject:
+
+- **`cv::Mat` and `af::array`** each declare something the generator cannot carry —
+  `Mat(int, int, int, void *)`, and `array::set(af_array)` where `af_array` is `void *` —
+  and one such declaration refuses the record, so neither class brings its own
+  constructors. A by-value record crosses since
+  [#102](https://git.manu343726.com/manu343726/cppgo/issues/102), which is why the header
+  smoke hands Go a `cv::Mat` and an `af::array` through a C++ free function; the modules
+  bind neither.
+- **Eigen's matrix types** are refused earlier. An explicit specialization is the only
+  spelling libclang reports, and `template class Eigen::Matrix<...>;` does not compile:
+  an explicit instantiation instantiates every constructor, and Eigen's constructors
+  static-assert the vector sizes they are declared for, so no matrix size passes.
 
 ## The generated files
 
