@@ -22,16 +22,12 @@ func (m *packageModel) emitTemplateShim(h, s *strings.Builder, spans *[]thunkSpa
 	if len(m.instantiations) == 0 {
 		return nil
 	}
-	s.WriteString("\n// The specializations the Go program instantiates. cppgo build collected\n")
-	s.WriteString("// them from the program; adding one here is what makes its members exist.\n")
-	for _, inst := range m.instantiations {
-		if inst.Template.IsFunction {
-			// A function template has no explicit instantiation of this form,
-			// and the thunk's call instantiates it implicitly.
-			continue
-		}
-		fmt.Fprintf(s, "%s\n", inst.explicitInstantiation())
-	}
+	s.WriteString("\n// No class-level explicit instantiation is written. Each thunk below\n")
+	s.WriteString("// names the specialization in its own call, so the compiler instantiates\n")
+	s.WriteString("// exactly the members the API exposes. `template class T;` would also\n")
+	s.WriteString("// instantiate every member the generic API skips — an operator that\n")
+	s.WriteString("// static-asserts on the specialization, as Eigen's Matrix does — and the\n")
+	s.WriteString("// translation unit would not compile for a type the API does not use.\n")
 	for _, inst := range m.instantiations {
 		target := "::" + inst.cxxName()
 		if !inst.Template.IsFunction {

@@ -1977,7 +1977,7 @@ func (m *packageModel) report() []string {
 		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s generic API, %d binding(s)", tmpl.CxxName+"<"+paramNames(tmpl)+">", "tmpl", "-", len(tmpl.bindings())))
 	}
 	for _, inst := range m.instantiations {
-		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", inst.cxxName(), "tmpl", inst.Key, inst.explicitInstantiation()))
+		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", inst.cxxName(), "tmpl", inst.Key, "members instantiated where each thunk calls them"))
 	}
 	return lines
 }

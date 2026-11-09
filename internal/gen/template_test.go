@@ -49,7 +49,6 @@ func TestTemplateModel(t *testing.T) {
 
 	box := findTemplate(t, model, "box::Box")
 	assert.Equal(t, "Box", box.GoName)
-	assert.Equal(t, cxx.Class, box.Kind)
 	require.Len(t, box.Params, 1)
 	assert.Equal(t, templateParam{Name: "T", GoName: "T", Kind: templateParamType}, box.Params[0])
 	require.Len(t, box.Ctors, 2)
@@ -162,7 +161,7 @@ func TestTemplateGoOutput(t *testing.T) {
 		"func (D4) cppgoDimension() string { return \"4\" }",
 		"func cppgoDimensionCxx[D cppgoDimension]() string",
 		"func cppgoTemplateKey[T any]() string",
-		"func cppgoTemplateFunc(symbol, what, line string) (uintptr, error)",
+		"func cppgoTemplateFunc(symbol, what, name string) (uintptr, error)",
 		"cppgoTemplateSymbols = map[string]uintptr{}",
 	} {
 		assert.Contains(t, gen, want)
@@ -186,10 +185,12 @@ func TestTemplateShimOutput(t *testing.T) {
 		{Template: "box::Matrix", Args: []string{"float64", "box.D4", "box.D4"}},
 	}
 	shim := renderMap(t, cfg)[ShimSourceFileName]
+	// No class-level explicit instantiation: the members are instantiated by
+	// the thunks that call them, so a member the generic API skips cannot
+	// break the translation unit.
+	assert.NotContains(t, shim, "template class ::box::Box")
+	assert.NotContains(t, shim, "template struct ::box::Box")
 	for _, want := range []string{
-		"template class ::box::Box<std::int32_t>;",
-		"template class ::box::Plain<double>;",
-		"template class ::box::Matrix<double, 4, 4>;",
 		"return sizeof(::box::Box<std::int32_t>);",
 		"return alignof(::box::Plain<double>);",
 		"static_cast<const ::box::Box<std::int32_t> *>",
@@ -221,18 +222,15 @@ func TestTemplateShimThunkNamesAreStable(t *testing.T) {
 	assert.True(t, strings.HasPrefix(first, "cppgo_tmpl_"))
 }
 
-// TestTemplateInstantiationLines covers the class/struct keyword and the
-// synthesized C++ name.
-func TestTemplateInstantiationLines(t *testing.T) {
+// TestTemplateInstantiationName covers the synthesized C++ name the shim's
+// thunks spell.
+func TestTemplateInstantiationName(t *testing.T) {
 	inst := &templateInstantiation{
-		Template: &templateModel{GoName: "Num", CxxName: "ns::Num", Kind: cxx.Struct},
+		Template: &templateModel{GoName: "Num", CxxName: "ns::Num"},
 		Key:      "int32",
 		Args:     []templateArgument{{Go: "int32", C: "int32_t", Cxx: "std::int32_t"}},
 	}
 	assert.Equal(t, "ns::Num<std::int32_t>", inst.cxxName())
-	assert.Equal(t, "template struct ::ns::Num<std::int32_t>;", inst.explicitInstantiation())
-	inst.Template.Kind = cxx.Class
-	assert.Equal(t, "template class ::ns::Num<std::int32_t>;", inst.explicitInstantiation())
 }
 
 // TestConcreteTemplateArguments covers every scalar the Go side accepts and the

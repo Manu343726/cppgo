@@ -21,8 +21,9 @@
 // A class or function template is emitted twice. Phase one writes the generic Go
 // declaration, which compiles with no concrete type. Phase two, `cppgo build
 // -scan <go package>`, loads the program with go/packages, collects the
-// instantiations it type-checks, and adds one explicit instantiation and one
-// thunk per member to the shim before compiling it. An instantiation the shim was
+// instantiations it type-checks, and adds one thunk per member to the shim
+// before compiling it. The thunk's own call instantiates the member; no
+// class-level explicit instantiation is written. An instantiation the shim was
 // not built for fails when it is used and names the `template ...;` line to add.
 package gen
 

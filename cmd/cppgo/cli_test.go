@@ -425,7 +425,7 @@ func TestBuildHelp(t *testing.T) {
 
 // TestBuildCollectsInstantiations runs the CLI's second phase against a real
 // module: gen writes the generic package, build scans the program and emits the
-// explicit instantiation.
+// per-instantiation thunks.
 func TestBuildCollectsInstantiations(t *testing.T) {
 	if _, err := osexec.LookPath("go"); err != nil {
 		t.Skip("go is not in PATH")
@@ -439,7 +439,7 @@ func TestBuildCollectsInstantiations(t *testing.T) {
 	mustExec(t, "gen", "-header", headerPath, "-package", "box", "-out", out)
 	stdout, _ := mustExec(t, "build", "-header", headerPath, "-package", "box", "-out", out,
 		"-scan", "./app", "-scan-dir", moduleDir)
-	assert.Contains(t, stdout, "template class ::box::Box<std::int32_t>;")
+	assert.Contains(t, stdout, "box::Box<std::int32_t>")
 	assert.Contains(t, stdout, "generic API")
 	assert.FileExists(t, filepath.Join(out, "libcppgo_box.so"))
 

@@ -499,7 +499,7 @@ func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Templates are a two-phase flow: gen writes the generic API, and")
 	fmt.Fprintln(w, "\"cppgo build -scan <go package>\" collects the program's instantiations")
-	fmt.Fprintln(w, "and emits their explicit instantiations and thunks into the shim.")
+	fmt.Fprintln(w, "and emits one thunk per member into the shim, where each call instantiates it.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "The user's build is untouched: no generated file goes into it. Every")
 	fmt.Fprintln(w, "binding gets exactly one carrier: the direct trampoline when it is")
