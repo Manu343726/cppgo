@@ -43,6 +43,31 @@ func cppgoBool(v bool) int64 {
 }
 `)
 	}
+	if m.usesCString {
+		b.WriteString(`
+// cppgoCString copies s into a NUL-terminated byte slice for a C++ char *
+// parameter, and returns the pointer and the slice to keep alive. A Go string
+// is immutable and not NUL-terminated, so the callee never sees Go's bytes.
+func cppgoCString(s string) (unsafe.Pointer, []byte) {
+	cppgoBytes := make([]byte, len(s)+1)
+	copy(cppgoBytes, s)
+	return unsafe.Pointer(&cppgoBytes[0]), cppgoBytes
+}
+
+// cppgoGoString copies a NUL-terminated C string into a Go string. The pointer
+// belongs to the library and is only read here, before the call returns.
+func cppgoGoString(p unsafe.Pointer) string {
+	if p == nil {
+		return ""
+	}
+	n := 0
+	for *(*byte)(unsafe.Add(p, n)) != 0 {
+		n++
+	}
+	return string(unsafe.Slice((*byte)(p), n))
+}
+`)
+	}
 
 	for _, record := range m.records {
 		m.emitRecord(&b, record)
@@ -63,6 +88,9 @@ func (m *packageModel) usesUnsafe() bool {
 	if m.hasTemplates() {
 		// A generic call hands out-pointers to the frame, which is unsafe
 		// whatever the instantiation.
+		return true
+	}
+	if m.usesCString {
 		return true
 	}
 	for _, record := range m.records {
@@ -885,6 +913,14 @@ func byValueNote(binding *binding) string {
 		}
 		notes = append(notes, "The value of "+param.Name+" is copied into the call by the shim, so the callee never holds the Go object; the caller keeps ownership and closes it.")
 	}
+	for _, param := range binding.Params {
+		if param.Type.CString {
+			notes = append(notes, "The string "+param.Name+" crosses as a NUL-terminated copy: the callee reads it during the call and must not retain it, and the empty string is a pointer to a zero byte, never a null pointer.")
+		}
+	}
+	if binding.Result != nil && binding.Result.CString {
+		notes = append(notes, "The result is copied out of the library's own C string before the call returns, so the Go string owns its bytes.")
+	}
 	return strings.Join(notes, " ")
 }
 
@@ -1169,6 +1205,11 @@ func convertResult(binding *binding, local string) string {
 	result := binding.Result
 	if binding.Status {
 		return convertFromLocal(result, local)
+	}
+	if result.CString {
+		// The thunk wrote the library's `const char *`; the wrapper copies the
+		// bytes into a Go string before the call returns.
+		return "cppgoGoString(" + local + ")"
 	}
 	switch result.Kind {
 	case goBool:

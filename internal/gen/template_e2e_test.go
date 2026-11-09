@@ -131,7 +131,8 @@ func TestRun(t *testing.T) {
 `
 
 // templateE2EMissing is the third instantiation the shim was not built for.
-// The error has to name the explicit instantiation line, not fail at the call.
+// The error has to name the specialization the shim was not built for, not fail
+// at the call.
 const templateE2EMissing = `package app
 
 import (
@@ -150,7 +151,7 @@ func TestMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("Box[int64] has no C++ counterpart and must fail")
 	}
-	want := "template struct ::box::Box<std::int64_t>;"
+	want := "::box::Box<std::int64_t>"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("the error must name %q, got: %v", want, err)
 	}
@@ -204,14 +205,14 @@ func TestTwoPhaseGenerics(t *testing.T) {
 	assert.Equal(t, found, again, "the scan is deterministic")
 
 	// The generation side of phase two: the same config, plus the scan. The
-	// shim now carries the explicit instantiations and their thunks.
+	// shim now carries a thunk per member of each collected instantiation.
 	cfg.Scan = []string{"./app"}
 	cfg.ScanDir = moduleDir
 	var report strings.Builder
 	cfg.Report = &report
 	require.NoError(t, Generate(cfg))
-	assert.Contains(t, report.String(), "template class ::box::Box<std::int32_t>;")
-	assert.Contains(t, report.String(), "template class ::box::Box<double>;")
+	assert.Contains(t, report.String(), "box::Box<std::int32_t>")
+	assert.Contains(t, report.String(), "box::Box<double>")
 	assert.Contains(t, report.String(), "generic API")
 
 	shim := filepath.Join(boxDir, ShimLibraryName("box"))

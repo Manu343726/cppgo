@@ -298,23 +298,42 @@ func mustGen(t *testing.T, args ...string) int {
 }
 
 // stdDequeHeader is a standard-library type outside DESIGN.md's table: the
-// generator must refuse it, not guess.
+// declaration is named and omitted, not guessed.
 var stdDequeHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "errors", "stddeque.hpp")
+
+// classTemplateHeader is a construct that cannot be modeled at all: a class
+// template with a public field, which the generic API has no shape for.
+var classTemplateHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "errors", "classtemplate.hpp")
 
 // tmplHeader is the class template fixture.
 var tmplHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "tmpl", "cell.hpp")
 
-// TestGenUnimplementedConstructFailsWithoutWriting is the integrity gate: an
-// unimplemented construct is exit 1, a one-line message, and no output files.
+// TestGenUnimplementedConstructFailsWithoutWriting is the integrity gate: a
+// construct the model cannot represent at all is exit 1, a one-line message,
+// and no output files.
 func TestGenUnimplementedConstructFailsWithoutWriting(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
-	code, stdout, stderr := exec("gen", "-header", stdDequeHeader, "-package", "err", "-library", "liberr", "-out", out)
+	code, stdout, stderr := exec("gen", "-header", classTemplateHeader, "-package", "err", "-library", "liberr", "-out", out)
 	assert.Equal(t, exitError, code)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "outside the emitted table")
+	assert.Contains(t, stderr, "public field")
 	assert.Contains(t, stderr, "; ")
 	_, err := os.Stat(out)
 	assert.True(t, os.IsNotExist(err), "a failed generation must not create the output directory")
+}
+
+// TestGenUncarryableDeclarationWarnsAndWrites is the declaration-level half of
+// the same gate: an uncarryable declaration is a warning on stderr and the
+// package is written, because nothing that would be emitted depends on it.
+func TestGenUncarryableDeclarationWarnsAndWrites(t *testing.T) {
+	out := t.TempDir()
+	code, stdout, stderr := exec("gen", "-header", stdDequeHeader, "-package", "err", "-library", "liberr", "-out", out)
+	assert.Equal(t, exitOK, code)
+	assert.Contains(t, stderr, "cppgo: warning:")
+	assert.Contains(t, stderr, "outside the emitted table")
+	assert.NotContains(t, stdout, "warning", "warnings are stderr, the per-binding report is stdout")
+	_, err := os.Stat(filepath.Join(out, gen.GenFileName))
+	require.NoError(t, err, "the package is written")
 }
 
 // TestGenInstantiate exercises the flag the template error names.
@@ -406,7 +425,7 @@ func TestBuildHelp(t *testing.T) {
 
 // TestBuildCollectsInstantiations runs the CLI's second phase against a real
 // module: gen writes the generic package, build scans the program and emits the
-// explicit instantiation.
+// per-instantiation thunks.
 func TestBuildCollectsInstantiations(t *testing.T) {
 	if _, err := osexec.LookPath("go"); err != nil {
 		t.Skip("go is not in PATH")
@@ -420,7 +439,7 @@ func TestBuildCollectsInstantiations(t *testing.T) {
 	mustExec(t, "gen", "-header", headerPath, "-package", "box", "-out", out)
 	stdout, _ := mustExec(t, "build", "-header", headerPath, "-package", "box", "-out", out,
 		"-scan", "./app", "-scan-dir", moduleDir)
-	assert.Contains(t, stdout, "template class ::box::Box<std::int32_t>;")
+	assert.Contains(t, stdout, "box::Box<std::int32_t>")
 	assert.Contains(t, stdout, "generic API")
 	assert.FileExists(t, filepath.Join(out, "libcppgo_box.so"))
 

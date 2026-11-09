@@ -156,17 +156,18 @@ func cppgoTemplateSymbol(tmpl, binding, key string) string {
 	return "cppgo_tmpl_" + cppgoTemplateHash(tmpl+"|"+binding+"|"+key)
 }
 
-// cppgoTemplateLine is the explicit instantiation that would make the
-// specialization exist, which is the line the failure names.
-func cppgoTemplateLine(tmpl, cxxArgs string) string {
-	return "template struct ::" + tmpl + "<" + cxxArgs + ">;"
+// cppgoTemplateName is the C++ specialization a generic wrapper reaches: the
+// name a missing thunk reports, so the reader sees which instantiation the last
+// cppgo build -scan did not collect.
+func cppgoTemplateName(tmpl, cxxArgs string) string {
+	return "::" + tmpl + "<" + cxxArgs + ">"
 }
 
 // cppgoTemplateFunc resolves one instantiation's thunk and caches it. A
 // missing thunk is the contract's failure mode: the Go program instantiated a
-// type the shim has no C++ counterpart for, and the error names the line to
-// add, never a nil call.
-func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
+// type the shim has no C++ counterpart for, and the error names the
+// specialization to rebuild for, never a nil call.
+func cppgoTemplateFunc(symbol, what, name string) (uintptr, error) {
 	cppgoMu.Lock()
 	addr, ok := cppgoTemplateSymbols[symbol]
 	cppgoMu.Unlock()
@@ -181,7 +182,7 @@ func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
 	cppgoMu.Unlock()
 	got, err := shim.Symbol(symbol)
 	if err != nil {
-		return 0, fmt.Errorf("cppgo: %s has no C++ instantiation in the shim: add %q to the header and run `cppgo build -scan <package>`: %w", what, line, err)
+		return 0, fmt.Errorf("cppgo: %s has no C++ counterpart in the shim: %s was not collected by the last `cppgo build -scan <package>`; run it again after the program uses the type: %w", what, name, err)
 	}
 	cppgoMu.Lock()
 	cppgoTemplateSymbols[symbol] = got
@@ -192,12 +193,12 @@ func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
 // cppgoTemplateLayout resolves an instantiation's sizeof and alignof thunks,
 // which is how the generic constructor allocates the object without knowing
 // the type's size at generation time.
-func cppgoTemplateLayout(tmpl, key, what, line string) (uintptr, uintptr, error) {
-	size, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "size", key), what, line)
+func cppgoTemplateLayout(tmpl, key, what, name string) (uintptr, uintptr, error) {
+	size, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "size", key), what, name)
 	if err != nil {
 		return 0, 0, err
 	}
-	align, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "align", key), what, line)
+	align, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "align", key), what, name)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -403,16 +404,16 @@ func NewBox[T any](value T) (*Box[T], error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	size, align, err := cppgoTemplateLayout("box::Box", key, what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	size, align, err := cppgoTemplateLayout("box::Box", key, what, name)
 	if err != nil {
 		return nil, err
 	}
-	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "1f9b88f605f5", key), what, line)
+	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "1f9b88f605f5", key), what, name)
 	if err != nil {
 		return nil, err
 	}
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "7b562b9c4451", key), what, line)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "7b562b9c4451", key), what, name)
 	if err != nil {
 		return nil, err
 	}
@@ -451,16 +452,16 @@ func NewBoxDefault[T any]() (*Box[T], error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	size, align, err := cppgoTemplateLayout("box::Box", key, what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	size, align, err := cppgoTemplateLayout("box::Box", key, what, name)
 	if err != nil {
 		return nil, err
 	}
-	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "1f9b88f605f5", key), what, line)
+	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "1f9b88f605f5", key), what, name)
 	if err != nil {
 		return nil, err
 	}
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "c12cecae1b71", key), what, line)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "c12cecae1b71", key), what, name)
 	if err != nil {
 		return nil, err
 	}
@@ -511,8 +512,8 @@ func (b *Box[T]) Add(other T) (T, error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "ffcff2c67266", key), what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "ffcff2c67266", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -545,8 +546,8 @@ func (b *Box[T]) Consume(value *T) error {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "9a6fca0a683d", key), what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "9a6fca0a683d", key), what, name)
 	if err != nil {
 		return err
 	}
@@ -577,8 +578,8 @@ func (b *Box[T]) Echo(value *T) (*T, error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "4fe36d3f9228", key), what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "4fe36d3f9228", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -613,8 +614,8 @@ func (b *Box[T]) Get() (T, error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "4be20ff0dced", key), what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "4be20ff0dced", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -646,8 +647,8 @@ func (b *Box[T]) Peek(value *T) (*T, error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "cc52dd6b6b27", key), what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "cc52dd6b6b27", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -680,8 +681,8 @@ func (b *Box[T]) Set(value T) error {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "921e0da902ac", key), what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "921e0da902ac", key), what, name)
 	if err != nil {
 		return err
 	}
@@ -708,8 +709,8 @@ func BoxIdentity[T any](value T) (T, error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "box::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "1639840169e8", key), what, line)
+	name := cppgoTemplateName("box::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Box", "1639840169e8", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -810,12 +811,12 @@ func NewMatrix[T any, R cppgoDimension, C cppgoDimension](fill T) (*Matrix[T, R,
 	key := cppgoMatrixKey[T, R, C]()
 	cxxArgs, _ := cppgoMatrixArgs[T, R, C]()
 	what := "box::Matrix<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Matrix", cxxArgs)
-	size, align, err := cppgoTemplateLayout("box::Matrix", key, what, line)
+	name := cppgoTemplateName("box::Matrix", cxxArgs)
+	size, align, err := cppgoTemplateLayout("box::Matrix", key, what, name)
 	if err != nil {
 		return nil, err
 	}
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Matrix", "b8d42c1e0e04", key), what, line)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Matrix", "b8d42c1e0e04", key), what, name)
 	if err != nil {
 		return nil, err
 	}
@@ -861,8 +862,8 @@ func (m *Matrix[T, R, C]) Get() (T, error) {
 	key := cppgoMatrixKey[T, R, C]()
 	cxxArgs, _ := cppgoMatrixArgs[T, R, C]()
 	what := "box::Matrix<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Matrix", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Matrix", "c8257eb4d35d", key), what, line)
+	name := cppgoTemplateName("box::Matrix", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Matrix", "c8257eb4d35d", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -890,8 +891,8 @@ func MatrixRows[T any, R cppgoDimension, C cppgoDimension]() (int32, error) {
 	key := cppgoMatrixKey[T, R, C]()
 	cxxArgs, _ := cppgoMatrixArgs[T, R, C]()
 	what := "box::Matrix<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Matrix", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Matrix", "c237915032f1", key), what, line)
+	name := cppgoTemplateName("box::Matrix", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Matrix", "c237915032f1", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -946,12 +947,12 @@ func NewPlain[T any](value T) (*Plain[T], error) {
 	key := cppgoPlainKey[T]()
 	cxxArgs, _ := cppgoPlainArgs[T]()
 	what := "box::Plain<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Plain", cxxArgs)
-	size, align, err := cppgoTemplateLayout("box::Plain", key, what, line)
+	name := cppgoTemplateName("box::Plain", cxxArgs)
+	size, align, err := cppgoTemplateLayout("box::Plain", key, what, name)
 	if err != nil {
 		return nil, err
 	}
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Plain", "5980fe65b533", key), what, line)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Plain", "5980fe65b533", key), what, name)
 	if err != nil {
 		return nil, err
 	}
@@ -997,8 +998,8 @@ func (p *Plain[T]) Value() (T, error) {
 	key := cppgoPlainKey[T]()
 	cxxArgs, _ := cppgoPlainArgs[T]()
 	what := "box::Plain<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::Plain", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Plain", "b2f08d19bc67", key), what, line)
+	name := cppgoTemplateName("box::Plain", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::Plain", "b2f08d19bc67", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -1042,8 +1043,8 @@ func Twice[T any](arg0 T) (T, error) {
 	key := cppgoTwiceKey[T]()
 	cxxArgs, _ := cppgoTwiceArgs[T]()
 	what := "box::twice<" + cxxArgs + ">"
-	line := cppgoTemplateLine("box::twice", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::twice", "3bdd9eb17859", key), what, line)
+	name := cppgoTemplateName("box::twice", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("box::twice", "3bdd9eb17859", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}

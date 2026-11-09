@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
 // TestOperatorGoNames pins the contract's naming table against a header that
@@ -89,10 +91,11 @@ private:
 	require.NoError(t, err)
 }
 
-// TestOperatorOutsideTheTableAsksForRename covers the other row: an operator
-// with no fixed name (operator new, which the contract deliberately omits) is a
-// generation error naming the declaration and the rename that resolves it.
-func TestOperatorOutsideTheTableAsksForRename(t *testing.T) {
+// TestOperatorWithUncarryableParametersIsAWarning covers the declaration rule
+// in an operator overload set: operator new's std::size_t and operator delete's
+// void * have no Go mapping yet, so they are omitted and named, and the class
+// keeps the member that can be carried.
+func TestOperatorWithUncarryableParametersIsAWarning(t *testing.T) {
 	dir := t.TempDir()
 	header := filepath.Join(dir, "allocation.hpp")
 	require.NoError(t, os.WriteFile(header, []byte(`
@@ -108,10 +111,33 @@ private:
 };
 }
 `), 0o644))
-	_, err := Render(Config{Headers: []string{header}, Package: "allocation", Library: "liballocation", Out: "."})
+	rendered, err := RenderResult(Config{Headers: []string{header}, Package: "allocation", Library: "liballocation", Out: "."})
+	require.NoError(t, err)
+	joined := joinWarnings(rendered.Warnings)
+	assert.Contains(t, joined, "allocation::Node::operator new")
+	assert.Contains(t, joined, "allocation::Node::operator delete")
+	generated := ""
+	for _, output := range rendered.Outputs {
+		if output.Name == GenFileName {
+			generated = string(output.Data)
+		}
+	}
+	assert.Contains(t, generated, "func (n *Node) Value()", "the class exists and keeps what it can carry")
+}
+
+// TestOperatorOutsideTheTableAsksForRename covers the other row: an operator
+// with no name in the contract's table is refused with the rename that resolves
+// it. It is checked on the naming function directly, because a declaration whose
+// parameters cannot be lowered is dropped before it is ever named.
+func TestOperatorOutsideTheTableAsksForRename(t *testing.T) {
+	b := testBuilder()
+	_, err := b.operatorGoName(&binding{sym: cxx.Symbol{
+		QualifiedName: "ns::Owner::operator->*",
+		IsOperator:    true,
+		Operator:      "->*",
+		Params:        []cxx.Param{{Kind: cxx.TypeInteger, Spelling: "int", SizeBytes: 4}},
+	}})
 	require.Error(t, err)
-	// The size_t parameter is the first construct that cannot be represented;
-	// the naming rule is what makes the operator itself unrepresentable, and
-	// either message names the declaration.
-	assert.Contains(t, err.Error(), "allocation::Node::operator new")
+	assert.Contains(t, err.Error(), "naming table")
+	assert.Contains(t, err.Error(), "-rename")
 }

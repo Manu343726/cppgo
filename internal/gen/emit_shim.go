@@ -331,7 +331,7 @@ func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
 	if !p.Ptr || p.Pointee == nil {
 		return name, nil
 	}
-	reference := strings.HasSuffix(strings.TrimSpace(p.Spelling), "&")
+	reference := referenceParam(p)
 	if p.Pointee.Kind == cxx.TypeRecord {
 		record := m.mapper.records[p.Pointee.RecordName]
 		if record == nil {
@@ -387,7 +387,7 @@ func (m *packageModel) shimValue(binding *binding, call string) string {
 			// belongs to the C++ view C++ handed over, not to the storage.
 			return "static_cast<void *>(const_cast<" + binding.Result.Cxx + " *>(&(" + call + ")))"
 		}
-		if strings.HasSuffix(strings.TrimSpace(binding.sym.Result.Spelling), "&") {
+		if referenceParam(binding.sym.Result) {
 			return "static_cast<void *>(&(" + call + "))"
 		}
 		return "static_cast<void *>(" + call + ")"
@@ -399,7 +399,7 @@ func (m *packageModel) shimValue(binding *binding, call string) string {
 		// result is an object, so the address is taken; a pointer result is
 		// already one.
 		expr := call
-		if strings.HasSuffix(strings.TrimSpace(binding.sym.Result.Spelling), "&") {
+		if referenceParam(binding.sym.Result) {
 			expr = "&(" + call + ")"
 		}
 		return "reinterpret_cast<" + binding.Result.C + ">(" + expr + ")"

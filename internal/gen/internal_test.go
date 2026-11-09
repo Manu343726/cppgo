@@ -52,9 +52,11 @@ func TestBuildBindingsGuards(t *testing.T) {
 			Access:        cxx.AccessPublic,
 			Params:        []cxx.Param{{Kind: cxx.TypeOther, Spelling: "__int128"}},
 		}}
-		err := b.buildBindings()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "__int128")
+		require.NoError(t, b.buildBindings())
+		assert.Empty(t, b.bindings)
+		require.Len(t, b.warnings, 1)
+		assert.Contains(t, b.warnings[0], "ns::Owner::bad")
+		assert.Contains(t, b.warnings[0], "__int128")
 	})
 
 	t.Run("constructor with an unsupported parameter", func(t *testing.T) {
@@ -66,9 +68,11 @@ func TestBuildBindingsGuards(t *testing.T) {
 			Access:        cxx.AccessPublic,
 			Params:        []cxx.Param{{Kind: cxx.TypeOther, Spelling: "__int128"}},
 		}}
-		err := b.buildBindings()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "__int128")
+		require.NoError(t, b.buildBindings())
+		assert.Empty(t, b.bindings)
+		require.Len(t, b.warnings, 1)
+		assert.Contains(t, b.warnings[0], "ns::Owner::Owner")
+		assert.Contains(t, b.warnings[0], "__int128")
 	})
 
 	t.Run("copy constructor with an unsupported parameter", func(t *testing.T) {
@@ -81,9 +85,10 @@ func TestBuildBindingsGuards(t *testing.T) {
 			IsCopyConstructor: true,
 			Params:            []cxx.Param{{Kind: cxx.TypeOther, Spelling: "__int128"}},
 		}}
-		err := b.buildBindings()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "__int128")
+		require.NoError(t, b.buildBindings())
+		assert.Empty(t, b.bindings)
+		require.Len(t, b.warnings, 1)
+		assert.Contains(t, b.warnings[0], "__int128")
 	})
 }
 

@@ -156,6 +156,16 @@ func TestMapPointer(t *testing.T) {
 			wantErr: "void pointer",
 		},
 		{
+			// The canonical form of a `typedef void *` (`af_array`): the
+			// pointee kind libclang reports is Invalid, and the declaration is
+			// a void pointer, not an unknown type.
+			name: "void pointer behind a typedef",
+			param: pointerParam(
+				cxx.Param{Kind: cxx.TypeOther, Spelling: "", ClangKind: "Invalid"},
+				"const af_array", "Pointer"),
+			wantErr: "void pointer",
+		},
+		{
 			name:    "pointer libclang did not describe",
 			param:   cxx.Param{Kind: cxx.TypePointer, Spelling: "mystery *", Ptr: true},
 			wantErr: "libclang did not describe",

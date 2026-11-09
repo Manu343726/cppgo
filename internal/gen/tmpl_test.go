@@ -133,3 +133,31 @@ func TestInstantiateShimCompiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.Contains(string(exported), "cppgo_thunk_"), "the shim's thunks must be exported")
 }
+
+// TestStaticAssertingMemberDoesNotRefuseTheInstantiation is #112's Eigen wall:
+// `wall::Strict<T>` has a member that only compiles for one-byte T (the shape
+// of Eigen's THIS_METHOD_IS_ONLY_FOR_VECTORS_OF_A_SPECIFIC_SIZE). The generic
+// API skips the operator, and the shim no longer writes a class-level
+// `template class`, so instantiating Strict<int32> writes only the members the
+// API calls and the translation unit compiles.
+func TestStaticAssertingMemberDoesNotRefuseTheInstantiation(t *testing.T) {
+	gxx, err := exec.LookPath("g++")
+	if err != nil {
+		t.Skip("g++ is not in PATH")
+	}
+	out := t.TempDir()
+	cfg := fixtureConfig("tmpl", "wall.hpp")
+	cfg.Package = "wall"
+	cfg.Library = "libwall"
+	cfg.Out = out
+	cfg.Bind = []string{"wall::Strict"}
+	cfg.Instantiation = []Instantiation{{Template: "wall::Strict", Args: []string{"int32"}}}
+	require.NoError(t, Generate(cfg))
+
+	shim := readFileString(t, ShimPath(out, ShimSourceFileName))
+	assert.NotContains(t, shim, "template class ::wall::Strict")
+	assert.Contains(t, shim, "return sizeof(::wall::Strict<std::int32_t>);")
+	output, err := exec.Command(gxx, "-std=c++17", "-fsyntax-only", "-I.",
+		ShimPath(out, ShimSourceFileName)).CombinedOutput()
+	require.NoErrorf(t, err, "g++ rejected the shim:\n%s", output)
+}

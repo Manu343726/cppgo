@@ -164,13 +164,20 @@ func TestByValue(t *testing.T) {
 			"inline int mat_cols(const cv::Mat &value) { return value.cols; }\n" +
 			"} // namespace cppgo_smoke\n",
 		bind: []string{"cv::NormTypes", "cv::Mat::total", "cppgo_smoke::make_mat",
-			"cppgo_smoke::mat_rows", "cppgo_smoke::mat_cols"},
+			"cppgo_smoke::mat_rows", "cppgo_smoke::mat_cols",
+			// The class itself, by its carryable constructors: the default one
+			// and the (rows, cols, type) form. The rest of Mat's overload set
+			// (cv::Size, cv::Range, void *) is reported, not refused, so the
+			// type exists without the smoke's wrapper.
+			"cv::Mat::Mat()", "cv::Mat::Mat(int, int, int)"},
 		expect: []string{
 			"type NormTypes",
 			"NormTypesNORML2",
 			"func (m *Mat) Total()",
 			"func MakeMat(rows int32, cols int32) (*Mat, error)",
 			"func MatRows(value *Mat) (int32, error)",
+			"func NewMat() (*Mat, error)",
+			"func NewMatInt32Int32Int32(",
 		},
 		install: "libopencv-dev",
 		libraries: []string{
@@ -236,12 +243,26 @@ func TestByValue(t *testing.T) {
 			"}\n" +
 			"inline double array_sum(af::array value) { return af::sum<double>(value); }\n" +
 			"} // namespace cppgo_smoke\n",
-		bind: []string{"af_dtype", "cppgo_smoke::make_array", "cppgo_smoke::array_sum"},
+		bind: []string{"af_dtype", "cppgo_smoke::make_array", "cppgo_smoke::array_sum",
+			// The class itself, by its carryable constructors. `const af_array`
+			// is a `void *` behind a typedef and is reported, not refused; the
+			// default and dimensioned forms carry.
+			"af::array::array()", "af::array::array(dim_t, dtype)",
+			"af::array::array(const af_array)",
+			// The two char * cases the issue names: the exception's
+			// constructors and what(), and infoString's result, cross as Go
+			// strings.
+			"af::exception", "af::infoString"},
 		expect: []string{
 			"type AfDtype",
 			"AfDtypeF32",
 			"func MakeArray(value float64) (*Array, error)",
 			"func ArraySum(value *Array) (float64, error)",
+			"func NewArray() (*Array, error)",
+			"func NewArrayInt64AfDtype(",
+			"func NewExceptionString(msg string) (*Exception, error)",
+			"func (e *Exception) What() string",
+			"func InfoString(verbose bool) (string, error)",
 		},
 		install:   "libarrayfire-dev",
 		libraries: []string{"/usr/local/lib/libaf.so.3", "/usr/lib/libaf.so.3"},

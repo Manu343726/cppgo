@@ -331,6 +331,9 @@ type packageModel struct {
 	usesFree bool
 	// usesSpan is true when the generated shim needs <span> (C++20).
 	usesSpan bool
+	// usesCString is true when a C++ `char *` crosses as a Go string, which
+	// makes the generated package carry the NUL-termination helpers.
+	usesCString bool
 	// spans is the line range of every thunk in the generated translation unit,
 	// which is how a compiler diagnostic names the binding it belongs to.
 	spans []thunkSpan
@@ -393,8 +396,12 @@ type builder struct {
 	linkedName string
 	// flags are the compilation flags the headers were parsed with. The shim is
 	// compiled with the same ones.
-	flags    []string
-	usesFree bool
+	flags       []string
+	usesFree    bool
+	usesCString bool
+	// manifestErr is the first request the manifest made that a declaration
+	// cannot satisfy. It is fatal, unlike a declaration the build cannot carry.
+	manifestErr error
 }
 
 // build loads the headers and turns the model into a package model.
@@ -424,9 +431,6 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.loadExporteds(); err != nil {
 		return nil, err
 	}
-	if err := b.rejectUnimplemented(); err != nil {
-		return nil, err
-	}
 	// Type names come first: an enum nested in a record is named after it, and
 	// a field's Go type needs the enum model the name produces.
 	b.assignTypeNames()
@@ -443,6 +447,9 @@ func build(cfg Config) (*packageModel, error) {
 	}
 	if err := b.buildBindings(); err != nil {
 		return nil, err
+	}
+	if b.manifestErr != nil {
+		return nil, b.manifestErr
 	}
 	b.buildStaticFields()
 	b.expandDefaults()
@@ -725,6 +732,14 @@ func (b *builder) buildBindings() error {
 		if !b.symbolSelected(sym) {
 			continue
 		}
+		if sym.IsVariadic {
+			// The ellipsis has no fixed argument list to lay out, so there is
+			// no thunk to write. The overloads beside it still bind.
+			b.unbound(sym, pending(
+				"a variadic function has no fixed argument list to lay out",
+				"replace the ellipsis with a fixed parameter list or a span"))
+			continue
+		}
 		owner := b.records[sym.Parent]
 		if owner == nil {
 			if sym.Kind != cxx.FreeFunc {
@@ -734,7 +749,8 @@ func (b *builder) buildBindings() error {
 			}
 			binding, err := b.newBinding(sym, nil)
 			if err != nil {
-				return symbolError(sym, err)
+				b.unbound(sym, err)
+				continue
 			}
 			b.bindings = append(b.bindings, binding)
 			continue
@@ -754,7 +770,8 @@ func (b *builder) buildBindings() error {
 			case sym.IsCopyConstructor:
 				clone, err := b.newBinding(sym, owner)
 				if err != nil {
-					return symbolError(sym, err)
+					b.unbound(sym, err)
+					continue
 				}
 				clone.IsConstructor = false
 				clone.IsClone = true
@@ -767,7 +784,8 @@ func (b *builder) buildBindings() error {
 			default:
 				ctor, err := b.newBinding(sym, owner)
 				if err != nil {
-					return symbolError(sym, err)
+					b.unbound(sym, err)
+					continue
 				}
 				owner.Ctors = append(owner.Ctors, ctor)
 				b.bindings = append(b.bindings, ctor)
@@ -787,7 +805,8 @@ func (b *builder) buildBindings() error {
 			}
 			method, err := b.newBinding(sym, owner)
 			if err != nil {
-				return symbolError(sym, err)
+				b.unbound(sym, err)
+				continue
 			}
 			if sym.Kind == cxx.StaticMethod {
 				owner.Statics = append(owner.Statics, method)
@@ -832,11 +851,12 @@ func (b *builder) buildBindings() error {
 // symbolSelected reports whether the manifest asks for this declaration, before
 // anything is lowered. With no -bind every declaration is a root; an entry
 // selects a declaration or everything inside it, so naming a record selects its
-// members. -exclude wins, as it does in applySelection.
+// members, and a full signature selects one overload of a set. -exclude wins, as
+// it does in applySelection.
 func (b *builder) symbolSelected(sym cxx.Symbol) bool {
 	keep := len(b.cfg.Bind) == 0
 	for i, entry := range b.cfg.Bind {
-		if matchesName(entry, sym.QualifiedName) || (sym.Parent != "" && matchesName(entry, sym.Parent)) {
+		if matchesSignature(entry, sym) || matchesName(entry, sym.QualifiedName) || (sym.Parent != "" && matchesName(entry, sym.Parent)) {
 			b.bindMatched[i] = true
 			keep = true
 		}
@@ -845,7 +865,7 @@ func (b *builder) symbolSelected(sym cxx.Symbol) bool {
 		return false
 	}
 	for i, entry := range b.cfg.Exclude {
-		if matchesName(entry, sym.QualifiedName) {
+		if matchesSignature(entry, sym) || matchesName(entry, sym.QualifiedName) {
 			b.excludeMatched[i] = true
 			return false
 		}
@@ -1044,6 +1064,9 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				binding.StdResult = true
 				binding.hasStd = true
 			}
+			if result.CString {
+				b.usesCString = true
+			}
 		}
 	}
 	b.chooseCarrier(binding)
@@ -1061,7 +1084,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 		// the error and loses the integer, and the thunk returns the callee's
 		// own code so a non-zero one is the failure.
 		if err := b.applyStatus(binding); err != nil {
-			return nil, err
+			return nil, manifestError{err}
 		}
 	}
 	if err := b.checkReentrant(binding); err != nil {
@@ -1086,7 +1109,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				cType:    "void *",
 				cName:    "cppgo_result",
 			})
-		case binding.Status || binding.Result.Kind == goRecord || binding.ViewResult:
+		case binding.Status || binding.Result.Kind == goRecord || binding.ViewResult || binding.Result.CString:
 			binding.Out = binding.Result
 			binding.OutLocal = outLocalType(binding.Result)
 			out := &wireArg{
@@ -1249,6 +1272,15 @@ func (b *builder) lowerParams(binding *binding) error {
 			b.callbackWire(binding, name, mapped, p, addWire)
 			continue
 		}
+		if mapped.CString {
+			if !p.Pointee.IsConst {
+				return fmt.Errorf("parameter %s: %w", p.Name, pending(
+					fmt.Sprintf("%q is a non-const char pointer", p.Spelling),
+					"take it as const char *: the Go string is immutable, so the callee's writes would not reach it"))
+			}
+			b.cStringParam(binding, name, mapped, p, addWire)
+			continue
+		}
 		if mapped.Kind == goRecord {
 			// A mirrored record is a Go value with the C layout: the thunk
 			// takes its address and copies it into the call, which is the one
@@ -1287,6 +1319,28 @@ func (b *builder) byValueParam(binding *binding, name string, mapped *goType, p 
 	}
 	add(arg)
 	binding.hasByValue = true
+}
+
+// cStringParam lowers a `const char *` parameter: the Go value is a string, and
+// the wire word is a NUL-terminated copy of it that the caller keeps alive for
+// the whole call. The copy is a declaration beside the call, not an argument
+// expression, because the callee may read the bytes until it returns.
+func (b *builder) cStringParam(binding *binding, name string, mapped *goType, p cxx.Param, add func(*wireArg)) {
+	ptr := "cppgo_" + name + "_cstr"
+	keep := ptr + "_keep"
+	binding.stdDecls = append(binding.stdDecls, ptr+", "+keep+" := cppgoCString("+name+")")
+	b.usesCString = true
+	add(&wireArg{
+		label:    "a" + itoa(len(binding.Wire)),
+		slotType: "unsafe.Pointer",
+		class:    classInt,
+		size:     8,
+		expr:     ptr,
+		keep:     keep,
+		cType:    mapped.C,
+		cName:    p.Name,
+		param:    p,
+	})
 }
 
 // callbackWire lowers a function-pointer or std::function parameter: the wire
@@ -1531,6 +1585,9 @@ func (b *builder) chooseCarrier(binding *binding) {
 	case binding.hasByValue:
 		binding.Carrier = thunk
 		binding.Reason = "a record passed or returned by value: the thunk copies it"
+	case binding.Result != nil && binding.Result.CString:
+		binding.Carrier = thunk
+		binding.Reason = "a C string result: the thunk hands the bytes out and Go copies them"
 	case sym.IsTemplate:
 		binding.Carrier = thunk
 		binding.Reason = "template: no symbol until it is instantiated"
@@ -1891,6 +1948,7 @@ func (b *builder) model() *packageModel {
 		flags:          b.flags,
 		usesFree:       b.usesFree,
 		usesSpan:       b.mapper.usesSpan,
+		usesCString:    b.usesCString,
 	}
 }
 
@@ -1915,7 +1973,7 @@ func (m *packageModel) report() []string {
 		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s generic API, %d binding(s)", tmpl.CxxName+"<"+paramNames(tmpl)+">", "tmpl", "-", len(tmpl.bindings())))
 	}
 	for _, inst := range m.instantiations {
-		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", inst.cxxName(), "tmpl", inst.Key, inst.explicitInstantiation()))
+		lines = append(lines, fmt.Sprintf("%-44s %-6s %-28s %s", inst.cxxName(), "tmpl", inst.Key, "members instantiated where each thunk calls them"))
 	}
 	return lines
 }
@@ -2032,6 +2090,11 @@ func (b *builder) layout() {
 // outLocalType is the Go type of the local a thunk writes through its
 // out-pointer. It must have exactly the C type's width and representation.
 func outLocalType(result *goType) string {
+	if result.CString {
+		// The thunk writes the library's pointer; the wrapper copies the bytes
+		// out of it before the call returns.
+		return "unsafe.Pointer"
+	}
 	switch result.Kind {
 	case goBool:
 		// A C++ bool is one byte; an int8 local is the honest mirror and the

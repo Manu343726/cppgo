@@ -847,17 +847,18 @@ func cppgoTemplateSymbol(tmpl, binding, key string) string {
 	return "cppgo_tmpl_" + cppgoTemplateHash(tmpl+"|"+binding+"|"+key)
 }
 
-// cppgoTemplateLine is the explicit instantiation that would make the
-// specialization exist, which is the line the failure names.
-func cppgoTemplateLine(tmpl, cxxArgs string) string {
-	return "template struct ::" + tmpl + "<" + cxxArgs + ">;"
+// cppgoTemplateName is the C++ specialization a generic wrapper reaches: the
+// name a missing thunk reports, so the reader sees which instantiation the last
+// cppgo build -scan did not collect.
+func cppgoTemplateName(tmpl, cxxArgs string) string {
+	return "::" + tmpl + "<" + cxxArgs + ">"
 }
 
 // cppgoTemplateFunc resolves one instantiation's thunk and caches it. A
 // missing thunk is the contract's failure mode: the Go program instantiated a
-// type the shim has no C++ counterpart for, and the error names the line to
-// add, never a nil call.
-func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
+// type the shim has no C++ counterpart for, and the error names the
+// specialization to rebuild for, never a nil call.
+func cppgoTemplateFunc(symbol, what, name string) (uintptr, error) {
 	cppgoMu.Lock()
 	addr, ok := cppgoTemplateSymbols[symbol]
 	cppgoMu.Unlock()
@@ -872,7 +873,7 @@ func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
 	cppgoMu.Unlock()
 	got, err := shim.Symbol(symbol)
 	if err != nil {
-		return 0, fmt.Errorf("cppgo: %s has no C++ instantiation in the shim: add %q to the header and run `cppgo build -scan <package>`: %w", what, line, err)
+		return 0, fmt.Errorf("cppgo: %s has no C++ counterpart in the shim: %s was not collected by the last `cppgo build -scan <package>`; run it again after the program uses the type: %w", what, name, err)
 	}
 	cppgoMu.Lock()
 	cppgoTemplateSymbols[symbol] = got
@@ -883,12 +884,12 @@ func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
 // cppgoTemplateLayout resolves an instantiation's sizeof and alignof thunks,
 // which is how the generic constructor allocates the object without knowing
 // the type's size at generation time.
-func cppgoTemplateLayout(tmpl, key, what, line string) (uintptr, uintptr, error) {
-	size, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "size", key), what, line)
+func cppgoTemplateLayout(tmpl, key, what, name string) (uintptr, uintptr, error) {
+	size, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "size", key), what, name)
 	if err != nil {
 		return 0, 0, err
 	}
-	align, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "align", key), what, line)
+	align, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "align", key), what, name)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1004,16 +1005,16 @@ func NewBox[T any]() (*Box[T], error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "nested::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("nested::Box", cxxArgs)
-	size, align, err := cppgoTemplateLayout("nested::Box", key, what, line)
+	name := cppgoTemplateName("nested::Box", cxxArgs)
+	size, align, err := cppgoTemplateLayout("nested::Box", key, what, name)
 	if err != nil {
 		return nil, err
 	}
-	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("nested::Box", "726ad4a87d5d", key), what, line)
+	dtor, err := cppgoTemplateFunc(cppgoTemplateSymbol("nested::Box", "726ad4a87d5d", key), what, name)
 	if err != nil {
 		return nil, err
 	}
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("nested::Box", "6aa0fb417b59", key), what, line)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("nested::Box", "6aa0fb417b59", key), what, name)
 	if err != nil {
 		return nil, err
 	}
@@ -1064,8 +1065,8 @@ func (b *Box[T]) Get() (T, error) {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "nested::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("nested::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("nested::Box", "372f3d139705", key), what, line)
+	name := cppgoTemplateName("nested::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("nested::Box", "372f3d139705", key), what, name)
 	if err != nil {
 		return cppgoZero, err
 	}
@@ -1095,8 +1096,8 @@ func (b *Box[T]) Set(value T) error {
 	key := cppgoBoxKey[T]()
 	cxxArgs, _ := cppgoBoxArgs[T]()
 	what := "nested::Box<" + cxxArgs + ">"
-	line := cppgoTemplateLine("nested::Box", cxxArgs)
-	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("nested::Box", "b627bb476caa", key), what, line)
+	name := cppgoTemplateName("nested::Box", cxxArgs)
+	fn, err := cppgoTemplateFunc(cppgoTemplateSymbol("nested::Box", "b627bb476caa", key), what, name)
 	if err != nil {
 		return err
 	}

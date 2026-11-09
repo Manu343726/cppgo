@@ -56,17 +56,18 @@ func cppgoTemplateSymbol(tmpl, binding, key string) string {
 	return "cppgo_tmpl_" + cppgoTemplateHash(tmpl+"|"+binding+"|"+key)
 }
 
-// cppgoTemplateLine is the explicit instantiation that would make the
-// specialization exist, which is the line the failure names.
-func cppgoTemplateLine(tmpl, cxxArgs string) string {
-	return "template struct ::" + tmpl + "<" + cxxArgs + ">;"
+// cppgoTemplateName is the C++ specialization a generic wrapper reaches: the
+// name a missing thunk reports, so the reader sees which instantiation the last
+// cppgo build -scan did not collect.
+func cppgoTemplateName(tmpl, cxxArgs string) string {
+	return "::" + tmpl + "<" + cxxArgs + ">"
 }
 
 // cppgoTemplateFunc resolves one instantiation's thunk and caches it. A
 // missing thunk is the contract's failure mode: the Go program instantiated a
-// type the shim has no C++ counterpart for, and the error names the line to
-// add, never a nil call.
-func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
+// type the shim has no C++ counterpart for, and the error names the
+// specialization to rebuild for, never a nil call.
+func cppgoTemplateFunc(symbol, what, name string) (uintptr, error) {
 	cppgoMu.Lock()
 	addr, ok := cppgoTemplateSymbols[symbol]
 	cppgoMu.Unlock()
@@ -81,7 +82,7 @@ func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
 	cppgoMu.Unlock()
 	got, err := shim.Symbol(symbol)
 	if err != nil {
-		return 0, fmt.Errorf("cppgo: %s has no C++ instantiation in the shim: add %q to the header and run ` + "`cppgo build -scan <package>`" + `: %w", what, line, err)
+		return 0, fmt.Errorf("cppgo: %s has no C++ counterpart in the shim: %s was not collected by the last ` + "`cppgo build -scan <package>`" + `; run it again after the program uses the type: %w", what, name, err)
 	}
 	cppgoMu.Lock()
 	cppgoTemplateSymbols[symbol] = got
@@ -92,12 +93,12 @@ func cppgoTemplateFunc(symbol, what, line string) (uintptr, error) {
 // cppgoTemplateLayout resolves an instantiation's sizeof and alignof thunks,
 // which is how the generic constructor allocates the object without knowing
 // the type's size at generation time.
-func cppgoTemplateLayout(tmpl, key, what, line string) (uintptr, uintptr, error) {
-	size, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "size", key), what, line)
+func cppgoTemplateLayout(tmpl, key, what, name string) (uintptr, uintptr, error) {
+	size, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "size", key), what, name)
 	if err != nil {
 		return 0, 0, err
 	}
-	align, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "align", key), what, line)
+	align, err := cppgoTemplateFunc(cppgoTemplateSymbol(tmpl, "align", key), what, name)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -284,7 +285,7 @@ func (m *packageModel) emitTemplateKeyPrologue(b *strings.Builder, tmpl *templat
 	fmt.Fprintf(b, "\tkey := cppgo%sKey%s()\n", tmpl.GoName, tmpl.typeParams())
 	fmt.Fprintf(b, "\tcxxArgs, _ := cppgo%sArgs%s()\n", tmpl.GoName, tmpl.typeParams())
 	fmt.Fprintf(b, "\twhat := %q + cxxArgs + %q\n", tmpl.CxxName+"<", ">")
-	fmt.Fprintf(b, "\tline := cppgoTemplateLine(%q, cxxArgs)\n", tmpl.CxxName)
+	fmt.Fprintf(b, "\tname := cppgoTemplateName(%q, cxxArgs)\n", tmpl.CxxName)
 }
 
 // emitTemplateType writes one generic Go type, its constructors, Close and
@@ -342,15 +343,15 @@ func (m *packageModel) emitTemplateConstructor(b *strings.Builder, tmpl *templat
 	fmt.Fprintf(b, "func %s%s(%s) (*%s%s, error) {\n", ctor.GoName, tmpl.declTypeParams(), goParams(ctor.Params), tmpl.GoName, tmpl.typeParams())
 	m.emitTemplateKeyPrologue(b, tmpl)
 	b.WriteString("\tsize, align, err := cppgoTemplateLayout(")
-	fmt.Fprintf(b, "%q, key, what, line)\n", tmpl.CxxName)
+	fmt.Fprintf(b, "%q, key, what, name)\n", tmpl.CxxName)
 	b.WriteString("\tif err != nil {\n\t\treturn nil, err\n\t}\n")
 	dtor := ""
 	if tmpl.Dtor != nil {
-		fmt.Fprintf(b, "\tdtor, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, line)\n", tmpl.CxxName, tmpl.Dtor.ID)
+		fmt.Fprintf(b, "\tdtor, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, name)\n", tmpl.CxxName, tmpl.Dtor.ID)
 		b.WriteString("\tif err != nil {\n\t\treturn nil, err\n\t}\n")
 		dtor = "dtor"
 	}
-	fmt.Fprintf(b, "\tfn, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, line)\n", tmpl.CxxName, ctor.ID)
+	fmt.Fprintf(b, "\tfn, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, name)\n", tmpl.CxxName, ctor.ID)
 	b.WriteString("\tif err != nil {\n\t\treturn nil, err\n\t}\n")
 	if dtor != "" {
 		b.WriteString("\tconstructed := false\n")
@@ -400,7 +401,7 @@ func (m *packageModel) emitTemplateMethod(b *strings.Builder, tmpl *templateMode
 	m.emitTemplateClosedCheck(b, method, recv+" == nil || "+recv+".obj == nil")
 	m.emitTemplateZero(b, method)
 	m.emitTemplateKeyPrologue(b, tmpl)
-	fmt.Fprintf(b, "\tfn, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, line)\n", tmpl.CxxName, method.ID)
+	fmt.Fprintf(b, "\tfn, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, name)\n", tmpl.CxxName, method.ID)
 	m.emitTemplateErrorReturn(b, method)
 	m.emitTemplateCallBody(b, method, fmt.Sprintf("%s.obj.Addr()", recv))
 	fmt.Fprintf(b, "}\n\n")
@@ -414,7 +415,7 @@ func (m *packageModel) emitTemplateStatic(b *strings.Builder, tmpl *templateMode
 	fmt.Fprintf(b, "func %s%s(%s)%s {\n", static.GoName, tmpl.declTypeParams(), goParams(static.Params), templateResults(static))
 	m.emitTemplateZero(b, static)
 	m.emitTemplateKeyPrologue(b, tmpl)
-	fmt.Fprintf(b, "\tfn, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, line)\n", tmpl.CxxName, static.ID)
+	fmt.Fprintf(b, "\tfn, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, name)\n", tmpl.CxxName, static.ID)
 	m.emitTemplateErrorReturn(b, static)
 	m.emitTemplateCallBody(b, static, "")
 	fmt.Fprintf(b, "}\n\n")
@@ -429,7 +430,7 @@ func (m *packageModel) emitTemplateFunction(b *strings.Builder, tmpl *templateMo
 	fmt.Fprintf(b, "func %s%s(%s)%s {\n", fn.GoName, tmpl.declTypeParams(), goParams(fn.Params), templateResults(fn))
 	m.emitTemplateZero(b, fn)
 	m.emitTemplateKeyPrologue(b, tmpl)
-	fmt.Fprintf(b, "\tfn, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, line)\n", tmpl.CxxName, fn.ID)
+	fmt.Fprintf(b, "\tfn, err := cppgoTemplateFunc(cppgoTemplateSymbol(%q, %q, key), what, name)\n", tmpl.CxxName, fn.ID)
 	m.emitTemplateErrorReturn(b, fn)
 	m.emitTemplateCallBody(b, fn, "")
 	fmt.Fprintf(b, "}\n\n")

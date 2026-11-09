@@ -102,10 +102,13 @@ void cppgo_thunk_93c6ad214bbe(void * self, int32_t id);
 void cppgo_thunk_2d778d0dc0ff(void * self, int32_t id);
 
 /* cppgo_thunk_fe3a62f29761: inherit::Shape::name() const noexcept */
-const int8_t * cppgo_thunk_fe3a62f29761(const void * self);
+void cppgo_thunk_fe3a62f29761(const void * self, const char * * cppgo_result);
 
 /* cppgo_thunk_38f5d27773c8: inherit::Shape::name() const noexcept */
-const int8_t * cppgo_thunk_38f5d27773c8(const void * self);
+void cppgo_thunk_38f5d27773c8(const void * self, const char * * cppgo_result);
+
+/* cppgo_thunk_7ebbc7da6590: inherit::Shape::name() const noexcept */
+void cppgo_thunk_7ebbc7da6590(const void * self, const char * * cppgo_result);
 
 /* cppgo_thunk_9786ecc85bec: inherit::Shape::weight() const */
 int32_t cppgo_thunk_9786ecc85bec(const void * self, double * cppgo_result);

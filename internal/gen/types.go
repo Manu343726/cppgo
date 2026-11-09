@@ -86,6 +86,10 @@ type goType struct {
 	// storage, and the copy into or out of the call is made by the shim: it is
 	// the only place the type's copy constructor exists.
 	ByValue bool
+	// CString is true when the type is `char *` or `const char *`: the Go value
+	// is a string, a parameter crosses as a NUL-terminated copy, and a result
+	// is copied out of the library's own storage before the call returns.
+	CString bool
 }
 
 // callbackType is the signature of a Go function handed to C++. The carrier
@@ -540,6 +544,29 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 	if p.Pointee == nil {
 		return nil, pending(fmt.Sprintf("%q is a pointer libclang did not describe", p.Spelling), "include the pointed-to definition in the header")
 	}
+	if p.Pointee.ClangKind == "Invalid" {
+		// A typedef of `void *` (`af_array`) canonicalizes to a pointer whose
+		// pointee libclang cannot name: there is no Go value for it, and the
+		// declaration is reported, not guessed at.
+		return nil, pending(fmt.Sprintf("%q is a void pointer", p.Spelling), "expose a typed pointer at the C++ boundary")
+	}
+	if isCString(p) {
+		// A C string is the one char pointer with a Go value: string. The C
+		// type keeps its constness, which is what the thunk's prototype and
+		// the result copy need.
+		qualifier := ""
+		if p.Pointee.IsConst {
+			qualifier = "const "
+		}
+		return &goType{
+			Kind:    goString,
+			Go:      "string",
+			C:       qualifier + "char *",
+			Cxx:     qualifier + "char *",
+			CString: true,
+			Param:   p,
+		}, nil
+	}
 	var elem *goType
 	if p.Pointee.Kind == cxx.TypeRecord {
 		// A record pointer does not need the record to be mirrorable: the Go
@@ -593,6 +620,15 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 		Const: p.Pointee.IsConst,
 		Param: p,
 	}, nil
+}
+
+// isCString reports whether the parameter is `char *` or `const char *`: a
+// pointer to a plain char, never to signed char or unsigned char, which are
+// different C++ types with different Go mappings.
+func isCString(p cxx.Param) bool {
+	// The caller has already checked that this is a pointer with a pointee.
+	return p.Pointee.Kind == cxx.TypeInteger &&
+		(p.Pointee.ClangKind == "Char_S" || p.Pointee.ClangKind == "Char_U")
 }
 
 // mapRecord maps a record by value.

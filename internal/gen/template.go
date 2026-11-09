@@ -38,9 +38,6 @@ type templateModel struct {
 	GoName string
 	// CxxName is the qualified C++ template name, e.g. "tmpl::Box".
 	CxxName string
-	// Kind is the keyword the template was declared with, which the shim's
-	// explicit instantiation repeats.
-	Kind cxx.RecordKind
 	// Params are the template's type parameters, in declaration order.
 	Params []templateParam
 	// Ctors, Dtor, Methods and Statics are the pattern's public members, with
@@ -182,16 +179,6 @@ func (i *templateInstantiation) cxxName() string {
 	return i.Template.CxxName + "<" + strings.Join(parts, ", ") + ">"
 }
 
-// explicitInstantiation is the line the shim adds to make the specialization
-// exist, and the line the load error tells the user to add.
-func (i *templateInstantiation) explicitInstantiation() string {
-	keyword := "struct"
-	if i.Template.Kind == cxx.Class {
-		keyword = "class"
-	}
-	return "template " + keyword + " ::" + i.cxxName() + ";"
-}
-
 // buildTemplates turns every template pattern into a generic model. It is the
 // first phase of the two-phase flow: nothing here knows a concrete argument,
 // and the output compiles on its own.
@@ -279,7 +266,6 @@ func (b *builder) newTemplate(rec cxx.Record) (*templateModel, error) {
 	tmpl := &templateModel{
 		GoName:  exportName(simpleName(rec.QualifiedName)),
 		CxxName: rec.QualifiedName,
-		Kind:    rec.Kind,
 		Params:  params,
 	}
 	for _, field := range rec.Fields {
