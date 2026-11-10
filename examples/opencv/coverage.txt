@@ -7,14 +7,13 @@
 # module	selected	bound	refused	skipped	templates	not_selected	bound_ratio
 core	236	159	5	23	49	1990	0.7465
 imgcodecs	4	4	0	0	0	25	1.0000
-imgproc	9	9	0	0	0	225	1.0000
-unknown	0	0	0	0	0	10	0.0000
+imgproc	9	9	0	0	0	235	1.0000
 #
 # classification counts (refused declarations)
 #
 # class	count
 by-value-record	2
-unmodeled-type	1
+gpu-only	1
 unowned-pointer	2
 #
 # declarations	kind	module	class	reason
@@ -2159,16 +2158,16 @@ cv::saturate_cast(ushort)	not-selected	core	not-selected	the manifest did not na
 cv::saturate_cast(ushort)	not-selected	core	not-selected	the manifest did not name this declaration
 cv::saturate_cast(ushort)	not-selected	core	not-selected	the manifest did not name this declaration
 cv::scaleAdd(InputArray, double, InputArray, OutputArray)	not-selected	core	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::IntelligentScissorsMB()	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::applyImage(InputArray)	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::applyImageFeatures(InputArray, InputArray, InputArray, InputArray)	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::buildMap(const Point &)	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::getContour(const Point &, OutputArray, bool) const	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::getImpl() const	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::setEdgeFeatureCannyParameters(double, double, int, bool)	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::setEdgeFeatureZeroCrossingParameters(float)	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::setGradientMagnitudeMaxLimit(float)	not-selected	unknown	not-selected	the manifest did not name this declaration
-cv::segmentation::IntelligentScissorsMB::setWeights(float, float, float)	not-selected	unknown	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::IntelligentScissorsMB()	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::applyImage(InputArray)	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::applyImageFeatures(InputArray, InputArray, InputArray, InputArray)	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::buildMap(const Point &)	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::getContour(const Point &, OutputArray, bool) const	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::getImpl() const	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::setEdgeFeatureCannyParameters(double, double, int, bool)	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::setEdgeFeatureZeroCrossingParameters(float)	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::setGradientMagnitudeMaxLimit(float)	not-selected	imgproc	not-selected	the manifest did not name this declaration
+cv::segmentation::IntelligentScissorsMB::setWeights(float, float, float)	not-selected	imgproc	not-selected	the manifest did not name this declaration
 cv::sepFilter2D(InputArray, OutputArray, int, InputArray, InputArray, Point, double, int)	not-selected	imgproc	not-selected	the manifest did not name this declaration
 cv::setBreakOnError(bool)	not-selected	core	not-selected	the manifest did not name this declaration
 cv::setIdentity(InputOutputArray, const Scalar &)	not-selected	core	not-selected	the manifest did not name this declaration
@@ -2269,7 +2268,7 @@ cvRound(double)	not-selected	core	not-selected	the manifest did not name this de
 cvRound(float)	not-selected	core	not-selected	the manifest did not name this declaration
 cvRound(int)	not-selected	core	not-selected	the manifest did not name this declaration
 cv::Mat::Mat(const Mat &, const std::vector<Range> &)	refused	core	by-value-record	parameter ranges: "cv::Range" is not a POD; use scalar elements, or bind a C++ wrapper that copies the objects
-cv::Mat::Mat(const cuda::GpuMat &)	refused	core	unmodeled-type	parameter m: "const cuda::GpuMat" is not part of the generated API; include its complete definition in the header
+cv::Mat::Mat(const cuda::GpuMat &)	refused	core	gpu-only	parameter m: "const cuda::GpuMat" is not part of the generated API; include its complete definition in the header
 cv::Mat::getDefaultAllocator()	refused	core	unowned-pointer	"MatAllocator *" is a pointer to an opaque record; return it through a reference at the C++ boundary
 cv::Mat::getStdAllocator()	refused	core	unowned-pointer	"MatAllocator *" is a pointer to an opaque record; return it through a reference at the C++ boundary
 cv::Mat::operator()(const std::vector<Range> &) const	refused	core	by-value-record	parameter ranges: "cv::Range" is not a POD; use scalar elements, or bind a C++ wrapper that copies the objects

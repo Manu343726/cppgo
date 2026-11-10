@@ -134,9 +134,15 @@ func (b *builder) coverageEntries() []coverageEntry {
 			continue
 		}
 		declaration := displaySignature(sym)
+		module := moduleOf(sym.DeclFile)
+		if sym.DeclFile == "" {
+			// A member of a class reached through an implicit instantiation can
+			// have no location. Its namespace still names the module.
+			module = namespaceModule(sym.QualifiedName)
+		}
 		entry := coverageEntry{
 			Declaration: declaration,
-			Module:      moduleOf(sym.DeclFile),
+			Module:      module,
 		}
 		key := symbolKey(sym)
 		switch {
@@ -191,6 +197,17 @@ func (b *builder) templateEntrySelected(sym cxx.Symbol) bool {
 	return false
 }
 
+// namespaceModule reads a module out of a qualified name whose declaration has
+// no file: cv::segmentation::Thing is the segmentation module, cv::Mat is not
+// attributable and answers "unknown".
+func namespaceModule(qualified string) string {
+	parts := strings.Split(qualified, "::")
+	if len(parts) >= 3 && parts[0] == "cv" {
+		return parts[1]
+	}
+	return "unknown"
+}
+
 // moduleOf reads the library module a declaration belongs to from its header:
 // the directory immediately under the library's include root, e.g. core for
 // /usr/include/opencv4/opencv2/core/mat.hpp.
@@ -200,8 +217,17 @@ func moduleOf(file string) string {
 	}
 	parts := strings.Split(strings.ReplaceAll(file, "\\", "/"), "/")
 	for i, part := range parts {
-		if part == "opencv2" && i+1 < len(parts) {
-			return moduleName(parts[i+1])
+		if part != "opencv2" {
+			continue
+		}
+		// A path can carry "." components ("opencv2/./imgproc/…"): the module
+		// is the first component that is a real directory or the header's own
+		// file.
+		for j := i + 1; j < len(parts); j++ {
+			if parts[j] == "." || parts[j] == ".." || parts[j] == "" {
+				continue
+			}
+			return moduleName(parts[j])
 		}
 	}
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -237,8 +263,9 @@ func moduleName(part string) string {
 // type, an array, or something the operator has to decide.
 func classifyRefusal(declaration, reason string) string {
 	switch {
-	case strings.Contains(declaration, "cv::cuda::"), strings.Contains(declaration, "cv::ogl::"),
-		strings.Contains(declaration, "cv::cudev::"), strings.Contains(declaration, "cv::ocl::"):
+	case strings.Contains(declaration, "cuda::"), strings.Contains(declaration, "cv::ogl::"),
+		strings.Contains(declaration, "cudev::"), strings.Contains(declaration, "cv::ocl::"),
+		strings.Contains(reason, "cuda"):
 		return "gpu-only"
 	case strings.Contains(reason, "variadic"):
 		return "variadic-c"
