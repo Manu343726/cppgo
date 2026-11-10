@@ -59,7 +59,7 @@ func TestDeclarationsTheBuildCannotCarryAreWarnings(t *testing.T) {
 		{"callbackmanyfloats.hpp", "more than 8 SSE arguments"},
 		{"callbackrecord.hpp", "is not a scalar"},
 		{"callbackrecordresult.hpp", "is not a scalar"},
-		{"callbackstring.hpp", "is not a scalar or a known record"},
+		{"callbackstring.hpp", "is not a scalar"},
 		{"callbackresult.hpp", "is a function or std::function result"},
 		{"callbackstdresult.hpp", "returns a standard-library value and takes a callback"},
 		{"incomplete.hpp", "not part of the generated API"},

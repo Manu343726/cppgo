@@ -186,6 +186,7 @@ func (c *cli) generate(args []string, m mode) int {
 		Instantiate:     v.instantiate,
 		Rename:          v.rename,
 		Status:          v.status,
+		Proxy:           v.proxy,
 		Scan:            v.scan,
 		ScanDir:         v.scanDir,
 		Coverage:        v.coverage,
@@ -227,10 +228,10 @@ func wantsHelp(args []string) bool {
 
 // flagValues holds the values of the flag set that gen, check and build share.
 type flagValues struct {
-	headers, bind, exclude, instantiate, rename, status, scan stringList
-	packageName, library, cxx, out, compileCommands, scanDir  string
-	coverage                                                  string
-	check, quiet                                              bool
+	headers, bind, exclude, instantiate, rename, status, scan, proxy stringList
+	packageName, library, cxx, out, compileCommands, scanDir         string
+	coverage                                                         string
+	check, quiet                                                     bool
 }
 
 // newFlagSet creates the flag set "cppgo <verb>" parses with. Every flag the
@@ -250,6 +251,7 @@ func newFlagSet(m mode) (*flag.FlagSet, *flagValues) {
 	fs.Var(&v.instantiate, "instantiate", "concrete template specialization to emit; repeatable")
 	fs.Var(&v.rename, "rename", "<qualified signature>=<GoName>; repeatable")
 	fs.Var(&v.status, "status", "declaration whose int32 return is a status code; repeatable")
+	fs.Var(&v.proxy, "proxy", "<declaration>#<index>=<C++ container type>; repeatable")
 	fs.Var(&v.scan, "scan", "Go package whose template instantiations to collect; repeatable")
 	fs.StringVar(&v.scanDir, "scan-dir", ".", "directory the -scan patterns resolve against")
 	fs.StringVar(&v.coverage, "coverage", "", "write the per-declaration coverage report to this file")
@@ -269,7 +271,7 @@ type flagDoc struct {
 // flagOrder is the order the shared flags are documented in.
 var flagOrder = []string{
 	"header", "package", "library", "out", "compile-commands",
-	"bind", "exclude", "instantiate", "rename", "status",
+	"bind", "exclude", "instantiate", "rename", "status", "proxy",
 	"scan", "scan-dir", "coverage", "cxx", "check", "q",
 }
 
@@ -346,6 +348,15 @@ func flagDocs(m mode) map[string]flagDoc {
 			meta:  "signature=GoName",
 			lines: []string{"resolve a Go name collision; repeatable"},
 			def:   "none",
+		},
+		"proxy": {
+			meta: "declaration#index=type",
+			lines: []string{
+				"carry an InputArray/OutputArray parameter as a container: the shim",
+				"constructs the proxy around it, so one thunk holds both. A trailing",
+				"& makes it in-out; repeatable",
+			},
+			def: "none",
 		},
 		"status": {
 			meta: "qualified",

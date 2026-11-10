@@ -379,6 +379,12 @@ func (b *builder) templateSuffix(binding *binding) string {
 	}
 	var out strings.Builder
 	for _, spelling := range binding.templateArgs {
+		// A record argument is named after the Go type the record model has, so
+		// _InputArray<cv::Point_<int>> is named PointInt and not the spelling.
+		if record, ok := b.mapper.lookupRecord(spelling); ok {
+			out.WriteString(typeSuffix(record.GoName))
+			continue
+		}
 		param, ok := cxx.ScalarType(spelling)
 		if !ok {
 			out.WriteString(typeSuffix(exportName(spelling)))

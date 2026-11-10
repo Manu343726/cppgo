@@ -165,11 +165,11 @@ extern "C" int32_t cppgo_thunk_fd03fa9b2a3c(const void * self, void ** cppgo_out
 	cppgo_error_message.clear();
 	try {
 		auto cppgo_value = static_cast<const ::fields::Settings *>(self)->weights;
-		const size_t cppgo_size = cppgo_value.size();
-		int32_t *cppgo_copy = static_cast<int32_t *>(::operator new[]((cppgo_size == 0 ? 1 : cppgo_size) * sizeof(int32_t)));
-		for (size_t cppgo_i = 0; cppgo_i < cppgo_size; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }
+		const size_t cppgo_n = cppgo_value.size();
+		int32_t *cppgo_copy = static_cast<int32_t *>(::operator new[]((cppgo_n == 0 ? 1 : cppgo_n) * sizeof(int32_t)));
+		for (size_t cppgo_i = 0; cppgo_i < cppgo_n; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }
 		*cppgo_out_data = cppgo_copy;
-		*cppgo_out_size = cppgo_size;
+		*cppgo_out_size = cppgo_n;
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();

@@ -1408,7 +1408,19 @@ func (tu *TU) instantiateMemberPattern(record, member string, pattern memberTemp
 	// call the shim writes is right either way.
 	isConst := tu.l.f.isConstQualifiedType(tu.l.f.getCursorType(pattern.cursor)) != 0
 	sym.IsConst, sym.IsVirtual, sym.IsStatic = isConst, false, false
-	sym.Kind = Method
+	// A constructor is a member function template too — OpenCV's proxies are
+	// built from containers that way — and its cursor is the template kind, so
+	// the name is what says it is one.
+	switch simpleMemberName(record) {
+	case member:
+		sym.Kind = Constructor
+		sym.IsConst = false
+	case "~" + simpleMemberName(record):
+		sym.Kind = Destructor
+		sym.IsConst = false
+	default:
+		sym.Kind = Method
+	}
 	sym.IsTemplate = false
 	sym.QualifiedName = record + "::" + member
 	return sym

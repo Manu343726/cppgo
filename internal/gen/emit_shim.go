@@ -266,12 +266,9 @@ func (m *packageModel) stdOutCopies(binding *binding) string {
 		if !arg.stdOutCopy {
 			continue
 		}
-		elem := arg.stdElem
-		fmt.Fprintf(&b, "\t\t{\n\t\tconst size_t cppgo_out_n = %s.size();\n", arg.stdLocal)
-		fmt.Fprintf(&b, "\t\t%s *cppgo_out_copy = static_cast<%s *>(::operator new[]((cppgo_out_n == 0 ? 1 : cppgo_out_n) * sizeof(%s)));\n",
-			elem.Cxx, elem.Cxx, elem.Cxx)
-		fmt.Fprintf(&b, "\t\tfor (size_t cppgo_out_i = 0; cppgo_out_i < cppgo_out_n; ++cppgo_out_i) { cppgo_out_copy[cppgo_out_i] = %s[cppgo_out_i]; }\n", arg.stdLocal)
-		fmt.Fprintf(&b, "\t\t*%s = cppgo_out_copy;\n\t\t*%s = cppgo_out_n;\n\t\t}\n", arg.stdOutData, arg.stdOutSize)
+		b.WriteString("\t\t{\n")
+		b.WriteString(containerOutCopy(arg.stdLocal, arg.stdElem, arg.stdOutData, arg.stdOutSize, arg.stdOutOffsets))
+		b.WriteString("\t\t}\n")
 	}
 	return b.String()
 }
@@ -290,6 +287,13 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 			continue
 		}
 		if arg.stdRole == stdRolePrimary {
+			if arg.proxyType != "" {
+				// The declaration takes a proxy, and the shim is the only place
+				// that can hold the container and the proxy together: the
+				// temporary lives until the call returns.
+				args = append(args, arg.proxyType+"("+arg.stdLocal+")")
+				continue
+			}
 			args = append(args, arg.stdLocal)
 			continue
 		}
@@ -479,9 +483,7 @@ func (m *packageModel) stdLocals(binding *binding) string {
 		case stdStringView:
 			fmt.Fprintf(&b, "\t\tstd::string_view %s(%s, %s);\n", arg.stdLocal, arg.stdArgs[0], arg.stdArgs[1])
 		case stdVector:
-			fmt.Fprintf(&b, "\t\tstd::vector<%s> %s;\n", elem.Cxx, arg.stdLocal)
-			fmt.Fprintf(&b, "\t\tif (%s != 0) { %s.assign(%s, %s + %s); }\n",
-				arg.stdArgs[1], arg.stdLocal, arg.stdArgs[0], arg.stdArgs[0], arg.stdArgs[1])
+			b.WriteString(m.containerLocal(arg))
 		case stdSpan:
 			qualifier := ""
 			if elem.Const {
@@ -517,7 +519,10 @@ func (m *packageModel) stdResult(binding *binding, call string) (string, error) 
 		b.WriteString("\t\tif (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }\n")
 		b.WriteString("\t\t*cppgo_out_data = cppgo_copy;\n")
 		b.WriteString("\t\t*cppgo_out_size = cppgo_size;\n")
-	case stdVector, stdSpan:
+	case stdVector:
+		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
+		b.WriteString(containerOutCopy("cppgo_value", elem, "cppgo_out_data", "cppgo_out_size", "cppgo_out_bounds"))
+	case stdSpan:
 		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
 		b.WriteString("\t\tconst size_t cppgo_size = cppgo_value.size();\n")
 		fmt.Fprintf(&b, "\t\t%s *cppgo_copy = static_cast<%s *>(::operator new[]((cppgo_size == 0 ? 1 : cppgo_size) * sizeof(%s)));\n",

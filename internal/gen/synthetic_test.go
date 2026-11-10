@@ -371,10 +371,10 @@ func TestManifestRequestErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "names no instantiation")
 
-	cfg.Instantiate = []string{"ins::Box::get<std::string>()"}
+	cfg.Instantiate = []string{"ins::Box::get<>()"}
 	_, err = Render(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "is not a scalar the model can build")
+	assert.Contains(t, err.Error(), "type argument list is empty")
 }
 
 // TestGenerateWritesTheCoverageReport covers the file the manifest asks for: the

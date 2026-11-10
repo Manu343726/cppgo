@@ -214,12 +214,12 @@ func Doubled(values []float64) ([]float64, error) {
 	if cppgoStatus != 0 {
 		return nil, cppgoCallError("stdx::doubled")
 	}
-	var cppgoResult []float64
+	var cppgoValue []float64
 	if cppgoSize != 0 {
-		cppgoResult = append(cppgoResult, unsafe.Slice((*float64)(cppgoData), int(cppgoSize))...)
+		cppgoValue = append(cppgoValue, unsafe.Slice((*float64)(cppgoData), int(cppgoSize))...)
 	}
 	cppgoFree(cppgoFreeSym, cppgoData)
-	return cppgoResult, nil
+	return cppgoValue, nil
 }
 
 // LiteralView calls stdx::literal_view.
@@ -281,12 +281,12 @@ func Nothing() ([]int32, error) {
 	if cppgoStatus != 0 {
 		return nil, cppgoCallError("stdx::nothing")
 	}
-	var cppgoResult []int32
+	var cppgoValue []int32
 	if cppgoSize != 0 {
-		cppgoResult = append(cppgoResult, unsafe.Slice((*int32)(cppgoData), int(cppgoSize))...)
+		cppgoValue = append(cppgoValue, unsafe.Slice((*int32)(cppgoData), int(cppgoSize))...)
 	}
 	cppgoFree(cppgoFreeSym, cppgoData)
-	return cppgoResult, nil
+	return cppgoValue, nil
 }
 
 // ScaleAll calls stdx::scale_all.

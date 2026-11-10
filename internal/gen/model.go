@@ -182,6 +182,14 @@ type wireArg struct {
 	stdOutData string
 	stdOutSize string
 	stdGoName  string
+	// proxyType is the C++ proxy type the shim constructs around this
+	// parameter's container, empty when the parameter is not adapted.
+	proxyType string
+	// stdOffsets, stdOutOffsets name the words that carry a nested container's
+	// per-inner-vector bounds: the value the callee reads, and the block it
+	// writes.
+	stdOffsets    string
+	stdOutOffsets string
 	// isOut marks a standard-library result's out-parameter.
 	isOut bool
 	// callable is set for a function-pointer or std::function parameter: the
@@ -444,6 +452,10 @@ type builder struct {
 	// neededRecords are records a manifest request depends on (the receiver of
 	// an instantiated member), which are roots even without a -bind entry.
 	neededRecords map[string]bool
+	// proxies are the -proxy adaptations, and proxyMatched tracks the ones a
+	// declaration used.
+	proxies      []*proxyAdaptation
+	proxyMatched []bool
 	// selectedSymbols are the declarations the manifest selected, by symbol
 	// identity. A selected declaration that produced no binding is a refusal,
 	// and that is what the coverage report counts.
@@ -483,6 +495,14 @@ func build(cfg Config) (*packageModel, error) {
 		bindMatched:        make([]bool, len(cfg.Bind)),
 		excludeMatched:     make([]bool, len(cfg.Exclude)),
 	}
+	for _, entry := range cfg.Proxy {
+		adapted, err := parseProxy(entry)
+		if err != nil {
+			return nil, err
+		}
+		b.proxies = append(b.proxies, adapted)
+	}
+	b.proxyMatched = make([]bool, len(b.proxies))
 	if err := b.load(); err != nil {
 		return nil, err
 	}
@@ -528,6 +548,9 @@ func build(cfg Config) (*packageModel, error) {
 		return nil, err
 	}
 	if err := b.checkInstantiateRequests(); err != nil {
+		return nil, err
+	}
+	if err := b.checkProxy(); err != nil {
 		return nil, err
 	}
 	if err := b.crossCheck(); err != nil {
@@ -1352,7 +1375,17 @@ func (b *builder) lowerParams(binding *binding) error {
 	}
 	for i := 0; i < len(params); i++ {
 		p := params[i]
+		// A parameter the manifest adapted is lowered as the container it names:
+		// the shim constructs the proxy around it, so one thunk holds both.
+		adapted, proxyCxx, err := b.adaptParam(binding, i, p)
+		if err != nil {
+			return err
+		}
+		if adapted != nil {
+			p = *adapted
+		}
 		if _, isStd := stdTypeName(p); isStd {
+			wireStart := len(binding.Wire)
 			mapped, err := b.mapper.mapType(p)
 			if err != nil {
 				return fmt.Errorf("parameter %s: %w", p.Name, err)
@@ -1378,10 +1411,15 @@ func (b *builder) lowerParams(binding *binding) error {
 			}
 			if out {
 				b.stdOutParamWire(binding, p, mapped, name, addWire)
+				b.markProxy(binding, wireStart, proxyCxx)
 				continue
 			}
 			b.stdParamWire(binding, p, mapped, name, addWire)
+			b.markProxy(binding, wireStart, proxyCxx)
 			continue
+		}
+		if proxyCxx != "" {
+			return manifestError{fmt.Errorf("parameter %s: the -proxy adaptation names %q, which this build does not map as a container", p.Name, p.Spelling)}
 		}
 		if elem, ok := b.sliceElement(p); ok {
 			j := i
@@ -1566,53 +1604,10 @@ func isStdOutRef(p cxx.Param) bool {
 // two out-parameters the shim writes the new value through, and the C++ local
 // the call reads and writes.
 func (b *builder) stdOutParamWire(binding *binding, p cxx.Param, mapped *goType, goName string, add func(*wireArg)) {
-	base := cIdent(p.Name)
-	local := "cppgo_" + base
-	pointer := func(expr, keep, cType, cName string) *wireArg {
-		return &wireArg{
-			slotType: "unsafe.Pointer", class: classInt, size: 8,
-			expr: expr, keep: keep, cType: cType, cName: cName, param: p,
-		}
-	}
-	elem := mapped.Elem
-	// A std::vector's element is never const (the allocator rejects it), so
-	// the wire type is the element's own.
-	cType := elem.Cxx + " *"
-	data := base + "_data"
-	size := base + "_size"
-	primary := pointer("cppgo.Ptr(*"+goName+")", "*"+goName, cType, data)
-	primary.label = "a" + itoa(len(binding.Wire))
-	add(primary)
-	add(&wireArg{
-		slotType: "uint64", class: classInt, size: 8,
-		expr: "uint64(len(*" + goName + "))", cType: "size_t", cName: size, param: p,
-		stdRole: stdRoleExtra,
-	})
-	outData := base + "_out_data"
-	outSize := base + "_out_size"
-	outDataArg := pointer("unsafe.Pointer(&"+outData+")", "&"+outData, "void **", outData)
-	outDataArg.isOut = true
-	outDataArg.label = "a" + itoa(len(binding.Wire))
-	add(outDataArg)
-	outSizeArg := pointer("unsafe.Pointer(&"+outSize+")", "&"+outSize, "size_t *", outSize)
-	outSizeArg.isOut = true
-	outSizeArg.label = "a" + itoa(len(binding.Wire))
-	add(outSizeArg)
-	primary.stdRole = stdRolePrimary
-	primary.stdKind = mapped.Std
-	primary.stdLocal = local
-	primary.stdArgs = []string{data, size}
-	primary.stdElem = elem
-	primary.stdType = mapped
-	primary.stdOutCopy = true
-	primary.stdOutData = outData
-	primary.stdOutSize = outSize
-	primary.stdGoName = goName
-	binding.stdDecls = append(binding.stdDecls,
-		"var "+outData+" unsafe.Pointer",
-		"var "+outSize+" uint64")
-	binding.usesFree = true
-	b.usesFree = true
+	// A vector is the one standard-library value with a copy-back shape, and its
+	// element decides the shape: a value buffer, a nested one with bounds, or a
+	// block of objects the Go side adopts.
+	b.stdVectorOutParamWire(binding, p, mapped, goName)
 }
 
 // stdParamWire lowers one standard-library parameter. The Go value is the
@@ -1647,7 +1642,9 @@ func (b *builder) stdParamWire(binding *binding, p cxx.Param, mapped *goType, go
 		primary.stdLocal = local
 		primary.stdArgs = []string{data, size}
 		primary.stdType = mapped
-	case stdVector, stdSpan:
+	case stdVector:
+		b.stdVectorParamWire(binding, p, mapped, goName)
+	case stdSpan:
 		elem := mapped.Elem
 		data := base + "_data"
 		size := base + "_size"
@@ -1688,6 +1685,39 @@ func (b *builder) stdParamWire(binding *binding, p cxx.Param, mapped *goType, go
 	}
 }
 
+// adaptParam returns the parameter a declaration is lowered with when the
+// manifest adapted it with -proxy, and the C++ proxy type the shim constructs
+// around the container.
+func (b *builder) adaptParam(binding *binding, index int, declared cxx.Param) (*cxx.Param, string, error) {
+	adapted, matched, ok := b.proxyFor(binding.sym, index)
+	if !ok {
+		return nil, "", nil
+	}
+	// The entry was written for this declaration, so it is used: a parameter it
+	// cannot adapt is the invocation's mistake, and it says why.
+	b.proxyMatched[matched] = true
+	proxyCxx, err := proxyType(declared)
+	if err != nil {
+		return nil, "", manifestError{fmt.Errorf("parameter %s: %w", declared.Name, err)}
+	}
+	param := adaptedParam(declared, adapted)
+	return &param, proxyCxx, nil
+}
+
+// markProxy records the proxy type on the primary wire word the parameter added,
+// which is where the shim's call expression wraps it.
+func (b *builder) markProxy(binding *binding, from int, proxyCxx string) {
+	if proxyCxx == "" {
+		return
+	}
+	for _, arg := range binding.Wire[from:] {
+		if arg.stdRole == stdRolePrimary {
+			arg.proxyType = proxyCxx
+			return
+		}
+	}
+}
+
 // addStdResult appends the out-parameters a standard-library result crosses
 // through, and the Go locals they aim at.
 func (b *builder) addStdResult(binding *binding) {
@@ -1714,7 +1744,9 @@ func (b *builder) addStdResult(binding *binding) {
 		out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
 		binding.usesFree = true
 		b.usesFree = true
-	case stdVector, stdSpan:
+	case stdVector:
+		b.stdVectorResultWire(binding, result)
+	case stdSpan:
 		binding.stdDecls = []string{"var cppgoData unsafe.Pointer", "var cppgoSize uint64"}
 		out("unsafe.Pointer(&cppgoData)", "&cppgoData", "void **", "cppgo_out_data")
 		out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")

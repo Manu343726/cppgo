@@ -124,6 +124,11 @@ type Config struct {
 	// Coverage, when set, names the file the per-declaration coverage report is
 	// written to. It is one of the generated outputs, so check compares it.
 	Coverage string
+	// Proxy names the container a parameter is carried as, for a declaration
+	// whose parameter is an InputArray/OutputArray proxy: the shim constructs
+	// the proxy around the container, so one thunk holds both. The entries are
+	// written <declaration>#<index>=<C++ type>.
+	Proxy []string
 }
 
 // Output is one generated file. Subdir is the directory under the output

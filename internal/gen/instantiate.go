@@ -93,12 +93,15 @@ func parseTemplateRequest(entry string) (*templateRequest, error) {
 	req.Args = make([]cxx.TemplateArgument, len(args))
 	for i, spelling := range args {
 		spelling = strings.TrimSpace(spelling)
-		param, ok := cxx.ScalarType(spelling)
+		// An argument is a scalar the model builds, or a type the model knows by
+		// name — cv::Point_<int> is as much a template argument as double is,
+		// and the OpenCV proxies take containers of records.
+		arg, ok := cxx.ParseTemplateArgument(spelling)
 		if !ok {
-			return nil, fmt.Errorf("cppgo: -instantiate %s: the type argument %q is not a scalar the model can build; use a C++ scalar spelling such as 'unsigned char' or 'double'", entry, spelling)
+			return nil, fmt.Errorf("cppgo: -instantiate %s: the type argument %q is not a type the model can build; use a C++ scalar spelling such as 'unsigned char' or 'double', or a record the header declares", entry, spelling)
 		}
-		req.ArgSpellings[i] = param.Spelling
-		req.Args[i] = cxx.TemplateArgument{Kind: cxx.TemplateArgumentType, Spelling: param.Spelling, Type: param}
+		req.ArgSpellings[i] = spelling
+		req.Args[i] = arg
 	}
 	if i := strings.LastIndex(name, "::"); i > 0 {
 		req.Record = name[:i]

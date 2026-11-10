@@ -655,12 +655,12 @@ func (s *Settings) Weights() ([]int32, error) {
 	if cppgoStatus != 0 {
 		return nil, cppgoCallError("fields::Settings::weights")
 	}
-	var cppgoResult []int32
+	var cppgoValue []int32
 	if cppgoSize != 0 {
-		cppgoResult = append(cppgoResult, unsafe.Slice((*int32)(cppgoData), int(cppgoSize))...)
+		cppgoValue = append(cppgoValue, unsafe.Slice((*int32)(cppgoData), int(cppgoSize))...)
 	}
 	cppgoFree(cppgoFreeSym, cppgoData)
-	return cppgoResult, nil
+	return cppgoValue, nil
 }
 
 // SetWeights sets fields::Settings::weights.
