@@ -453,16 +453,9 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 		if e.tu.functionTemplates == nil {
 			e.tu.functionTemplates = make(map[string][]funcTemplate)
 		}
-		seen := false
-		for _, existing := range e.tu.functionTemplates[name] {
-			if existing.cursor == cursor {
-				seen = true
-				break
-			}
-		}
-		if !seen {
-			e.tu.functionTemplates[name] = append(e.tu.functionTemplates[name], funcTemplate{cursor: cursor, name: name})
-		}
+		// The walk visits each declaration once, so the template is appended
+		// to its name's list without a duplicate check.
+		e.tu.functionTemplates[name] = append(e.tu.functionTemplates[name], funcTemplate{cursor: cursor, name: name})
 	}
 	spec := e.l.exceptionSpec(cursor)
 	symKind := e.l.kind(cursor)

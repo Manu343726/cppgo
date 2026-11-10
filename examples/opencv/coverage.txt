@@ -2273,28 +2273,28 @@ cv::Mat::getDefaultAllocator()	refused	core	unowned-pointer	"MatAllocator *" is 
 cv::Mat::getStdAllocator()	refused	core	unowned-pointer	"MatAllocator *" is a pointer to an opaque record; return it through a reference at the C++ boundary
 cv::Mat::operator()(const std::vector<Range> &) const	refused	core	by-value-record	parameter ranges: "cv::Range" is not a POD; use scalar elements, or bind a C++ wrapper that copies the objects
 cv::Mat::Mat(Mat &&)	skipped	core	not-needed	Go has no rvalue overload
-cv::Point_<int>::Point_<_Tp>()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Point_<int>::Point_<_Tp>(Point_<int> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Point_<int>::Point_<_Tp>(const Point_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Point_<int>::Point_<_Tp>(const Size_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Point_<int>::Point_<_Tp>(const Vec<int, 2> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Point_<int>::Point_<_Tp>(int, int)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Rect_<int>::Rect_<_Tp>()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Rect_<int>::Rect_<_Tp>(Rect_<int> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Rect_<int>::Rect_<_Tp>(const Point_<int> &, const Point_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Rect_<int>::Rect_<_Tp>(const Point_<int> &, const Size_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Rect_<int>::Rect_<_Tp>(const Rect_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Rect_<int>::Rect_<_Tp>(int, int, int, int)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Scalar_<double>::Scalar_<_Tp>()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Scalar_<double>::Scalar_<_Tp>(Scalar_<double> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Scalar_<double>::Scalar_<_Tp>(const Scalar_<double> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Scalar_<double>::Scalar_<_Tp>(double)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Scalar_<double>::Scalar_<_Tp>(double, double, double, double)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Size_<int>::Size_<_Tp>()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Size_<int>::Size_<_Tp>(Size_<int> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Size_<int>::Size_<_Tp>(const Point_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Size_<int>::Size_<_Tp>(const Size_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
-cv::Size_<int>::Size_<_Tp>(int, int)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Point_<int>::Point_()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Point_<int>::Point_(Point_<int> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Point_<int>::Point_(const Point_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Point_<int>::Point_(const Size_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Point_<int>::Point_(const Vec<int, 2> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Point_<int>::Point_(int, int)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Rect_<int>::Rect_()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Rect_<int>::Rect_(Rect_<int> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Rect_<int>::Rect_(const Point_<int> &, const Point_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Rect_<int>::Rect_(const Point_<int> &, const Size_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Rect_<int>::Rect_(const Rect_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Rect_<int>::Rect_(int, int, int, int)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Scalar_<double>::Scalar_()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Scalar_<double>::Scalar_(Scalar_<double> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Scalar_<double>::Scalar_(const Scalar_<double> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Scalar_<double>::Scalar_(double)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Scalar_<double>::Scalar_(double, double, double, double)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Size_<int>::Size_()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Size_<int>::Size_(Size_<int> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Size_<int>::Size_(const Point_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Size_<int>::Size_(const Size_<int> &)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
+cv::Size_<int>::Size_(int, int)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
 cv::Mat::Mat(const MatCommaInitializer_<_Tp> &)	template	core	template	a template pattern is bound through -instantiate or the two-phase scan
 cv::Mat::Mat(const Matx<_Tp, m, n> &, bool)	template	core	template	a template pattern is bound through -instantiate or the two-phase scan
 cv::Mat::Mat(const Point3_<_Tp> &, bool)	template	core	template	a template pattern is bound through -instantiate or the two-phase scan

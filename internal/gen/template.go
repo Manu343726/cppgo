@@ -182,7 +182,7 @@ func (i *templateInstantiation) cxxName() string {
 // buildTemplates turns every template pattern into a generic model. It is the
 // first phase of the two-phase flow: nothing here knows a concrete argument,
 // and the output compiles on its own.
-func (b *builder) buildTemplates() error {
+func (b *builder) buildTemplates() {
 	b.templateByName = make(map[string]*templateModel)
 	for _, rec := range b.rawRecords {
 		if !rec.IsTemplate {
@@ -238,7 +238,6 @@ func (b *builder) buildTemplates() error {
 		kept = append(kept, tmpl)
 	}
 	b.templates = kept
-	return nil
 }
 
 // templateParams converts a C++ parameter list into Go type parameters. A
@@ -457,6 +456,9 @@ func (b *builder) templateSelected(qualified string) bool {
 		}
 	}
 	for _, entry := range b.cfg.Instantiate {
+		// A specialization entry selects the pattern it is built from as well:
+		// the generic API is the same declarations with a type parameter, and a
+		// caller may use both spellings.
 		if entry == qualified || strings.HasPrefix(entry, qualified+"<") {
 			return true
 		}

@@ -24,6 +24,11 @@ func (b *builder) applySelection() error {
 			// selects the type and with it the members the type declares.
 			keep = true
 		}
+		if b.requestFor(binding.sym) != nil {
+			// A function instantiation is a root of its own: the entry asked for
+			// that declaration by name, and there is no record to carry it.
+			keep = true
+		}
 		for i, entry := range b.cfg.Bind {
 			if bindingMatches(entry, binding) {
 				bindMatched[i] = true
@@ -330,6 +335,7 @@ func (b *builder) collisionName(binding *binding, taken map[string]bool) string 
 		if !taken[candidate] {
 			return candidate
 		}
+		return candidate + shortHash(displaySignature(binding.sym))[:6]
 	}
 	return base + suffix + shortHash(displaySignature(binding.sym))[:6]
 }

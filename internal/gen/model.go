@@ -489,9 +489,7 @@ func build(cfg Config) (*packageModel, error) {
 	if err := b.load(); err != nil {
 		return nil, err
 	}
-	if err := b.resolveRecordRequests(); err != nil {
-		return nil, err
-	}
+	b.resolveRecordRequests()
 	// The library's dynamic symbol table is read before anything is classified:
 	// whether a declaration has an out-of-line body is what decides between the
 	// two carriers, and a header that only declares a function does not prove
@@ -504,12 +502,8 @@ func build(cfg Config) (*packageModel, error) {
 	b.assignTypeNames()
 	b.buildEnums()
 	b.mapper = &mapper{records: b.records, enums: b.enums}
-	if err := b.buildRecords(); err != nil {
-		return nil, err
-	}
-	if err := b.buildTemplates(); err != nil {
-		return nil, err
-	}
+	b.buildRecords()
+	b.buildTemplates()
 	if err := b.loadInstantiations(); err != nil {
 		return nil, err
 	}
@@ -517,9 +511,7 @@ func build(cfg Config) (*packageModel, error) {
 		return nil, err
 	}
 	b.closeProjects()
-	if err := b.buildBindings(); err != nil {
-		return nil, err
-	}
+	b.buildBindings()
 	if b.manifestErr != nil {
 		return nil, b.manifestErr
 	}
@@ -534,9 +526,7 @@ func build(cfg Config) (*packageModel, error) {
 		return nil, err
 	}
 	b.buildFieldAccessors()
-	if err := b.buildInheritance(); err != nil {
-		return nil, err
-	}
+	b.buildInheritance()
 	if err := b.assignNames(); err != nil {
 		return nil, err
 	}
@@ -611,7 +601,7 @@ func symbolKey(sym cxx.Symbol) string {
 // buildRecords classifies every record definition: a mirrorable aggregate
 // becomes a Go struct with the exported fields, everything else an opaque value
 // type owning C++ storage.
-func (b *builder) buildRecords() error {
+func (b *builder) buildRecords() {
 	sort.Slice(b.rawRecords, func(i, j int) bool {
 		return b.rawRecords[i].QualifiedName < b.rawRecords[j].QualifiedName
 	})
@@ -638,6 +628,17 @@ func (b *builder) buildRecords() error {
 			Comment:              rec.Comment,
 		}
 		model.Mirrored = b.mirrorable(rec)
+		if existing, seen := b.records[rec.QualifiedName]; seen {
+			// Two sightings of one specialization: the partial record libclang
+			// reports from a type reference has no layout, and the synthesized
+			// one does. The complete record wins whichever order they arrive
+			// in, and the order list keeps one entry.
+			if existing.Size > 0 && rec.SizeBytes <= 0 {
+				continue
+			}
+			*existing = *model
+			continue
+		}
 		b.records[rec.QualifiedName] = model
 		b.order = append(b.order, rec.QualifiedName)
 	}
@@ -669,7 +670,6 @@ func (b *builder) buildRecords() error {
 			})
 		}
 	}
-	return nil
 }
 
 // checkInstantiateRequests reports an -instantiate entry nothing matched, after
@@ -804,10 +804,15 @@ func (b *builder) fieldWidth(field cxx.Field) (size, align int64) {
 }
 
 // scalarWidth is the size and alignment of a scalar field in Go, which is its
-// width for every type the mirror predicate accepts.
+// width for every type the mirror predicate accepts. A type with no width (an
+// unsized scalar, a field libclang could not measure) answers -1, so the layout
+// proof refuses the record instead of dividing by a zero alignment.
 func scalarWidth(p cxx.Param) (size, align int64) {
 	if p.Kind == cxx.TypeInteger && p.ClangKind == "Bool" {
 		return 1, 1
+	}
+	if p.SizeBytes <= 0 {
+		return -1, 1
 	}
 	return p.SizeBytes, p.SizeBytes
 }
@@ -850,7 +855,7 @@ func (b *builder) mirrorFieldType(p cxx.Param) *goType {
 // lowered at all: -bind and -exclude narrow what is emitted, and a construct
 // outside the selection cannot fail the run for a signature nobody asked to
 // bind.
-func (b *builder) buildBindings() error {
+func (b *builder) buildBindings() {
 	if b.selectedSymbols == nil {
 		b.selectedSymbols = map[string]bool{}
 	}
@@ -996,7 +1001,6 @@ func (b *builder) buildBindings() error {
 		owner.Clone = clone
 		b.bindings = append(b.bindings, clone)
 	}
-	return nil
 }
 
 // symbolSelected reports whether the manifest asks for this declaration, before
@@ -1574,10 +1578,9 @@ func (b *builder) stdOutParamWire(binding *binding, p cxx.Param, mapped *goType,
 		}
 	}
 	elem := mapped.Elem
+	// A std::vector's element is never const (the allocator rejects it), so
+	// the wire type is the element's own.
 	cType := elem.Cxx + " *"
-	if elem.Const {
-		cType = "const " + cType
-	}
 	data := base + "_data"
 	size := base + "_size"
 	primary := pointer("cppgo.Ptr(*"+goName+")", "*"+goName, cType, data)

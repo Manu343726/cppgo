@@ -31,7 +31,7 @@ type baseModel struct {
 //
 // It runs after selection so only the kept records take part, and before naming
 // so the inherited names are checked for collisions like any other.
-func (b *builder) buildInheritance() error {
+func (b *builder) buildInheritance() {
 	for _, name := range b.order {
 		record := b.records[name]
 		record.Bases = b.basesOf(record)
@@ -102,7 +102,6 @@ func (b *builder) buildInheritance() error {
 			b.bindings = append(b.bindings, down)
 		}
 	}
-	return nil
 }
 
 // basesOf resolves a record's public bases, transitively, into models.

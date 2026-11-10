@@ -270,7 +270,10 @@ func TestKindConstants(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, library.str(library.f.getTypeKindSpelling(tc.kind)), "type kind %d", tc.kind)
 	}
-	assert.Equal(t, storageClassStatic, int32(3))
+	// CX_StorageClass starts at Invalid, so Static is the fourth enumerator;
+	// the model reads it for a namespace-scope function's internal linkage,
+	// which is what makes `static void helper()` unexported.
+	assert.Equal(t, int32(3), storageClassStatic)
 }
 
 func TestParseTranslationUnitErrors(t *testing.T) {

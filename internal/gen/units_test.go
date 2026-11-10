@@ -449,7 +449,7 @@ func TestBuildTemplatesSkipsWhatTheManifestDoesNotName(t *testing.T) {
 		templateByName: map[string]*templateModel{},
 	}
 	excluded.mapper = &mapper{records: excluded.records, enums: excluded.enums}
-	require.NoError(t, excluded.buildTemplates())
+	excluded.buildTemplates()
 	assert.Empty(t, excluded.templates)
 
 	// A manifest that names the template keeps it.
@@ -462,7 +462,7 @@ func TestBuildTemplatesSkipsWhatTheManifestDoesNotName(t *testing.T) {
 		templateByName: map[string]*templateModel{},
 	}
 	named.mapper = &mapper{records: named.records, enums: named.enums}
-	require.NoError(t, named.buildTemplates())
+	named.buildTemplates()
 	require.Len(t, named.templates, 1)
 	assert.Equal(t, "Box", named.templates[0].GoName)
 }

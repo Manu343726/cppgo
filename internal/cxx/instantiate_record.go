@@ -26,9 +26,23 @@ func (p *Project) InstantiateRecord(templateName string, args []TemplateArgument
 	tus := append([]*TU(nil), p.tus...)
 	p.mu.Unlock()
 	for _, tu := range tus {
-		if rec, ok := tu.instantiateRecord(templateName, args, 0); ok {
-			return rec, true
+		rec, ok := tu.instantiateRecord(templateName, args, 0)
+		if !ok {
+			continue
 		}
+		// The project's index is what Record() reads: a synthesized
+		// specialization has to be visible there, or a later lookup gets the
+		// declaration libclang reported (which has no layout) instead of the one
+		// this run built.
+		p.mu.Lock()
+		if i, exists := p.byRecord[rec.QualifiedName]; exists {
+			p.records[i] = rec
+		} else {
+			p.byRecord[rec.QualifiedName] = len(p.records)
+			p.records = append(p.records, rec)
+		}
+		p.mu.Unlock()
+		return rec, true
 	}
 	return Record{}, false
 }
@@ -114,10 +128,23 @@ func (tu *TU) instantiateRecord(templateName string, args []TemplateArgument, de
 			members = append(members, sym)
 		}
 	}
+	// The special member is named after the pattern's own simple name: the
+	// specialization's spelling carries its arguments, and a constructor is
+	// called "Fixed", not "Fixed<double, 4>".
+	simple := simpleMemberName(templateName)
 	for _, member := range members {
 		m := member
 		m.Parent = name
-		m.QualifiedName = name + "::" + simpleMemberName(member.QualifiedName)
+		// A special member is named after the specialization, not after the
+		// pattern's own spelling: "Fixed<T, N>" is "Fixed" for Fixed<double, 4>.
+		switch m.Kind {
+		case Constructor:
+			m.QualifiedName = name + "::" + simple
+		case Destructor:
+			m.QualifiedName = name + "::~" + simple
+		default:
+			m.QualifiedName = name + "::" + simpleMemberName(member.QualifiedName)
+		}
 		m.IsTemplate = false
 		// The specialization has no declaration cursor in the translation unit,
 		// so it has no mangled name: the generator writes the call in C++.
@@ -199,6 +226,8 @@ func (tu *TU) layoutInstantiation(rec *Record, depth int) bool {
 	for i := range rec.Bases {
 		base := &rec.Bases[i]
 		if base.IsVirtual {
+			// A virtual base's offset is resolved through the vtable, not by
+			// the standard-layout walk.
 			return false
 		}
 		size, baseAlign, ok := tu.typeSizeFor(Param{Kind: TypeRecord, ClangKind: "Record", Spelling: base.QualifiedName, RecordName: base.QualifiedName}, depth+1)
@@ -255,14 +284,14 @@ func (tu *TU) layoutInstantiation(rec *Record, depth int) bool {
 			align = fieldAlign
 		}
 	}
+	// A record field decides POD-ness by the record it names; every other kind
+	// typeSizeFor accepted is a scalar, an enum or an array of one, which C++
+	// treats as POD.
 	for i := range rec.Fields {
-		switch rec.Fields[i].Type.Kind {
-		case TypeInteger, TypeFloat, TypePointer, TypeArray:
-		case TypeRecord:
-			if inner, ok := tu.Record(rec.Fields[i].Type.RecordName); !ok || !inner.IsPOD {
-				pod = false
-			}
-		default:
+		if rec.Fields[i].Type.Kind != TypeRecord {
+			continue
+		}
+		if inner, ok := tu.Record(rec.Fields[i].Type.RecordName); !ok || !inner.IsPOD {
 			pod = false
 		}
 	}
@@ -317,13 +346,9 @@ func (tu *TU) typeSizeFor(p Param, depth int) (size, align int64, ok bool) {
 		if p.SizeBytes <= 0 {
 			return 0, 0, false
 		}
-		align = p.SizeBytes
-		if align > 8 && p.ClangKind != "LongDouble" {
-			// An integer wider than eight bytes (__int128) still aligns to 16;
-			// everything else caps at 8 on x86-64.
-			align = 8
-		}
-		return p.SizeBytes, align, true
+		// On x86-64 a scalar's alignment is its width up to 16 bytes: 4 for int,
+		// 8 for double and long long, 16 for __int128 and long double.
+		return p.SizeBytes, p.SizeBytes, true
 	case TypePointer:
 		return 8, 8, true
 	case TypeArray:
@@ -439,7 +464,7 @@ func ParseTemplateArgument(spelling string) (TemplateArgument, bool) {
 	if param, ok := ScalarType(spelling); ok {
 		return TemplateArgument{Kind: TemplateArgumentType, Spelling: param.Spelling, Type: param}, true
 	}
-	if spelling == "" || strconv.Quote(spelling) == `""` {
+	if spelling == "" {
 		return TemplateArgument{}, false
 	}
 	return TemplateArgument{
@@ -460,11 +485,6 @@ func (tu *TU) normalizeParam(p Param, depth int) Param {
 		if p.Pointee != nil {
 			pointee := tu.normalizeParam(*p.Pointee, depth+1)
 			p.Pointee = &pointee
-			if p.Pointee.Kind == TypePointer && p.Pointee.Pointee != nil {
-				// A reference to a reference collapses in C++, but a spelling
-				// substitution can produce one; the pointer stays the outer
-				// form.
-			}
 		}
 		return p
 	case TypeArray:
@@ -504,22 +524,16 @@ func (tu *TU) normalizeParam(p Param, depth int) Param {
 func (tu *TU) resolveTypeSpelling(spelling string, depth int) (Param, bool) {
 	s := strings.TrimSpace(spelling)
 	isConst := false
-	for {
-		switch {
-		case strings.HasPrefix(s, "const "):
-			isConst = true
-			s = strings.TrimSpace(s[len("const "):])
-		case strings.HasPrefix(s, "volatile "):
-			s = strings.TrimSpace(s[len("volatile "):])
-		case strings.HasPrefix(s, "class "):
-			s = strings.TrimSpace(s[len("class "):])
-		case strings.HasPrefix(s, "struct "):
-			s = strings.TrimSpace(s[len("struct "):])
-		default:
-			goto trimmed
+	// Every qualifier the declaration can carry is stripped, and const is the
+	// one the Go side reports.
+	for _, prefix := range []string{"volatile ", "class ", "struct ", "const "} {
+		for strings.HasPrefix(s, prefix) {
+			if prefix == "const " {
+				isConst = true
+			}
+			s = strings.TrimSpace(s[len(prefix):])
 		}
 	}
-trimmed:
 	for _, suffix := range []string{"&&", "&", "*"} {
 		if strings.HasSuffix(s, suffix) {
 			pointee, ok := tu.resolveTypeSpelling(strings.TrimSuffix(s, suffix), depth+1)
@@ -649,15 +663,14 @@ func (p *constParser) parseAtom() (int64, bool) {
 		p.pos++
 	}
 	if start == p.pos {
-		// A C suffix ("4u", "4UL") or a name the substitution did not resolve.
-		for p.pos < len(p.text) && (p.text[p.pos] == 'u' || p.text[p.pos] == 'U' || p.text[p.pos] == 'l' || p.text[p.pos] == 'L') {
-			p.pos++
-		}
-		if start == p.pos {
-			return 0, false
-		}
+		return 0, false
 	}
-	value, err := strconv.ParseInt(p.text[start:p.pos], 10, 64)
+	digits := p.pos
+	// A C integer suffix ("4u", "4UL") follows the digits.
+	for p.pos < len(p.text) && (p.text[p.pos] == 'u' || p.text[p.pos] == 'U' || p.text[p.pos] == 'l' || p.text[p.pos] == 'L') {
+		p.pos++
+	}
+	value, err := strconv.ParseInt(p.text[start:digits], 10, 64)
 	if err != nil {
 		return 0, false
 	}

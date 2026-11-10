@@ -32,6 +32,14 @@ enum class Mode : std::uint8_t {
     Maximum = 255,
 };
 
+/// Border has two spellings of one value: exportName folds the underscore away,
+/// so REFLECT_101 and REFLECT101 are one Go constant, and the report says so.
+enum Border {
+    BORDER_REPLICATE = 1,
+    BORDER_REFLECT_101 = 4,
+    BORDER_REFLECT101 = 4,
+};
+
 /// Offset has negative and non-contiguous enumerators.
 enum Offset : std::int16_t {
     Behind = -3,

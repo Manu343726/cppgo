@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Manu343726/cppgo/internal/cxx"
@@ -136,7 +137,7 @@ func matchingOpen(text string, close int, open, shut byte) int {
 // resolveRecordRequests synthesizes the class specializations the manifest
 // names. It runs before the records are classified, because a synthesized
 // record is one of them: it needs a Go type name and a model like any other.
-func (b *builder) resolveRecordRequests() error {
+func (b *builder) resolveRecordRequests() {
 	for i, entry := range b.cfg.Instantiate {
 		if b.instantiateMatched[i] || strings.Contains(entry, "(") {
 			continue
@@ -151,12 +152,20 @@ func (b *builder) resolveRecordRequests() error {
 			if !ok {
 				continue
 			}
+			// The declaration libclang reports for a specialization reached
+			// through a type reference is partial: it has no layout and no
+			// members. The record built from the pattern replaces it, and a
+			// complete sighting is left alone.
 			seen := false
-			for _, existing := range b.rawRecords {
-				if existing.QualifiedName == rec.QualifiedName {
-					seen = true
-					break
+			for i, existing := range b.rawRecords {
+				if existing.QualifiedName != rec.QualifiedName {
+					continue
 				}
+				seen = true
+				if existing.SizeBytes <= 0 {
+					b.rawRecords[i] = rec
+				}
+				break
 			}
 			if !seen {
 				b.rawRecords = append(b.rawRecords, rec)
@@ -171,7 +180,6 @@ func (b *builder) resolveRecordRequests() error {
 		}
 		_ = resolved
 	}
-	return nil
 }
 
 // splitRecordInstantiation parses "cv::Scalar_<double>" into the pattern name
@@ -183,8 +191,15 @@ func splitRecordInstantiation(entry string) (string, []cxx.TemplateArgument, boo
 	}
 	templateName := strings.TrimSpace(entry[:open])
 	parts := splitTemplateArgs(entry[open+1 : len(entry)-1])
+	if len(parts) == 0 {
+		return "", nil, false
+	}
 	args := make([]cxx.TemplateArgument, 0, len(parts))
 	for _, part := range parts {
+		if value, err := strconv.ParseInt(strings.TrimSpace(part), 0, 64); err == nil {
+			args = append(args, cxx.TemplateArgument{Kind: cxx.TemplateArgumentIntegral, Spelling: strings.TrimSpace(part), Value: value, UnsignedValue: uint64(value)})
+			continue
+		}
 		arg, ok := cxx.ParseTemplateArgument(part)
 		if !ok {
 			return "", nil, false
@@ -216,12 +231,15 @@ func (b *builder) resolveTemplateRequests() error {
 				sym cxx.Symbol
 				ok  bool
 			)
+			// The same text is a member of a record and a free function in a
+			// namespace ("ins::Box::get" against "ins::twice"): the record the
+			// manifest binds decides which reading applies, and a name whose
+			// prefix is not a bound record falls back to the free function.
 			if req.Record != "" && records[req.Record] {
 				sym, ok = project.InstantiateMember(req.Record, req.Member, req.Args, req.Arity, req.Const)
-			} else if req.Record == "" {
+			}
+			if !ok {
 				sym, ok = project.InstantiateFunction(req.Name, req.Args, req.Arity)
-			} else {
-				return fmt.Errorf("cppgo: -instantiate %s: %s is not a record this header declares; bind the record in -bind and name the member here", entry, req.Record)
 			}
 			if ok {
 				req.Symbol = sym
@@ -230,7 +248,11 @@ func (b *builder) resolveTemplateRequests() error {
 			}
 		}
 		if !resolved {
-			return fmt.Errorf("cppgo: -instantiate %s: no declaration in the headers matches that instantiation; check the template's name, its type arguments and the parameter count", entry)
+			hint := "check the template's name, its type arguments and the parameter count"
+			if req.Record != "" && !records[req.Record] {
+				hint = fmt.Sprintf("%s is not a record this header declares; bind the record in -bind, or name the free function template by its qualified name", req.Record)
+			}
+			return fmt.Errorf("cppgo: -instantiate %s: no declaration in the headers matches that instantiation; %s", entry, hint)
 		}
 		b.instantiateMatched[i] = true
 		b.templateRequests = append(b.templateRequests, req)

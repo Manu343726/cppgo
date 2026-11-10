@@ -39,7 +39,7 @@ func TestBuildBindingsGuards(t *testing.T) {
 			Kind:          cxx.Method,
 			Access:        cxx.AccessPublic,
 		}}
-		require.NoError(t, b.buildBindings())
+		b.buildBindings()
 		assert.Empty(t, b.bindings)
 	})
 
@@ -52,7 +52,7 @@ func TestBuildBindingsGuards(t *testing.T) {
 			Access:        cxx.AccessPublic,
 			Params:        []cxx.Param{{Kind: cxx.TypeOther, Spelling: "__int128"}},
 		}}
-		require.NoError(t, b.buildBindings())
+		b.buildBindings()
 		assert.Empty(t, b.bindings)
 		require.Len(t, b.warnings, 1)
 		assert.Contains(t, b.warnings[0], "ns::Owner::bad")
@@ -68,7 +68,7 @@ func TestBuildBindingsGuards(t *testing.T) {
 			Access:        cxx.AccessPublic,
 			Params:        []cxx.Param{{Kind: cxx.TypeOther, Spelling: "__int128"}},
 		}}
-		require.NoError(t, b.buildBindings())
+		b.buildBindings()
 		assert.Empty(t, b.bindings)
 		require.Len(t, b.warnings, 1)
 		assert.Contains(t, b.warnings[0], "ns::Owner::Owner")
@@ -85,7 +85,7 @@ func TestBuildBindingsGuards(t *testing.T) {
 			IsCopyConstructor: true,
 			Params:            []cxx.Param{{Kind: cxx.TypeOther, Spelling: "__int128"}},
 		}}
-		require.NoError(t, b.buildBindings())
+		b.buildBindings()
 		assert.Empty(t, b.bindings)
 		require.Len(t, b.warnings, 1)
 		assert.Contains(t, b.warnings[0], "__int128")

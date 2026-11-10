@@ -334,7 +334,11 @@ func (tu *TU) extractRecords() {
 		partials: make(map[string][]partialSpecialization),
 	}
 	tu.memberTemplates = make(map[string][]memberTemplate)
-	tu.functionTemplates = make(map[string][]funcTemplate)
+	if tu.functionTemplates == nil {
+		// The symbol walk registers free function templates before this runs;
+		// a fresh map here would drop them.
+		tu.functionTemplates = make(map[string][]funcTemplate)
+	}
 	// The symbol walk has already proven the handle open; a second walk of the
 	// same translation unit cannot fail for a different reason, so its error is
 	// the same "the handle is closed" answer the symbol walk already returned.
@@ -1397,6 +1401,14 @@ func (tu *TU) instantiateMemberPattern(record, member string, pattern memberTemp
 	combined := pattern.class.then(own)
 	extractor := &recordExtractor{l: tu.l, tu: tu}
 	sym := extractor.synthesizeMember(pattern.cursor, &Record{QualifiedName: record}, combined)
+	// A member function template's cursor kind is the template kind, so the
+	// method accessors are not asked (they cast the cursor to CXXMethodDecl)
+	// and libclang exposes no staticness for it either. The binding is a
+	// method: calling a static member through an object is legal C++, so the
+	// call the shim writes is right either way.
+	isConst := tu.l.f.isConstQualifiedType(tu.l.f.getCursorType(pattern.cursor)) != 0
+	sym.IsConst, sym.IsVirtual, sym.IsStatic = isConst, false, false
+	sym.Kind = Method
 	sym.IsTemplate = false
 	sym.QualifiedName = record + "::" + member
 	return sym

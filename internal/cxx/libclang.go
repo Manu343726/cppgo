@@ -187,7 +187,8 @@ const (
 	typeNullPtr int32 = 24
 )
 
-// CX_StorageClass values, as returned by clang_Cursor_getStorageClass.
+// CX_StorageClass values, as returned by clang_Cursor_getStorageClass. The
+// enumerators start at CX_SC_Invalid, so CX_SC_Static is the fourth one.
 const storageClassStatic int32 = 3
 
 // CX_CXXAccessSpecifier values, as returned by clang_getCXXAccessSpecifier.
