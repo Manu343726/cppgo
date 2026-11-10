@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"unsafe"
 
@@ -312,6 +313,43 @@ func cppgoCloseError(symbol string) error {
 		return &cppgo.CallError{Symbol: symbol, Err: err}
 	}
 	return nil
+}
+
+// cppgoHeapCell returns a zero value of T in a heap cell. It is a function and
+// not new(T) at the use site because the allocation site is what decides
+// whether the cell is a stack object: a cell that only ever reaches a uintptr
+// can be stack allocated, and the runtime moves a stack. A returned pointer is
+// a heap pointer.
+//
+//go:noinline
+func cppgoHeapCell[T any]() *T {
+	return new(T)
+}
+
+// cppgoPinValue pins a copy of v in a heap cell and returns it, for the same
+// reason: the cell must be a heap object, and the pin is what keeps the
+// collector from moving it while a callback runs.
+//
+//go:noinline
+func cppgoPinValue[T any](cppgoPin *runtime.Pinner, v T) *T {
+	cell := new(T)
+	*cell = v
+	cppgoPin.Pin(cell)
+	return cell
+}
+
+// cppgoPinSlice pins a copy of s through the same rule: the copy is what the
+// callee reads, so neither the caller nor the collector can move or change it
+// for the duration of the call.
+//
+//go:noinline
+func cppgoPinSlice[T any](cppgoPin *runtime.Pinner, s []T) []T {
+	copyOf := make([]T, len(s))
+	copy(copyOf, s)
+	if len(copyOf) != 0 {
+		cppgoPin.Pin(&copyOf[0])
+	}
+	return copyOf
 }
 
 // Enrollment is fingerprint::Enrollment (sizeof 120). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
@@ -1129,7 +1167,10 @@ func DeliverLog(on_record func(int32, int32)) (uint64, error) {
 		return 0, cppgoCallbackErr
 	}
 	defer cppgo.ReleaseCallback(cppgoCallback0)
-	cppgoResult := new(uint64)
+	cppgoPin := new(runtime.Pinner)
+	defer cppgoPin.Unpin()
+	cppgoResult := cppgoHeapCell[uint64]()
+	cppgoPin.Pin(cppgoResult)
 	var cppgoFrame cppgo.Args
 	cppgoFrame.I[0] = uintptr(cppgoCallback0)
 	cppgoFrame.I[1] = uintptr(unsafe.Pointer(cppgoResult))
