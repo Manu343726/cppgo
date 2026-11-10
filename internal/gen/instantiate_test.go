@@ -199,9 +199,7 @@ func TestStdStringOutReferenceIsRefused(t *testing.T) {
 
 // TestSelectionHelpers covers the collision and template-suffix rules directly.
 func TestSelectionHelpers(t *testing.T) {
-	clone := &binding{sym: cxx.Symbol{QualifiedName: "ns::T::T", IsConst: true}, IsClone: true}
-	method := &binding{sym: cxx.Symbol{QualifiedName: "ns::T::clone"}}
-	clone.GoName, method.GoName = "Clone", "Clone"
+	clone := &binding{GoName: "Clone", IsClone: true}
 	b := &builder{mapper: &mapper{records: map[string]*recordModel{}, enums: map[string]*enumModel{}}}
 	taken := map[string]bool{"Clone": true}
 	assert.Equal(t, "Copy", b.collisionName(clone, taken))

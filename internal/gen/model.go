@@ -173,9 +173,6 @@ type wireArg struct {
 	stdArgs  []string
 	stdElem  *goType
 	stdType  *goType
-	// cstringKeeps are the byte slices that keep a const char * argument
-	// NUL-terminated for the call; each must stay alive until it returns.
-	cstringKeeps []string
 	// stdOutCopy is true for the primary word of a standard-library parameter
 	// the callee replaces: after the call, the shim copies the local's elements
 	// into the block the out-parameters describe.
@@ -1977,10 +1974,6 @@ func (b *builder) routeRegisters(binding *binding) error {
 	// taking the argument block.
 	ints, floats := 0, 0
 	for _, arg := range binding.Wire {
-		if arg.label == "this" && arg.cName == "self" {
-			// `this` is still a word, but it is the receiver of a method and is
-			// counted below like any other.
-		}
 		switch arg.class {
 		case classInt:
 			ints++
