@@ -30,6 +30,610 @@ extern "C" const char *cppgo_last_error(void) {
 	return cppgo_error_message.c_str();
 }
 
+// cppgo_free releases a result copy the Go side has read.
+extern "C" void cppgo_free(void *block) {
+	::operator delete[](block);
+}
+
+extern "C" int32_t cppgo_thunk_530141100ab2(void * self, int32_t _precision) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::Eigen::IOFormat(_precision);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_602badd225d4(void * self, int32_t _precision, int32_t _flags) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::Eigen::IOFormat(_precision, _flags);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_8e6caaf08772(void * self, int32_t _precision, int32_t _flags, const char * _coeffSeparator_data, size_t _coeffSeparator_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo__coeffSeparator(_coeffSeparator_data, _coeffSeparator_size);
+		new (self) ::Eigen::IOFormat(_precision, _flags, cppgo__coeffSeparator);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+// cppgoArgs_2ae6cc2b74cc is the argument block cppgo_thunk_2ae6cc2b74cc unpacks: the words the register
+// file cannot hold, in the order the declaration names them.
+struct cppgoArgs_2ae6cc2b74cc {
+	uintptr_t self;
+	int64_t _precision;
+	int64_t _flags;
+	void * _coeffSeparator_data;
+	uint64_t _coeffSeparator_size;
+	void * _rowSeparator_data;
+	uint64_t _rowSeparator_size;
+};
+static_assert(sizeof(cppgoArgs_2ae6cc2b74cc) == 56, "cppgo: the argument block of Eigen::IOFormat::IOFormat is the size the Go side asserts");
+static_assert(offsetof(cppgoArgs_2ae6cc2b74cc, self) == 0, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2ae6cc2b74cc, _precision) == 8, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2ae6cc2b74cc, _flags) == 16, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2ae6cc2b74cc, _coeffSeparator_data) == 24, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2ae6cc2b74cc, _coeffSeparator_size) == 32, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2ae6cc2b74cc, _rowSeparator_data) == 40, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2ae6cc2b74cc, _rowSeparator_size) == 48, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+
+extern "C" int32_t cppgo_thunk_2ae6cc2b74cc(void * cppgo_block) {
+	const cppgoArgs_2ae6cc2b74cc *cppgo_args = static_cast<const cppgoArgs_2ae6cc2b74cc *>(cppgo_block);
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo__coeffSeparator(reinterpret_cast<const char *>(cppgo_args->_coeffSeparator_data), static_cast<size_t>(cppgo_args->_coeffSeparator_size));
+		std::string cppgo__rowSeparator(reinterpret_cast<const char *>(cppgo_args->_rowSeparator_data), static_cast<size_t>(cppgo_args->_rowSeparator_size));
+		new (reinterpret_cast<void *>(cppgo_args->self)) ::Eigen::IOFormat(static_cast<int32_t>(cppgo_args->_precision), static_cast<int32_t>(cppgo_args->_flags), cppgo__coeffSeparator, cppgo__rowSeparator);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+// cppgoArgs_589a97fe5e12 is the argument block cppgo_thunk_589a97fe5e12 unpacks: the words the register
+// file cannot hold, in the order the declaration names them.
+struct cppgoArgs_589a97fe5e12 {
+	uintptr_t self;
+	int64_t _precision;
+	int64_t _flags;
+	void * _coeffSeparator_data;
+	uint64_t _coeffSeparator_size;
+	void * _rowSeparator_data;
+	uint64_t _rowSeparator_size;
+	void * _rowPrefix_data;
+	uint64_t _rowPrefix_size;
+};
+static_assert(sizeof(cppgoArgs_589a97fe5e12) == 72, "cppgo: the argument block of Eigen::IOFormat::IOFormat is the size the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, self) == 0, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, _precision) == 8, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, _flags) == 16, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, _coeffSeparator_data) == 24, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, _coeffSeparator_size) == 32, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, _rowSeparator_data) == 40, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, _rowSeparator_size) == 48, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, _rowPrefix_data) == 56, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_589a97fe5e12, _rowPrefix_size) == 64, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+
+extern "C" int32_t cppgo_thunk_589a97fe5e12(void * cppgo_block) {
+	const cppgoArgs_589a97fe5e12 *cppgo_args = static_cast<const cppgoArgs_589a97fe5e12 *>(cppgo_block);
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo__coeffSeparator(reinterpret_cast<const char *>(cppgo_args->_coeffSeparator_data), static_cast<size_t>(cppgo_args->_coeffSeparator_size));
+		std::string cppgo__rowSeparator(reinterpret_cast<const char *>(cppgo_args->_rowSeparator_data), static_cast<size_t>(cppgo_args->_rowSeparator_size));
+		std::string cppgo__rowPrefix(reinterpret_cast<const char *>(cppgo_args->_rowPrefix_data), static_cast<size_t>(cppgo_args->_rowPrefix_size));
+		new (reinterpret_cast<void *>(cppgo_args->self)) ::Eigen::IOFormat(static_cast<int32_t>(cppgo_args->_precision), static_cast<int32_t>(cppgo_args->_flags), cppgo__coeffSeparator, cppgo__rowSeparator, cppgo__rowPrefix);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+// cppgoArgs_a26848600dbc is the argument block cppgo_thunk_a26848600dbc unpacks: the words the register
+// file cannot hold, in the order the declaration names them.
+struct cppgoArgs_a26848600dbc {
+	uintptr_t self;
+	int64_t _precision;
+	int64_t _flags;
+	void * _coeffSeparator_data;
+	uint64_t _coeffSeparator_size;
+	void * _rowSeparator_data;
+	uint64_t _rowSeparator_size;
+	void * _rowPrefix_data;
+	uint64_t _rowPrefix_size;
+	void * _rowSuffix_data;
+	uint64_t _rowSuffix_size;
+};
+static_assert(sizeof(cppgoArgs_a26848600dbc) == 88, "cppgo: the argument block of Eigen::IOFormat::IOFormat is the size the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, self) == 0, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _precision) == 8, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _flags) == 16, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _coeffSeparator_data) == 24, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _coeffSeparator_size) == 32, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _rowSeparator_data) == 40, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _rowSeparator_size) == 48, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _rowPrefix_data) == 56, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _rowPrefix_size) == 64, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _rowSuffix_data) == 72, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_a26848600dbc, _rowSuffix_size) == 80, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+
+extern "C" int32_t cppgo_thunk_a26848600dbc(void * cppgo_block) {
+	const cppgoArgs_a26848600dbc *cppgo_args = static_cast<const cppgoArgs_a26848600dbc *>(cppgo_block);
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo__coeffSeparator(reinterpret_cast<const char *>(cppgo_args->_coeffSeparator_data), static_cast<size_t>(cppgo_args->_coeffSeparator_size));
+		std::string cppgo__rowSeparator(reinterpret_cast<const char *>(cppgo_args->_rowSeparator_data), static_cast<size_t>(cppgo_args->_rowSeparator_size));
+		std::string cppgo__rowPrefix(reinterpret_cast<const char *>(cppgo_args->_rowPrefix_data), static_cast<size_t>(cppgo_args->_rowPrefix_size));
+		std::string cppgo__rowSuffix(reinterpret_cast<const char *>(cppgo_args->_rowSuffix_data), static_cast<size_t>(cppgo_args->_rowSuffix_size));
+		new (reinterpret_cast<void *>(cppgo_args->self)) ::Eigen::IOFormat(static_cast<int32_t>(cppgo_args->_precision), static_cast<int32_t>(cppgo_args->_flags), cppgo__coeffSeparator, cppgo__rowSeparator, cppgo__rowPrefix, cppgo__rowSuffix);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+// cppgoArgs_135f5cd5a832 is the argument block cppgo_thunk_135f5cd5a832 unpacks: the words the register
+// file cannot hold, in the order the declaration names them.
+struct cppgoArgs_135f5cd5a832 {
+	uintptr_t self;
+	int64_t _precision;
+	int64_t _flags;
+	void * _coeffSeparator_data;
+	uint64_t _coeffSeparator_size;
+	void * _rowSeparator_data;
+	uint64_t _rowSeparator_size;
+	void * _rowPrefix_data;
+	uint64_t _rowPrefix_size;
+	void * _rowSuffix_data;
+	uint64_t _rowSuffix_size;
+	void * _matPrefix_data;
+	uint64_t _matPrefix_size;
+};
+static_assert(sizeof(cppgoArgs_135f5cd5a832) == 104, "cppgo: the argument block of Eigen::IOFormat::IOFormat is the size the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, self) == 0, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _precision) == 8, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _flags) == 16, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _coeffSeparator_data) == 24, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _coeffSeparator_size) == 32, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _rowSeparator_data) == 40, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _rowSeparator_size) == 48, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _rowPrefix_data) == 56, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _rowPrefix_size) == 64, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _rowSuffix_data) == 72, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _rowSuffix_size) == 80, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _matPrefix_data) == 88, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_135f5cd5a832, _matPrefix_size) == 96, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+
+extern "C" int32_t cppgo_thunk_135f5cd5a832(void * cppgo_block) {
+	const cppgoArgs_135f5cd5a832 *cppgo_args = static_cast<const cppgoArgs_135f5cd5a832 *>(cppgo_block);
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo__coeffSeparator(reinterpret_cast<const char *>(cppgo_args->_coeffSeparator_data), static_cast<size_t>(cppgo_args->_coeffSeparator_size));
+		std::string cppgo__rowSeparator(reinterpret_cast<const char *>(cppgo_args->_rowSeparator_data), static_cast<size_t>(cppgo_args->_rowSeparator_size));
+		std::string cppgo__rowPrefix(reinterpret_cast<const char *>(cppgo_args->_rowPrefix_data), static_cast<size_t>(cppgo_args->_rowPrefix_size));
+		std::string cppgo__rowSuffix(reinterpret_cast<const char *>(cppgo_args->_rowSuffix_data), static_cast<size_t>(cppgo_args->_rowSuffix_size));
+		std::string cppgo__matPrefix(reinterpret_cast<const char *>(cppgo_args->_matPrefix_data), static_cast<size_t>(cppgo_args->_matPrefix_size));
+		new (reinterpret_cast<void *>(cppgo_args->self)) ::Eigen::IOFormat(static_cast<int32_t>(cppgo_args->_precision), static_cast<int32_t>(cppgo_args->_flags), cppgo__coeffSeparator, cppgo__rowSeparator, cppgo__rowPrefix, cppgo__rowSuffix, cppgo__matPrefix);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+// cppgoArgs_2f60234c7f24 is the argument block cppgo_thunk_2f60234c7f24 unpacks: the words the register
+// file cannot hold, in the order the declaration names them.
+struct cppgoArgs_2f60234c7f24 {
+	uintptr_t self;
+	int64_t _precision;
+	int64_t _flags;
+	void * _coeffSeparator_data;
+	uint64_t _coeffSeparator_size;
+	void * _rowSeparator_data;
+	uint64_t _rowSeparator_size;
+	void * _rowPrefix_data;
+	uint64_t _rowPrefix_size;
+	void * _rowSuffix_data;
+	uint64_t _rowSuffix_size;
+	void * _matPrefix_data;
+	uint64_t _matPrefix_size;
+	void * _matSuffix_data;
+	uint64_t _matSuffix_size;
+};
+static_assert(sizeof(cppgoArgs_2f60234c7f24) == 120, "cppgo: the argument block of Eigen::IOFormat::IOFormat is the size the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, self) == 0, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _precision) == 8, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _flags) == 16, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _coeffSeparator_data) == 24, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _coeffSeparator_size) == 32, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _rowSeparator_data) == 40, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _rowSeparator_size) == 48, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _rowPrefix_data) == 56, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _rowPrefix_size) == 64, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _rowSuffix_data) == 72, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _rowSuffix_size) == 80, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _matPrefix_data) == 88, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _matPrefix_size) == 96, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _matSuffix_data) == 104, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_2f60234c7f24, _matSuffix_size) == 112, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+
+extern "C" int32_t cppgo_thunk_2f60234c7f24(void * cppgo_block) {
+	const cppgoArgs_2f60234c7f24 *cppgo_args = static_cast<const cppgoArgs_2f60234c7f24 *>(cppgo_block);
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo__coeffSeparator(reinterpret_cast<const char *>(cppgo_args->_coeffSeparator_data), static_cast<size_t>(cppgo_args->_coeffSeparator_size));
+		std::string cppgo__rowSeparator(reinterpret_cast<const char *>(cppgo_args->_rowSeparator_data), static_cast<size_t>(cppgo_args->_rowSeparator_size));
+		std::string cppgo__rowPrefix(reinterpret_cast<const char *>(cppgo_args->_rowPrefix_data), static_cast<size_t>(cppgo_args->_rowPrefix_size));
+		std::string cppgo__rowSuffix(reinterpret_cast<const char *>(cppgo_args->_rowSuffix_data), static_cast<size_t>(cppgo_args->_rowSuffix_size));
+		std::string cppgo__matPrefix(reinterpret_cast<const char *>(cppgo_args->_matPrefix_data), static_cast<size_t>(cppgo_args->_matPrefix_size));
+		std::string cppgo__matSuffix(reinterpret_cast<const char *>(cppgo_args->_matSuffix_data), static_cast<size_t>(cppgo_args->_matSuffix_size));
+		new (reinterpret_cast<void *>(cppgo_args->self)) ::Eigen::IOFormat(static_cast<int32_t>(cppgo_args->_precision), static_cast<int32_t>(cppgo_args->_flags), cppgo__coeffSeparator, cppgo__rowSeparator, cppgo__rowPrefix, cppgo__rowSuffix, cppgo__matPrefix, cppgo__matSuffix);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+// cppgoArgs_1b416b025213 is the argument block cppgo_thunk_1b416b025213 unpacks: the words the register
+// file cannot hold, in the order the declaration names them.
+struct cppgoArgs_1b416b025213 {
+	uintptr_t self;
+	int64_t _precision;
+	int64_t _flags;
+	void * _coeffSeparator_data;
+	uint64_t _coeffSeparator_size;
+	void * _rowSeparator_data;
+	uint64_t _rowSeparator_size;
+	void * _rowPrefix_data;
+	uint64_t _rowPrefix_size;
+	void * _rowSuffix_data;
+	uint64_t _rowSuffix_size;
+	void * _matPrefix_data;
+	uint64_t _matPrefix_size;
+	void * _matSuffix_data;
+	uint64_t _matSuffix_size;
+	int64_t _fill;
+};
+static_assert(sizeof(cppgoArgs_1b416b025213) == 128, "cppgo: the argument block of Eigen::IOFormat::IOFormat is the size the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, self) == 0, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _precision) == 8, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _flags) == 16, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _coeffSeparator_data) == 24, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _coeffSeparator_size) == 32, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _rowSeparator_data) == 40, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _rowSeparator_size) == 48, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _rowPrefix_data) == 56, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _rowPrefix_size) == 64, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _rowSuffix_data) == 72, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _rowSuffix_size) == 80, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _matPrefix_data) == 88, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _matPrefix_size) == 96, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _matSuffix_data) == 104, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _matSuffix_size) == 112, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+static_assert(offsetof(cppgoArgs_1b416b025213, _fill) == 120, "cppgo: the argument block of Eigen::IOFormat::IOFormat has the offset the Go side asserts");
+
+extern "C" int32_t cppgo_thunk_1b416b025213(void * cppgo_block) {
+	const cppgoArgs_1b416b025213 *cppgo_args = static_cast<const cppgoArgs_1b416b025213 *>(cppgo_block);
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo__coeffSeparator(reinterpret_cast<const char *>(cppgo_args->_coeffSeparator_data), static_cast<size_t>(cppgo_args->_coeffSeparator_size));
+		std::string cppgo__rowSeparator(reinterpret_cast<const char *>(cppgo_args->_rowSeparator_data), static_cast<size_t>(cppgo_args->_rowSeparator_size));
+		std::string cppgo__rowPrefix(reinterpret_cast<const char *>(cppgo_args->_rowPrefix_data), static_cast<size_t>(cppgo_args->_rowPrefix_size));
+		std::string cppgo__rowSuffix(reinterpret_cast<const char *>(cppgo_args->_rowSuffix_data), static_cast<size_t>(cppgo_args->_rowSuffix_size));
+		std::string cppgo__matPrefix(reinterpret_cast<const char *>(cppgo_args->_matPrefix_data), static_cast<size_t>(cppgo_args->_matPrefix_size));
+		std::string cppgo__matSuffix(reinterpret_cast<const char *>(cppgo_args->_matSuffix_data), static_cast<size_t>(cppgo_args->_matSuffix_size));
+		new (reinterpret_cast<void *>(cppgo_args->self)) ::Eigen::IOFormat(static_cast<int32_t>(cppgo_args->_precision), static_cast<int32_t>(cppgo_args->_flags), cppgo__coeffSeparator, cppgo__rowSeparator, cppgo__rowPrefix, cppgo__rowSuffix, cppgo__matPrefix, cppgo__matSuffix, static_cast<int8_t>(cppgo_args->_fill));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_b7d45dbd191e(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::Eigen::IOFormat *>(self)->coeffSeparator;
+		const size_t cppgo_size = cppgo_value.size();
+		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
+		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_f77b2ed8a1ff(void * self, const char * coeffSeparator_data, size_t coeffSeparator_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo_coeffSeparator(coeffSeparator_data, coeffSeparator_size);
+		static_cast<::Eigen::IOFormat *>(self)->coeffSeparator = cppgo_coeffSeparator;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int8_t cppgo_thunk_6b1596e090d5(const void * self) {
+	return static_cast<const ::Eigen::IOFormat *>(self)->fill;
+}
+
+extern "C" void cppgo_thunk_77a405b5ca18(void * self, int8_t fill) {
+	static_cast<::Eigen::IOFormat *>(self)->fill = fill;
+}
+
+extern "C" int32_t cppgo_thunk_b5115f3e5947(const void * self) {
+	return static_cast<const ::Eigen::IOFormat *>(self)->flags;
+}
+
+extern "C" void cppgo_thunk_e773ba0a4385(void * self, int32_t flags) {
+	static_cast<::Eigen::IOFormat *>(self)->flags = flags;
+}
+
+extern "C" int32_t cppgo_thunk_f98f4a962cd8(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::Eigen::IOFormat *>(self)->matPrefix;
+		const size_t cppgo_size = cppgo_value.size();
+		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
+		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_c4db7d8b4ec9(void * self, const char * matPrefix_data, size_t matPrefix_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo_matPrefix(matPrefix_data, matPrefix_size);
+		static_cast<::Eigen::IOFormat *>(self)->matPrefix = cppgo_matPrefix;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_dcae46693e63(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::Eigen::IOFormat *>(self)->matSuffix;
+		const size_t cppgo_size = cppgo_value.size();
+		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
+		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_78d28887d234(void * self, const char * matSuffix_data, size_t matSuffix_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo_matSuffix(matSuffix_data, matSuffix_size);
+		static_cast<::Eigen::IOFormat *>(self)->matSuffix = cppgo_matSuffix;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_179001d9ec8e(const void * self) {
+	return static_cast<const ::Eigen::IOFormat *>(self)->precision;
+}
+
+extern "C" void cppgo_thunk_14fbc1cc0f06(void * self, int32_t precision) {
+	static_cast<::Eigen::IOFormat *>(self)->precision = precision;
+}
+
+extern "C" int32_t cppgo_thunk_0c99f8877012(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::Eigen::IOFormat *>(self)->rowPrefix;
+		const size_t cppgo_size = cppgo_value.size();
+		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
+		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_3ab36ee4297b(void * self, const char * rowPrefix_data, size_t rowPrefix_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo_rowPrefix(rowPrefix_data, rowPrefix_size);
+		static_cast<::Eigen::IOFormat *>(self)->rowPrefix = cppgo_rowPrefix;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_662dc87b3037(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::Eigen::IOFormat *>(self)->rowSeparator;
+		const size_t cppgo_size = cppgo_value.size();
+		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
+		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_b3a9faafc9a0(void * self, const char * rowSeparator_data, size_t rowSeparator_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo_rowSeparator(rowSeparator_data, rowSeparator_size);
+		static_cast<::Eigen::IOFormat *>(self)->rowSeparator = cppgo_rowSeparator;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_843cd364f802(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::Eigen::IOFormat *>(self)->rowSpacer;
+		const size_t cppgo_size = cppgo_value.size();
+		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
+		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_08c44ac3daeb(void * self, const char * rowSpacer_data, size_t rowSpacer_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo_rowSpacer(rowSpacer_data, rowSpacer_size);
+		static_cast<::Eigen::IOFormat *>(self)->rowSpacer = cppgo_rowSpacer;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_79468e818709(const void * self, void ** cppgo_out_data, size_t * cppgo_out_size) {
+	cppgo_error_message.clear();
+	try {
+		auto cppgo_value = static_cast<const ::Eigen::IOFormat *>(self)->rowSuffix;
+		const size_t cppgo_size = cppgo_value.size();
+		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
+		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
+		*cppgo_out_data = cppgo_copy;
+		*cppgo_out_size = cppgo_size;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_ed3cc149aaea(void * self, const char * rowSuffix_data, size_t rowSuffix_size) {
+	cppgo_error_message.clear();
+	try {
+		std::string cppgo_rowSuffix(rowSuffix_data, rowSuffix_size);
+		static_cast<::Eigen::IOFormat *>(self)->rowSuffix = cppgo_rowSuffix;
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
 extern "C" int32_t cppgo_thunk_54b1814a5d61(void) {
 	cppgo_error_message.clear();
 	try {
@@ -62,6 +666,113 @@ extern "C" int32_t cppgo_thunk_fc8637e263a2(int32_t v) {
 	cppgo_error_message.clear();
 	try {
 		::Eigen::setNbThreads(v);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+// No class-level explicit instantiation is written. Each thunk below
+// names the specialization in its own call, so the compiler instantiates
+// exactly the members the API exposes. `template class T;` would also
+// instantiate every member the generic API skips — an operator that
+// static-asserts on the specialization, as Eigen's Matrix does — and the
+// translation unit would not compile for a type the API does not use.
+
+extern "C" size_t cppgo_tmpl_3bcfbe3dad78(void) {
+	return sizeof(::Eigen::Matrix<double, 2, 2, 1, 2, 2>);
+}
+
+extern "C" size_t cppgo_tmpl_60147b380c60(void) {
+	return alignof(::Eigen::Matrix<double, 2, 2, 1, 2, 2>);
+}
+
+extern "C" int32_t cppgo_tmpl_ab61e90c8515(void *self) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::Eigen::Matrix<double, 2, 2, 1, 2, 2>();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_tmpl_9f47185e2552(void *self, void *cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*static_cast<int64_t *>(cppgo_result) = static_cast<const ::Eigen::Matrix<double, 2, 2, 1, 2, 2> *>(self)->innerStride();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_tmpl_4432d8737012(void *self, void *cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*static_cast<int64_t *>(cppgo_result) = static_cast<const ::Eigen::Matrix<double, 2, 2, 1, 2, 2> *>(self)->outerStride();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" size_t cppgo_tmpl_b30b0e2b0d20(void) {
+	return sizeof(::Eigen::Matrix<double, -1, -1, 1, -1, -1>);
+}
+
+extern "C" size_t cppgo_tmpl_0ff8452be9a8(void) {
+	return alignof(::Eigen::Matrix<double, -1, -1, 1, -1, -1>);
+}
+
+extern "C" int32_t cppgo_tmpl_8c729860743d(void *self) {
+	cppgo_error_message.clear();
+	try {
+		new (self) ::Eigen::Matrix<double, -1, -1, 1, -1, -1>();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_tmpl_29e138c50e02(void *self, void *cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*static_cast<int64_t *>(cppgo_result) = static_cast<const ::Eigen::Matrix<double, -1, -1, 1, -1, -1> *>(self)->innerStride();
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_tmpl_5594f08d3bc2(void *self, void *cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		*static_cast<int64_t *>(cppgo_result) = static_cast<const ::Eigen::Matrix<double, -1, -1, 1, -1, -1> *>(self)->outerStride();
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();

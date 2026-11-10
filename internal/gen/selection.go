@@ -19,6 +19,16 @@ func (b *builder) applySelection() error {
 
 	for _, binding := range b.bindings {
 		keep := len(b.cfg.Bind) == 0
+		if binding.Owner != nil && b.instantiated[binding.Owner.CxxName] {
+			// The manifest named the specialization with -instantiate, which
+			// selects the type and with it the members the type declares.
+			keep = true
+		}
+		if b.requestFor(binding.sym) != nil {
+			// A function instantiation is a root of its own: the entry asked for
+			// that declaration by name, and there is no record to carry it.
+			keep = true
+		}
 		for i, entry := range b.cfg.Bind {
 			if bindingMatches(entry, binding) {
 				bindMatched[i] = true
@@ -40,6 +50,12 @@ func (b *builder) applySelection() error {
 	for _, name := range b.order {
 		record := b.records[name]
 		root := len(b.cfg.Bind) == 0
+		if b.neededRecords[record.CxxName] || b.instantiated[record.CxxName] {
+			// A record the manifest named with -instantiate, or the receiver of
+			// an instantiated member, is part of the API whether or not it was
+			// also named with -bind.
+			root = true
+		}
 		for i, entry := range b.cfg.Bind {
 			if matchesName(entry, record.CxxName) {
 				bindMatched[i] = true
@@ -222,10 +238,106 @@ func (b *builder) assignNames() error {
 		binding.GoName = name
 	}
 	b.applyOverloadSuffixes()
+	b.resolveCollisions()
 	if err := b.applyRenames(); err != nil {
 		return err
 	}
 	return b.checkCollisions()
+}
+
+// resolveCollisions gives every binding of one scope its own Go name when two
+// declarations genuinely share one. The overload rule (applyOverloadSuffixes)
+// already tells apart the parameter lists of an overload set; what is left is
+// the case a header makes common and the suffix cannot: a member whose own name
+// collides with a generated one — cv::Mat's copy constructor and its clone()
+// both want Clone — and a const/non-const pair, which has the same parameter
+// list twice.
+//
+// The declared method keeps the name, because that is the name the C++ header
+// wrote; the copy constructor becomes Copy (it is cppgo's own notation for the
+// implicit copy); a const overload that loses the name takes a Const suffix; and
+// anything still colliding after that is told apart by a short hash of its
+// declaration. The manifest's -rename still wins, and checkCollisions still
+// refuses a name that collides across kinds (a function and a type) or that the
+// generated API reserves.
+func (b *builder) resolveCollisions() {
+	groups := map[string][]*binding{}
+	keys := make([]string, 0, len(b.bindings))
+	for _, binding := range b.bindings {
+		key := nameScope(binding) + "\x00" + binding.GoName
+		if _, ok := groups[key]; !ok {
+			keys = append(keys, key)
+		}
+		groups[key] = append(groups[key], binding)
+	}
+	sort.Strings(keys)
+	// Every name a group starts from is in use in its scope before any group
+	// is resolved: a suffix this pass invents may not land on the name another
+	// group already holds (cv::Mat's const ptr(int) and its ptr(int, int) are
+	// exactly that case).
+	taken := map[string]map[string]bool{}
+	for _, key := range keys {
+		group := groups[key]
+		scope := nameScope(group[0])
+		if taken[scope] == nil {
+			taken[scope] = map[string]bool{}
+		}
+		taken[scope][group[0].GoName] = true
+	}
+	for _, key := range keys {
+		group := groups[key]
+		if len(group) < 2 {
+			continue
+		}
+		// The loser is decided by what a reader expects to find: a declared
+		// member before a generated copy constructor, a non-const spelling
+		// before the const one, and the declaration order of the header after
+		// that. Sorting on the signature keeps it independent of file order.
+		sort.SliceStable(group, func(i, j int) bool {
+			left, right := group[i], group[j]
+			if left.IsClone != right.IsClone {
+				return !left.IsClone
+			}
+			if left.sym.IsConst != right.sym.IsConst {
+				return !left.sym.IsConst
+			}
+			return displaySignature(left.sym) < displaySignature(right.sym)
+		})
+		scope := nameScope(group[0])
+		for _, binding := range group[1:] {
+			binding.GoName = b.collisionName(binding, taken[scope])
+			taken[scope][binding.GoName] = true
+		}
+	}
+}
+
+// collisionName is the name a binding takes when the one it computed is
+// already in use in its scope. It is deterministic: the parameter-type suffix
+// first (the same rule the overload set uses), then Copy for a copy
+// constructor, then Const for a const overload, and a short hash of the
+// declaration as the last resort.
+func (b *builder) collisionName(binding *binding, taken map[string]bool) string {
+	base := binding.GoName
+	suffix := paramSuffix(binding.Params)
+	if binding.IsClone {
+		candidate := "Copy" + suffix
+		if !taken[candidate] {
+			return candidate
+		}
+		return candidate + shortHash(displaySignature(binding.sym))[:6]
+	}
+	candidate := base + suffix
+	if !taken[candidate] && candidate != base {
+		return candidate
+	}
+	if binding.sym.IsConst {
+		candidate = base + suffix + "Const"
+		if !taken[candidate] {
+			return candidate
+		}
+		return candidate + shortHash(displaySignature(binding.sym))[:6]
+	}
+	return base + suffix + shortHash(displaySignature(binding.sym))[:6]
 }
 
 // baseName is the name a binding gets before overloads are told apart.
@@ -240,7 +352,7 @@ func (b *builder) baseName(binding *binding) (string, error) {
 		return "Clone", nil
 	}
 	if binding.IsConstructor {
-		return "New" + binding.Owner.GoName, nil
+		return "New" + binding.Owner.GoName + b.templateSuffix(binding), nil
 	}
 	name := exportName(simpleName(binding.sym.QualifiedName))
 	if binding.sym.IsOperator {
@@ -251,9 +363,35 @@ func (b *builder) baseName(binding *binding) (string, error) {
 		name = operator
 	}
 	if binding.IsStatic {
-		return binding.Owner.GoName + name, nil
+		return binding.Owner.GoName + name + b.templateSuffix(binding), nil
 	}
-	return name, nil
+	return name + b.templateSuffix(binding), nil
+}
+
+// templateSuffix names the concrete instantiation a manifest request asked for:
+// at<unsigned char> is AtUint8, at<double> is AtFloat64. The parameter-type
+// suffix cannot tell them apart — one at<uchar>(int, int) and one
+// at<double>(int, int) have the same parameters — and the template argument is
+// what a reader wrote.
+func (b *builder) templateSuffix(binding *binding) string {
+	if len(binding.templateArgs) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	for _, spelling := range binding.templateArgs {
+		param, ok := cxx.ScalarType(spelling)
+		if !ok {
+			out.WriteString(typeSuffix(exportName(spelling)))
+			continue
+		}
+		mapped, err := b.mapper.mapType(param)
+		if err != nil {
+			out.WriteString(typeSuffix(exportName(spelling)))
+			continue
+		}
+		out.WriteString(typeSuffix(mapped.Go))
+	}
+	return out.String()
 }
 
 // nameScope is where a Go name lives: package level for functions,

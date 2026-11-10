@@ -12,7 +12,7 @@ import (
 // TestOperatorGoNameOutsideTheTable names the operator and the rename.
 func TestOperatorGoNameOutsideTheTable(t *testing.T) {
 	b := &builder{}
-	_, err := b.operatorGoName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator new", IsOperator: true, Operator: "new"}})
+	_, err := b.operatorGoName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator->*", IsOperator: true, Operator: "->*"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "outside the naming table")
 	assert.Contains(t, err.Error(), "-rename")
@@ -449,7 +449,7 @@ func TestBuildTemplatesSkipsWhatTheManifestDoesNotName(t *testing.T) {
 		templateByName: map[string]*templateModel{},
 	}
 	excluded.mapper = &mapper{records: excluded.records, enums: excluded.enums}
-	require.NoError(t, excluded.buildTemplates())
+	excluded.buildTemplates()
 	assert.Empty(t, excluded.templates)
 
 	// A manifest that names the template keeps it.
@@ -462,7 +462,7 @@ func TestBuildTemplatesSkipsWhatTheManifestDoesNotName(t *testing.T) {
 		templateByName: map[string]*templateModel{},
 	}
 	named.mapper = &mapper{records: named.records, enums: named.enums}
-	require.NoError(t, named.buildTemplates())
+	named.buildTemplates()
 	require.Len(t, named.templates, 1)
 	assert.Equal(t, "Box", named.templates[0].GoName)
 }
@@ -544,7 +544,7 @@ func TestCheckCollisionsSkipsAnUnselectedEnum(t *testing.T) {
 func TestBaseNamePropagatesTheOperatorFailure(t *testing.T) {
 	b := &builder{records: map[string]*recordModel{}, enums: map[string]*enumModel{}}
 	b.mapper = &mapper{records: b.records, enums: b.enums}
-	_, err := b.baseName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator new", IsOperator: true, Operator: "new"}})
+	_, err := b.baseName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator->*", IsOperator: true, Operator: "->*"}})
 	require.Error(t, err)
 
 	_, err = b.baseName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator void", IsConversion: true, IsOperator: true,

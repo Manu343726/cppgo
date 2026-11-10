@@ -39,6 +39,18 @@ func symbolError(sym cxx.Symbol, err error) error {
 	return declError(sym.DeclFile, sym.DeclLine, displaySignature(sym), err)
 }
 
+// skipped records a selected declaration the generator deliberately does not
+// emit. It is not a refusal: the coverage report lists it with the reason and
+// keeps it out of the bound/refused ratio.
+func (b *builder) skipped(sym cxx.Symbol, class, reason string) {
+	if b.skipReasons == nil {
+		return
+	}
+	key := symbolKey(sym)
+	b.skipReasons[key] = reason
+	b.skipClasses[key] = class
+}
+
 // manifestError is the invocation's mistake rather than a construct the build
 // cannot carry: a -status entry naming a declaration whose return is not a
 // status. A declaration the build cannot carry is a warning; a flag that asks
@@ -59,6 +71,9 @@ func (e manifestError) Error() string { return e.err.Error() }
 // invocation, so it is not a warning: the first one is kept and build stops
 // with it once every declaration has been visited.
 func (b *builder) unbound(sym cxx.Symbol, err error) {
+	if b.refusalReasons != nil {
+		b.refusalReasons[symbolKey(sym)] = err.Error()
+	}
 	if _, ok := err.(manifestError); ok {
 		if b.manifestErr == nil {
 			b.manifestErr = symbolError(sym, err)

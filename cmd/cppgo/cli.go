@@ -188,6 +188,7 @@ func (c *cli) generate(args []string, m mode) int {
 		Status:          v.status,
 		Scan:            v.scan,
 		ScanDir:         v.scanDir,
+		Coverage:        v.coverage,
 		Warnings:        c.stderr,
 	}
 	if m == modeGen {
@@ -228,6 +229,7 @@ func wantsHelp(args []string) bool {
 type flagValues struct {
 	headers, bind, exclude, instantiate, rename, status, scan stringList
 	packageName, library, cxx, out, compileCommands, scanDir  string
+	coverage                                                  string
 	check, quiet                                              bool
 }
 
@@ -250,6 +252,7 @@ func newFlagSet(m mode) (*flag.FlagSet, *flagValues) {
 	fs.Var(&v.status, "status", "declaration whose int32 return is a status code; repeatable")
 	fs.Var(&v.scan, "scan", "Go package whose template instantiations to collect; repeatable")
 	fs.StringVar(&v.scanDir, "scan-dir", ".", "directory the -scan patterns resolve against")
+	fs.StringVar(&v.coverage, "coverage", "", "write the per-declaration coverage report to this file")
 	fs.BoolVar(&v.check, "check", m == modeCheck, "report whether the generated files are up to date instead of writing them")
 	fs.BoolVar(&v.quiet, "q", false, "suppress the per-binding report and the confirmation message")
 	return fs, v
@@ -267,7 +270,7 @@ type flagDoc struct {
 var flagOrder = []string{
 	"header", "package", "library", "out", "compile-commands",
 	"bind", "exclude", "instantiate", "rename", "status",
-	"scan", "scan-dir", "cxx", "check", "q",
+	"scan", "scan-dir", "coverage", "cxx", "check", "q",
 }
 
 // flagDocs returns the help for every flag of one command. The flag set is
@@ -370,6 +373,15 @@ func flagDocs(m mode) map[string]flagDoc {
 			meta:  "",
 			lines: []string{"suppress the per-binding report and the confirmation message"},
 			def:   "off",
+		},
+		"coverage": {
+			meta: "<file>",
+			lines: []string{
+				"write the machine-readable coverage report: the declarations parsed,",
+				"bound, refused (each classified) and skipped, with the ratio per module;",
+				"the file is a generated output, so check compares it",
+			},
+			def: "none",
 		},
 	}
 

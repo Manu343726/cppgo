@@ -187,7 +187,8 @@ const (
 	typeNullPtr int32 = 24
 )
 
-// CX_StorageClass values, as returned by clang_Cursor_getStorageClass.
+// CX_StorageClass values, as returned by clang_Cursor_getStorageClass. The
+// enumerators start at CX_SC_Invalid, so CX_SC_Static is the fourth one.
 const storageClassStatic int32 = 3
 
 // CX_CXXAccessSpecifier values, as returned by clang_getCXXAccessSpecifier.
@@ -868,13 +869,28 @@ type TU struct {
 	symbols         []Symbol
 	byName          map[string][]int
 	byNameMangled   map[string]int
-	memberTemplates map[string]memberTemplate
-	records         []Record
-	byRecord        map[string]int
-	enums           []Enum
-	byEnum          map[string]int
-	closed          bool
-	mu              sync.Mutex
+	memberTemplates map[string][]memberTemplate
+
+	// instantiating holds the specializations a name-based instantiation is
+	// in the middle of building. A recursive spelling (a base that mentions the
+	// type being built) stops at this guard instead of looping.
+	instantiating map[string]bool
+
+	// builtRecords names the specializations this run synthesized. A record
+	// libclang itself synthesized from a type reference is partial (it has no
+	// bases and no flattened fields), so only a name in this set is returned
+	// without being rebuilt.
+	builtRecords map[string]bool
+
+	// functionTemplates keeps the free function templates by qualified name:
+	// each one is the pattern a concrete instantiation is read from.
+	functionTemplates map[string][]funcTemplate
+	records           []Record
+	byRecord          map[string]int
+	enums             []Enum
+	byEnum            map[string]int
+	closed            bool
+	mu                sync.Mutex
 }
 
 // ParseTranslationUnit parses file with the given command-line flags. The flags

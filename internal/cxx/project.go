@@ -332,12 +332,26 @@ func (p *Project) Members(parent string) []Symbol {
 // member arguments substituted. It is the model half of the manifest's
 // `-instantiate` entry. A member template with no instantiation cannot be
 // bound, and the emitter reports the entry to add.
-func (p *Project) InstantiateMember(record, member string, args []TemplateArgument) (Symbol, bool) {
+func (p *Project) InstantiateMember(record, member string, args []TemplateArgument, arity int, wantConst bool) (Symbol, bool) {
 	p.mu.Lock()
 	tus := append([]*TU(nil), p.tus...)
 	p.mu.Unlock()
 	for _, tu := range tus {
-		if sym, ok := tu.InstantiateMember(record, member, args); ok {
+		if sym, ok := tu.InstantiateMember(record, member, args, arity, wantConst); ok {
+			return sym, true
+		}
+	}
+	return Symbol{}, false
+}
+
+// InstantiateFunction returns the concrete instantiation of a free function
+// template. It is the free-function half of InstantiateMember.
+func (p *Project) InstantiateFunction(name string, args []TemplateArgument, arity int) (Symbol, bool) {
+	p.mu.Lock()
+	tus := append([]*TU(nil), p.tus...)
+	p.mu.Unlock()
+	for _, tu := range tus {
+		if sym, ok := tu.InstantiateFunction(name, args, arity); ok {
 			return sym, true
 		}
 	}

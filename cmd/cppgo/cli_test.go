@@ -309,15 +309,19 @@ var classTemplateHeader = filepath.Join("..", "..", "internal", "gen", "testdata
 var tmplHeader = filepath.Join("..", "..", "internal", "gen", "testdata", "tmpl", "cell.hpp")
 
 // TestGenUnimplementedConstructFailsWithoutWriting is the integrity gate: a
-// construct the model cannot represent at all is exit 1, a one-line message,
-// and no output files.
+// generation that cannot build its own shim is exit 1, a one-line message, and
+// no output files. The class template with a public field no longer fails —
+// per declaration, it is a warning — so the fatal case named here is a manifest
+// entry that selects nothing, which the generator must refuse rather than emit
+// an empty package.
 func TestGenUnimplementedConstructFailsWithoutWriting(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
-	code, stdout, stderr := exec("gen", "-header", classTemplateHeader, "-package", "err", "-library", "liberr", "-out", out)
+	code, stdout, stderr := exec("gen", "-header", classTemplateHeader, "-package", "err", "-library", "liberr",
+		"-bind", "err::DoesNotExist", "-out", out)
 	assert.Equal(t, exitError, code)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "public field")
-	assert.Contains(t, stderr, "; ")
+	assert.Contains(t, stderr, "err::DoesNotExist")
+	assert.Contains(t, stderr, "names nothing")
 	_, err := os.Stat(out)
 	assert.True(t, os.IsNotExist(err), "a failed generation must not create the output directory")
 }
@@ -350,7 +354,7 @@ func TestGenInstantiate(t *testing.T) {
 // TestGenInstantiateUnmatched checks the typo is an error, not an empty package.
 func TestGenInstantiateUnmatched(t *testing.T) {
 	code, stdout, stderr := exec("gen", "-header", tmplHeader, "-package", "tmpl", "-library", "libtmpl",
-		"-instantiate", "tmpl::Cell<float>", "-out", t.TempDir())
+		"-instantiate", "tmpl::Nope<float>", "-out", t.TempDir())
 	assert.Equal(t, exitError, code)
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "names no instantiation")

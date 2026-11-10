@@ -175,6 +175,15 @@ const (
 	AxisZ Axis = 2
 )
 
+// Border has two spellings of one value: exportName folds the underscore away,
+// so REFLECT_101 and REFLECT101 are one Go constant, and the report says so.
+type Border uint32
+
+const (
+	BorderBORDERREPLICATE  Border = 1
+	BorderBORDERREFLECT101 Border = 4
+)
+
 // ColorT is enums::Color_t, an enum with underlying type uint32.
 //
 // Color_t tests the C-style typedef spelling.

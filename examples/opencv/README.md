@@ -1,299 +1,269 @@
 # opencv
 
-A slice of [OpenCV](https://opencv.org/) 4.10's core header, bound to Go by
-`cppgo gen`. It is the worked example of binding a large, *installed* C++
-library: unlike [mathx](../mathx) there is no C++ source in this directory to
-build, because the library is OpenCV itself, built and packaged by the system.
+A slice of [OpenCV](https://opencv.org/) 4.10 bound to Go by `cppgo gen` from the
+installation's own headers: `core`, `imgproc` and `imgcodecs`. It is the worked
+example of binding a large, *installed* C++ library — there is no C++ source in
+this directory to build, because the library is OpenCV itself, built and
+packaged by the system.
 
-The header this example reads is
-[`opencv2/core.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core.hpp),
-which reaches thousands of declarations through its includes. The binding covers
-the ones the generator carries today, and says below which ones it does not carry
-and why.
+The binding goes through the image pipeline a program actually uses: a
+`cv::Mat` built from a shape or from raw bytes, the `_InputArray`/`_OutputArray`
+proxies around it, image files through `imgcodecs`, and the algorithms of
+`imgproc` and `core` — colour conversion, thresholding, resizing, blurring, edge
+detection, contours and reductions. Every test reads or writes a real matrix or
+the committed PNG under [`testdata/`](testdata) and asserts the value.
 
 ## What is bound
 
-The declarations are copied from the installation's own headers, and each has a
-link to the file it lives in.
+The declarations are copied from the installation's headers; the *generator*
+features that carry them are described in [§ What the generator learned](#what-the-generator-learned).
 
-An enum, with the values its declaration gives it
-([`core/base.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/base.hpp)):
+### The matrix
 
-```cpp
-enum NormTypes {
-    NORM_INF       = 1,
-    NORM_L1        = 2,
-    NORM_L2        = 4,
-    NORM_L2SQR     = 5,
-    NORM_HAMMING   = 6,
-    NORM_HAMMING2  = 7,
-    NORM_TYPE_MASK = 7,
-    NORM_RELATIVE  = 8,
-    NORM_MINMAX    = 32
-};
-```
+`cv::Mat` ([`core/mat.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/mat.hpp))
+is bound as a whole record. The constructors that carry are the default one, the
+`(rows, cols, type)` form, the `(rows, cols, type, void *, size_t)` raw-data
+form (a `void *` is Go's `unsafe.Pointer`), the `Scalar`-filled form and the
+copy constructor; the public fields — `rows`, `cols`, `flags`, `dims`, `data`,
+`datastart`, `dataend`, `datalimit` — become accessors, and the methods the
+pipeline needs are methods: `total`, `type`, `channels`, `empty`, `setTo`,
+`clone`, `copy`, `convertTo`, `reshape`. The copy constructor and `clone()` both
+map to Go's `Clone`; the collision resolves as `Copy` (the copy constructor,
+which shares the buffer) and `Clone` (the deep copy), which is what the two C++
+names actually mean.
 
-A small record with two constructors, one method and three public fields
-([`core/types.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/types.hpp)):
+Element access is the two explicit instantiations of the member function
+template:
 
 ```cpp
-class CV_EXPORTS TermCriteria
-{
-public:
-    enum Type
-    {
-        COUNT=1,
-        MAX_ITER=COUNT,
-        EPS=2
-    };
-
-    TermCriteria();
-    TermCriteria(int type, int maxCount, double epsilon);
-
-    inline bool isValid() const;
-    int type;
-    int maxCount;
-    double epsilon;
-};
+template<typename _Tp> _Tp& at(int i0, int i2);
 ```
 
-An object that holds state across calls, with scalar results
-([`core/utility.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/utility.hpp)):
+The manifest names `at<unsigned char>(int, int)` and `at<double>(int, int)`, and
+the generated methods are `AtUint8(i, j) (*uint8, error)` and
+`AtFloat64(i, j) (*float64, error)`: the reference the C++ side returns is the
+element, so a write through it changes the matrix.
 
-```cpp
-class CV_EXPORTS_W TickMeter
-{
-public:
-    TickMeter();
-    void start();
-    void stop();
-    int64 getTimeTicks() const;
-    double getTimeMicro() const;
-    double getTimeMilli() const;
-    double getTimeSec() const;
-    int64 getCounter() const;
-    double getFPS() const;
-    double getAvgTimeSec() const;
-    double getAvgTimeMilli() const;
-    void reset();
-};
-```
+### The proxies
 
-And the library's own configuration functions, all scalar
-([`core/utility.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/utility.hpp)):
-
-```cpp
-CV_EXPORTS_W int getVersionMajor();
-CV_EXPORTS_W int getVersionMinor();
-CV_EXPORTS_W double getTickFrequency();
-CV_EXPORTS_W int getNumThreads();
-CV_EXPORTS_W void setNumThreads(int nthreads);
-CV_EXPORTS_W int getNumberOfCPUs();
-CV_EXPORTS_W bool useOptimized();
-CV_EXPORTS_W void setUseOptimized(bool onoff);
-```
-
-`make gen` reads them:
-
-```console
-$ make gen
-build/cppgo gen -header /usr/include/opencv4/opencv2/core.hpp -package opencv \
-                -library /usr/lib/x86_64-linux-gnu/libopencv_core.so \
-                -compile-commands build/compile_commands.json -out . \
-                -bind cv::NormTypes -bind cv::TermCriteria -bind cv::TickMeter \
-                -bind cv::getVersionMajor -bind cv::getVersionMinor \
-                -bind cv::getTickFrequency -bind cv::getNumThreads \
-                -bind cv::setNumThreads -bind cv::getNumberOfCPUs \
-                -bind cv::useOptimized -bind cv::setUseOptimized
-cv::TermCriteria::TermCriteria()             thunk  cppgo_thunk_d6a8db8dcb53  not noexcept: an exception would unwind into Go
-...
-cppgo: built libcppgo_opencv.so with /usr/bin/g++
-```
-
-One line per binding, with the carrier that carries it. [Architecture][arch] has
-what the three carriers are; [Carriers][carriers] has what each line's reason
-means.
-
-[arch]: https://manu343726.github.io/cppgo/explanation/architecture/
-[carriers]: https://manu343726.github.io/cppgo/explanation/carriers/
-
-## The generated API
-
-[`zz_cppgo.gen.go`](zz_cppgo.gen.go) is the whole surface a caller sees. Its
-declarations:
+`cv::_InputArray` and `cv::_OutputArray`
+([`core/mat.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/mat.hpp))
+are the wrapper types the algorithms take instead of `Mat`. The constructors
+that carry are `()`, `(const Mat &)` and `(const double &)` for the input side,
+and `()` and `(Mat &)` for the output side — the last one is what makes an
+algorithm write into the matrix the Go value owns:
 
 ```go
-type NormTypes uint32
-const (
-	NormTypesNORMINF      NormTypes = 1
-	NormTypesNORML1       NormTypes = 2
-	NormTypesNORML2       NormTypes = 4
-	NormTypesNORML2SQR    NormTypes = 5
-	NormTypesNORMHAMMING  NormTypes = 6
-	NormTypesNORMHAMMING2 NormTypes = 7
-	NormTypesNORMTYPEMASK NormTypes = 7
-	NormTypesNORMRELATIVE NormTypes = 8
-	NormTypesNORMMINMAX   NormTypes = 32
-)
-
-type TermCriteriaType uint32
-const (
-	TermCriteriaTypeCOUNT   TermCriteriaType = 1
-	TermCriteriaTypeMAXITER TermCriteriaType = 1
-	TermCriteriaTypeEPS     TermCriteriaType = 2
-)
-
-type TermCriteria struct{ /* opaque */ }
-func NewTermCriteria() (*TermCriteria, error)
-func NewTermCriteriaInt32Int32Float64(arg0 int32, maxCount int32, epsilon float64) (*TermCriteria, error)
-func (t *TermCriteria) Clone() (*TermCriteria, error)
-func (t *TermCriteria) Close() error
-func (t *TermCriteria) IsValid() (bool, error)
-func (t *TermCriteria) Type() int32
-func (t *TermCriteria) SetType(arg0 int32)
-func (t *TermCriteria) MaxCount() int32
-func (t *TermCriteria) SetMaxCount(maxCount int32)
-func (t *TermCriteria) Epsilon() float64
-func (t *TermCriteria) SetEpsilon(epsilon float64)
-
-type TickMeter struct{ /* opaque */ }
-func NewTickMeter() (*TickMeter, error)
-func (t *TickMeter) Clone() (*TickMeter, error)
-func (t *TickMeter) Close() error
-func (t *TickMeter) Start() error
-func (t *TickMeter) Stop() error
-func (t *TickMeter) GetTimeTicks() (int64, error)
-func (t *TickMeter) GetTimeMicro() (float64, error)
-func (t *TickMeter) GetTimeMilli() (float64, error)
-func (t *TickMeter) GetTimeSec() (float64, error)
-func (t *TickMeter) GetCounter() (int64, error)
-func (t *TickMeter) GetFPS() (float64, error)
-func (t *TickMeter) GetAvgTimeSec() (float64, error)
-func (t *TickMeter) GetAvgTimeMilli() (float64, error)
-func (t *TickMeter) Reset() error
-
-func GetVersionMajor() (int32, error)
-func GetVersionMinor() (int32, error)
-func GetTickFrequency() (float64, error)
-func GetNumThreads() (int32, error)
-func SetNumThreads(nthreads int32) error
-func GetNumberOfCPUs() (int32, error)
-func UseOptimized() (bool, error)
-func SetUseOptimized(onoff bool) error
+in, _ := NewInputArrayMatPtrRef(src)
+out, _ := NewOutputArrayMatPtrRef(dst)
+CvtColor(in, out, int32(ColorConversionCodesCOLORBGR2GRAY), 0)
 ```
 
-Read the error results as a statement about the C++: `Start` has one because
-`TickMeter::start` is not `noexcept` and an exception must not unwind into Go;
-`TermCriteria.Type` has none because a field read cannot fail; `SetNumThreads`
-returns only an error because it has no value.
+### The algorithms
 
-## The call
-
-From [`opencv_test.go`](opencv_test.go), where a meter accumulates one run and
-reads it back:
-
-```go
-tm, err := NewTickMeter()
-if err != nil {
-    t.Fatalf("NewTickMeter: %v", err)
-}
-defer tm.Close()
-
-if err := tm.Start(); err != nil {
-    t.Fatalf("Start: %v", err)
-}
-if err := tm.Stop(); err != nil {
-    t.Fatalf("Stop: %v", err)
-}
-
-if got, err := tm.GetCounter(); err != nil || got != 1 {
-    t.Errorf("GetCounter() after one start/stop = %d, %v, want 1, nil", got, err)
-}
-```
-
-## What is not bound, and why
-
-The generator refuses a declaration it cannot carry rather than binding it
-silently, and a refused declaration inside a record fails the whole record. That
-is why the image work is not here: `cv::Mat`, the type every image operation
-takes and returns, cannot be bound today. Its constructor set includes
-
-```cpp
-Mat(Size size, int type);
-```
-
-whose `cv::Size` parameter is passed **by value** and is not a POD that Go can
-mirror (`cv::Size_` has user-declared constructors, so it is not plain old data).
-The generator's error:
-
-```console
-$ cppgo gen -header /usr/include/opencv4/opencv2/core.hpp -package opencv \
-            -instantiate 'cv::Size_<int>' -bind cv::Mat ...
-cppgo gen: cppgo: /usr/include/opencv4/opencv2/core/mat.hpp:836:
-cv::Mat::Mat(Size, int): parameter size: "Size" is passed by value but is not a
-POD; take it by const reference, or make it a POD that Go can mirror
-```
-
-`-exclude` cannot narrow that: every constructor of a class shares one qualified
-name, so excluding `cv::Mat::Mat` removes the copy constructor, the default
-constructor and `Mat(int, int, int)` together. A record therefore needs every one
-of its constructors to be carryable, and `cv::Mat`'s are not.
-
-The same rule leaves the following out, each with the declaration and the error
-that stop it:
-
-| declaration | refusal |
+| Module | Bound declarations |
 |---|---|
-| `String cv::getVersionString()` | `result: "String" is not part of the generated API; name it with -instantiate 'std::__cxx11::basic_string<…>'` |
-| `cv::PCA::project(InputArray) const` | `result: "Mat" is passed by value but is not a POD` |
-| `cv::SVD` | the shim does not compile: `SVD(const _InputArray&)` is lowered to a call through a pointer |
-| `cv::norm`, `cv::mean`, `cv::sum` | `norm` stops on its `const Matx<_Tp,m,n>&` overload (`"const Matx<_Tp, m, n>" is not a type this build classifies`); `mean` and `sum` return `Scalar`, which the generator asks for as `-instantiate 'cv::Scalar_<double>'` |
-| `cv::_InputArray` itself | `_InputArray(int, void *): parameter _obj: "void *" is a void pointer` |
+| `imgproc` | `cvtColor`, `threshold`, `resize`, `blur`, `GaussianBlur`, `Canny`, `contourArea`, `boundingRect` |
+| `core` | `norm`, `mean`, `sum`, `minMaxLoc`, `add`, `subtract`, `multiply`, `divide` |
+| `imgcodecs` | `imread`, `imwrite`, `imencode` |
+
+and the enums their codes come from: `ColorConversionCodes`, `ThresholdTypes`,
+`InterpolationFlags` and `BorderTypes`. An enum alias keeps one Go constant:
+`BORDER_REFLECT101` and `BORDER_DEFAULT` are the same value, and the report says
+so.
+
+The two geometry records the algorithms take by value are synthesised from their
+patterns and are Go structs of the C layout:
+`PointInt{X, Y}`, `SizeInt{Width, Height}`, `RectInt{X, Y, Width, Height}` and
+`ScalarFloat64{Val [4]float64}`. Their operations that need no dependent type
+are methods (`Dot`, `Cross`, `Inside`, `Area`, `Empty`, `Contains`), and their
+fields are read and written directly, which is what a mirrored record is.
+
+### The file paths
+
+`imread` and `imwrite` take a `cv::String`, an alias of `std::string`; the
+generator resolves the alias to the standard type the emitted table names, and
+the parameter crosses as a Go `string`. `imencode` writes its bytes through
+`std::vector<uchar> &`, a non-const standard-library reference the generator now
+copies back into the caller's Go slice (`*[]uint8`).
+
+The test fixture is [`testdata/pixels.png`](testdata/pixels.png), a 4×3 BGR
+image whose twelve pixels are the values the tests assert.
+
+## What the generator learned
+
+The declarations above needed features the emitter did not have. Each is now a
+mechanism with tests, not a documented exception:
+
+- **typedef aliases of standard types.** `cv::String` is
+  `std::__cxx11::basic_string<char, …>`, and the spelling carries no clue. The
+  type map reads the canonical record name behind a typedef and normalises the
+  standard-library aliases (`basic_string` → `std::string`, an allocator
+  argument is dropped from `std::vector`).
+- **name collisions on a whole record.** Two declarations that map to one Go
+  name no longer refuse the run: the declared member keeps the name, the copy
+  constructor becomes `Copy`, a const overload takes a `Const` suffix, and
+  anything still colliding takes a short signature hash. `-rename` still wins.
+- **an uncarryable declaration in a selected set.** A class template the generic
+  API cannot model, or an overload of a named function, is a warning naming the
+  declaration; the rest of the set binds. That is what makes `-bind cv::Mat` a
+  usable command.
+- **concrete instantiations of function and member templates.** A member
+  function template has no Go spelling (Go has no type parameters on methods),
+  so the manifest names the instantiation — `-instantiate
+  'cv::Mat::at<unsigned char>(int, int)'` — and the emitter resolves it against
+  the pattern, substitutes the arguments into the signature, and writes the
+  explicit template arguments into the call.
+- **specializations libclang does not visit.** `cv::Scalar_<double>`,
+  `cv::Point_<int>`, `cv::Size_<int>` and `cv::Rect_<int>` have no definition
+  cursor in the translation unit. `-instantiate 'cv::Size_<int>'` now builds the
+  record from its pattern: substituted fields, standard-layout sizes and
+  offsets, the pattern's members, and a base's fields flattened into the derived
+  layout (`Scalar_` derives from `Vec`, which derives from `Matx`, which carries
+  `val[4]`).
+- **a `std::vector<T>&` out-parameter.** The Go side passes `*[]T`; the shim
+  builds the vector from the caller's slice, calls, and copies the callee's
+  result into a block the Go side reads and frees. `imencode` is the case that
+  needed it.
+- **`void *`.** An untyped pointer is Go's `unsafe.Pointer`, which is the C API's
+  own shape. It is what makes the `Mat` raw-data constructor bind. Nothing on
+  the Go side owns the memory; the caller keeps it alive, exactly as the C++
+  declaration says. A *result* of type `void *` crosses as `unsafe.Pointer` too.
+
+## What is not bound, and what the coverage report says
+
+`cppgo gen` writes [`coverage.txt`](coverage.txt) when the Makefile passes
+`-coverage`. It is a generated output — `make check` regenerates it and fails on
+a difference — so the numbers below are a measurement, not a claim. The report
+has one summary row per module and one line per declaration that is not bound,
+with the generator's reason and a classification.
+
+| module | selected | bound | refused | skipped | templates | bound ratio |
+|---|---|---|---|---|---|---|
+| core | 236 | 159 | 5 | 23 | 49 | 0.75 |
+| imgproc | 9 | 9 | 0 | 0 | 0 | 1.00 |
+| imgcodecs | 4 | 4 | 0 | 0 | 0 | 1.00 |
+
+The ratio is bound / (bound + refused + templates): the *declarations the
+manifest selected*, not the whole header. A slice that names three modules does
+not claim the other two thousand declarations, and the report lists those as
+`not-selected` so the count is visible rather than silent.
+
+The 5 refusals of `core`, each classified in the file:
+
+- **untyped-pointer** — three `Mat` constructors taking a `void *` plus
+  `push_back_(const void *)`; two of them also take a `size_t *` step array.
+  The raw-data `(rows, cols, type, void *, size_t)` form now binds, so these are
+  the remaining untyped-pointer declarations that need a different shape (an
+  `const int *` shape array).
+- **by-value-record** — two `Mat` constructors/operators taking
+  `const std::vector<Range> &`: `cv::Range` is a record with a constructor, and
+  the vector-of-record element path is the same one `findContours` needs (below).
+- **unowned-pointer** — `Mat::getDefaultAllocator()` and `getStdAllocator()`
+  return a `MatAllocator *` nobody owns.
+
+The 49 templates are the member function templates of `cv::Mat` (`at`, `ptr`,
+`push_back`, `forEach`, the conversion operators). Each is bound by naming its
+instantiation; the manifest names the two the tests use, and the rest are the
+matrix's generic surface.
+
+The 23 skipped declarations are explained, not refused: they are the C++
+constructors, destructor and move overloads of the *mirrored* records
+(`Point`, `Size`, `Rect`, `Scalar`), whose Go value is the struct itself. A
+mirrored record has no `cppgo.Object`, no factory and no `Close`; the struct is
+the value.
+
+### The one algorithm still out: contours
+
+`findContours`, `drawContours`, `split` and `merge` take an
+`InputArrayOfArrays`/`OutputArrayOfArrays`, which is an `_OutputArray`
+constructed from `std::vector<std::vector<Point>>` (or `std::vector<Mat>`), and
+the mapping of a vector of vectors is the one shape this build does not have.
+`contourArea` and `boundingRect` *do* bind and are tested on a contour built the
+way `findContours` produces one — an N×1 two-channel `CV_32SC2` matrix.
+
+This is a genuine design decision rather than a construct to patch, and it has
+two honest options:
+
+1. **A generated record-vector handle.** For `std::vector<T>` where `T` is an
+   opaque record, emit a small Go type (`VecMat`) owning the C++ vector, with
+   `Len`, `At(i)` returning a view, and `Close`; the thunk runs the call into the
+   vector and hands the block to that owner. This keeps ownership exact and costs
+   a new emitter shape.
+2. **A flattened nested-vector mapping.** Map `std::vector<std::vector<T>>` to a
+   Go `[][]T` marshalled as a flat array plus offsets per call, with the shim
+   building and dismantling the nested vectors. This keeps the Go API the natural
+   one and costs two extra wire words and a copy-in/copy-out per nested vector.
+
+The first is the smaller change to the emitter and the larger change to the Go
+API; the second is the opposite. The workstream's report records the choice as
+open.
 
 ## Commands
 
 ```console
 $ make        # gen, test, vet
 $ make lib    # report the OpenCV shared object the binding links against
-$ make gen    # cppgo gen: the Go API, the C++ side, and the compiled C++ side
+$ make gen    # cppgo gen: the Go API, the C++ side, the compiled C++ side and coverage.txt
 $ make test   # go test -tags cppgo_opencv, then the same under -race
-$ make check  # cppgo check: are the committed generated sources current?
+$ make check  # cppgo check: are the committed generated sources (and coverage.txt) current?
+$ make coverage  # the same check, run as part of make test
 $ make clean
 ```
 
-Requirements: Go 1.25+, libclang 20+ (generation only), and OpenCV's core
-development files. `OPENCV_INCLUDE` and `OPENCV_LIB` are the two paths a machine
-can differ in; the defaults are the Debian layout. On a machine
-without OpenCV every target prints the missing path and exits zero, which is what
-lets [`scripts/build-examples.sh`](../../scripts/build-examples.sh) run there.
+Requirements: Go 1.25+, libclang 20+ (generation only), and OpenCV's core,
+imgproc and imgcodecs development files. `OPENCV_INCLUDE` and `OPENCV_LIB` are
+the two paths a machine can differ in; the defaults are the Debian layout, with
+`OPENCV_LIB` pointing at `libopencv_imgcodecs.so` (which names imgproc and core
+among its dependencies). On a machine without OpenCV every target prints the
+missing path and exits zero, which is what lets
+[`scripts/build-examples.sh`](../../scripts/build-examples.sh) run there.
 
 ## Loading
 
 The test names the shim it loads, because the loader does not search the current
-directory; the shared object beside it names OpenCV's core library as its
-dependency, and the system loader resolves it:
+directory; the shared object beside it names OpenCV's imgcodecs library as its
+dependency, and the system loader resolves imgproc and core through imgcodecs:
 
-- `CppgoLibraryPath` is OpenCV's core shared object, from `CPPGO_OPENCV_LIB` or
-  the Debian default;
+- `CppgoLibraryPath` is OpenCV's imgcodecs shared object, from `CPPGO_OPENCV_LIB`
+  or the Debian default;
 - `Open` is called with the absolute path of `libcppgo_opencv.so`.
 
 ## Tests
 
-`make test` runs [`opencv_test.go`](opencv_test.go) twice. What it asserts, and
-the declaration each value comes from:
+`make test` runs [`opencv_test.go`](opencv_test.go) twice. Every test asserts a
+value; the source of each value is named beside it.
 
 | Test | Assertion, and its source |
 |---|---|
-| `TestVersion` | `GetVersionMajor()` = 4 and `GetVersionMinor()` = 10, the `CV_VERSION_MAJOR` and `CV_VERSION_MINOR` of [`core/version.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/version.hpp) in the 4.10 installation this binds |
-| `TestNormTypes` | each constant equals the value `enum NormTypes` gives it in [`core/base.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/base.hpp), including `NORM_TYPE_MASK` = `NORM_HAMMING2` = 7 |
-| `TestTermCriteria` | the three-argument constructor stores its arguments; the accessors and the setters agree; `IsValid()` is true when the type is `COUNT\|EPS` with a count, and false on the default-constructed record, as [`isValid`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/types.hpp) computes it |
-| `TestTickMeter` | a fresh meter is zero; one start/stop gives `GetCounter()` = 1 and a non-negative duration; `GetTimeSec()` equals `GetTimeTicks()/GetTickFrequency()`; a second run gives 2; `Reset` clears both, per the inline definitions in [`core/utility.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/utility.hpp) |
-| `TestRuntimeConfiguration` | the tick frequency is positive, at least one CPU is reported, `SetNumThreads(2)` then `GetNumThreads()` is 2, and `SetUseOptimized` round-trips through `UseOptimized` |
-| `TestCloseLifetime` | a second `Close` returns `cppgo.ErrClosed`, and a method on a closed value returns it rather than calling into freed memory |
+| `TestVersion` | `GetVersionMajor()` = 4 and `GetVersionMinor()` = 10, the macros of [`core/version.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/version.hpp) |
+| `TestNormTypes`, `TestTermCriteria`, `TestTickMeter`, `TestRuntimeConfiguration` | the enum values, the criteria record, the meter's counters and durations, and the runtime configuration of the library |
+| `TestMatConstruction` | a 2×3 `CV_8UC3` matrix reports rows 2, cols 3, type 16, channels 3, total 6 and a non-nil buffer; the default matrix is empty |
+| `TestMatPixels`, `TestSetTo` | two BGR pixels round-trip through `data()`; `setTo(7)` fills all nine bytes |
+| `TestMatElementAccess` | `at<unsigned char>` reads and writes a byte (`uchar&`), and `at<double>` reads a `CV_64F` matrix at its element width |
+| `TestMatCopyAndClone` | `Clone()` is independent (a write does not change the source) and `Copy()` shares the buffer (a write does) |
+| `TestMatSetToConvertReshape` | `convertTo(CV_64F, 0.5)` turns 7 into 3.5 in every element; `reshape(2)` turns a 1×4 vector into a 1×2 two-channel matrix |
+| `TestMatFromRawData` | a `Mat` built over a Go buffer reads the same bytes and writes back into the buffer: no copy |
+| `TestImread` | the committed 4×3 PNG reads as rows 3, cols 4, channels 3, `CV_8UC3`, and all twelve BGR triples are asserted |
+| `TestImwriteRoundTrip` | the fixture is written to a temp directory and read back; every pixel survives the PNG round trip |
+| `TestImencode` | the same matrix encoded in memory starts with the PNG signature `89 50 4E 47 0D 0A 1A 0A` |
+| `TestCvtColorBGR2GRAY`, `TestCvtColorPixelwise` | `COLOR_BGR2GRAY` is 6; pure red is 76 and pure green 150; every pixel of the fixture matches `(B*1868 + G*9617 + R*4899 + 2^13) >> 14`, the fixed-point coefficients of OpenCV 4.10's `color_rgb.simd.hpp` |
+| `TestThreshold` | `THRESH_BINARY` at 127.5 turns `{0,127,128,255}` into `{0,0,255,255}` and `THRESH_BINARY_INV` into `{255,255,0,0}`; the returned level is 127, the 8-bit truncation OpenCV applies |
+| `TestResize` | a 2×2 matrix resized to 4×4 with `INTER_NEAREST` is each source pixel four times |
+| `TestBlur` | `blur` and `GaussianBlur` with a 3×3 kernel keep a constant 100 image at 100 — the `Size` record crossing by value |
+| `TestCanny` | a white square on black has edges on its border and none in its flat interior or at the far corner |
+| `TestArithmetic` | `add`, `subtract`, `multiply` and `divide` on known bytes, saturated to `CV_8U` (`200+100 = 255`, `0-1 = 0`, …) |
+| `TestReductions` | on 1..9: L2 norm `sqrt(285)`, L1 norm 45, mean 5, sum `{45,0,0,0}`, min 1 at (0,0), max 9 at (2,2) |
+| `TestContourAreaAndBoundingRect` | a `CV_32SC2` contour of the square (0,0)(4,0)(4,4)(0,4) has area 16 and bounding rectangle (0,0,5,5) |
+| `TestGeometryRecords` | `Point::Dot` = 11, `Point::Cross` = 2, `Size::Area` = 20 and `Size::Empty` = false, `Rect::Contains` true inside and false outside — the C++ inline definitions |
+| `TestCvtColorError` | `cvtColor` on an empty matrix returns the library's own error |
+| `TestCloseLifetime` | a second `Close` returns `cppgo.ErrClosed` and a method on a closed value returns it |
 
 ## The committed generated sources
 
-[`zz_cppgo.gen.go`](zz_cppgo.gen.go), [`zz_cppgo_amd64.s`](zz_cppgo_amd64.s) and
-[`cppgo_shim/`](cppgo_shim/) are committed on purpose: the example is teaching
-material, and `make gen` reproduces them byte for byte. `make check` is the gate:
-it fails when a committed file differs from what `make gen` writes.
+[`zz_cppgo.gen.go`](zz_cppgo.gen.go), [`zz_cppgo_amd64.s`](zz_cppgo_amd64.s),
+[`cppgo_shim/`](cppgo_shim/) and [`coverage.txt`](coverage.txt) are committed on
+purpose: the example is teaching material, and `make gen` reproduces them byte
+for byte. `make check` is the gate: it fails when a committed file differs from
+what `make gen` writes, which is also how a declaration that stops binding
+becomes a review comment instead of a silent loss.

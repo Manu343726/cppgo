@@ -165,3 +165,41 @@ func TestEnumUnderlyingTypeThatIsNotAnInteger(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not an integer")
 }
+
+// TestEnumAliasKeepsOneConstant covers the two enumerators that fold to one Go
+// name: the same value is an alias, the Go constant keeps the first spelling and
+// the report says which one it dropped.
+func TestEnumAliasKeepsOneConstant(t *testing.T) {
+	rendered, err := RenderResult(fixtureConfig("enums", "enums.hpp"))
+	require.NoError(t, err)
+	joined := joinWarnings(rendered.Warnings)
+	assert.Contains(t, joined, "Border::BORDER_REFLECT101 is the same value as enums::Border::BORDER_REFLECT_101")
+
+	source := ""
+	for _, out := range rendered.Outputs {
+		if out.Name == GenFileName {
+			source = string(out.Data)
+		}
+	}
+	assert.Contains(t, source, "BorderBORDERREFLECT101 Border = 4")
+	assert.NotContains(t, source, "BorderBORDERREFLECT101 Border = 4\n\tBorderBORDERREFLECT101", "the alias is not emitted twice")
+}
+
+// TestEnumCollisionIsReported covers the other half of the same question: two
+// enumerators with one Go spelling and two different values are a real
+// collision. It is reported with the rename that resolves it, and the enum is
+// left out of the API rather than one constant silently replacing the other.
+func TestEnumCollisionIsReported(t *testing.T) {
+	rendered, err := RenderResult(fixtureConfig("conflict", "conflict.hpp"))
+	require.NoError(t, err)
+	joined := joinWarnings(rendered.Warnings)
+	assert.Contains(t, joined, "both map to Go name")
+	assert.Contains(t, joined, "-rename")
+	source := ""
+	for _, out := range rendered.Outputs {
+		if out.Name == GenFileName {
+			source = string(out.Data)
+		}
+	}
+	assert.NotContains(t, source, "BrokenUnderValue", "the enum is left out rather than one constant winning")
+}

@@ -3,6 +3,7 @@ package gen
 import (
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,9 +21,10 @@ func TestGenerationErrors(t *testing.T) {
 		header string
 		want   string
 	}{
-		{"classtemplate.hpp", "public field"},
-		{"templnonetype.hpp", "public field"},
-		{"templfuncdependent.hpp", "not a type this build classifies"},
+		// A class template the generic API cannot model is one declaration,
+		// not the header: since the per-declaration rule it is reported and the
+		// rest of the API binds, so the table that used to be fatal moved to
+		// the warning test below.
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -72,7 +74,9 @@ func TestDeclarationsTheBuildCannotCarryAreWarnings(t *testing.T) {
 		{"stddeque.hpp", "outside the emitted table"},
 		{"variadic.hpp", "variadic function"},
 		{"variadicmethod.hpp", "variadic function"},
-		{"voidptr.hpp", "void pointer"},
+		{"classtemplate.hpp", "public field"},
+		{"templnonetype.hpp", "public field"},
+		{"templfuncdependent.hpp", "not part of the generic API"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -87,10 +91,33 @@ func TestDeclarationsTheBuildCannotCarryAreWarnings(t *testing.T) {
 			require.NoError(t, err)
 			joined := joinWarnings(rendered.Warnings)
 			require.Contains(t, joined, tc.want, "the declaration must be named on stderr")
-			assert.Contains(t, joined, "is not bound:", "a warning names the declaration and its reason")
+			assert.True(t,
+				strings.Contains(joined, "is not bound:") || strings.Contains(joined, "is not part of the generic API:"),
+				"a warning names the declaration and its reason: %s", joined)
 			assert.NotEmpty(t, rendered.Outputs, "the package is written even when a declaration is not")
 		})
 	}
+}
+
+// TestVoidPointerIsUnsafePointer checks the one shape the old table refused and
+// the OpenCV raw-data constructor needs: a void pointer is Go's untyped pointer.
+// The caller owns the memory, exactly as the C++ declaration says.
+func TestVoidPointerIsUnsafePointer(t *testing.T) {
+	rendered, err := RenderResult(Config{
+		Headers: []string{filepath.Join("testdata", "errors", "voidptr.hpp")},
+		Package: "err",
+		Library: "liberr",
+		Out:     ".",
+	})
+	require.NoError(t, err)
+	goFile := ""
+	for _, out := range rendered.Outputs {
+		if out.Name == GenFileName {
+			goFile = string(out.Data)
+		}
+	}
+	assert.Contains(t, goFile, "func Opaque() unsafe.Pointer")
+	assert.Contains(t, goFile, "return unsafe.Pointer(")
 }
 
 // TestUnimplementedWarningShape checks the contract's one-line warning shape:

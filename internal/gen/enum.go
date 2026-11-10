@@ -150,14 +150,34 @@ func (b *builder) enumModelFor(enum cxx.Enum) (*enumModel, error) {
 		Doc:      enum.Comment,
 		selected: true,
 	}
+	// Two enumerators can name one value: BORDER_REFLECT_101 and BORDER_DEFAULT
+	// are the same constant, and exportName strips the underscore that tells
+	// their names apart. The alias is not a second Go constant — it is the same
+	// value under another C++ name — so the first spelling keeps the Go name and
+	// the alias is dropped. Two different values that fold to one name are a
+	// real collision and are reported.
+	byName := make(map[string]*enumConstant, len(enum.Constants))
 	for _, constant := range enum.Constants {
-		model.Constants = append(model.Constants, &enumConstant{
-			GoName:        model.GoName + exportName(constant.Name),
+		goName := model.GoName + exportName(constant.Name)
+		if existing, taken := byName[goName]; taken {
+			if existing.Value == constant.Value && existing.UnsignedValue == constant.UnsignedValue {
+				b.warnings = append(b.warnings, fmt.Sprintf(
+					"%s::%s is the same value as %s; the Go constant keeps the first spelling",
+					enum.QualifiedName, constant.Name, existing.CxxName))
+				continue
+			}
+			return nil, pending(fmt.Sprintf("the enumerators %s and %s both map to Go name %s", existing.CxxName, constant.Name, goName),
+				"rename one with -rename '<signature>=<GoName>'")
+		}
+		constantModel := &enumConstant{
+			GoName:        goName,
 			CxxName:       enum.QualifiedName + "::" + constant.Name,
 			Doc:           constant.Comment,
 			Value:         constant.Value,
 			UnsignedValue: constant.UnsignedValue,
-		})
+		}
+		byName[goName] = constantModel
+		model.Constants = append(model.Constants, constantModel)
 	}
 	return model, nil
 }

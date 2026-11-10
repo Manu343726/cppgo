@@ -1,9 +1,11 @@
 # eigen — bind a slice of Eigen's Dense header to Go.
 #
-#   make        generate the binding, test and vet
+#   make        generate the binding, collect the instantiations, test and vet
 #   make lib    report that Eigen has no shared object to build or link
-#   make gen    cppgo gen: the Go API, the assembly, the shim sources and
+#   make gen    cppgo gen: the generic Go API, the assembly, the shim sources and
 #               libcppgo_eigen.so
+#   make scan   cppgo build -scan .: the concrete specializations the package
+#               uses (instances.go and the tests), added to the shim
 #   make test   go test with -tags cppgo_eigen, once with CGO_ENABLED=0 and once
 #               with the race detector
 #   make vet    go vet with the example's build tag
@@ -32,29 +34,41 @@ CPPGO  := $(BUILD)/cppgo
 DB     := $(BUILD)/compile_commands.json
 SHIM   := libcppgo_eigen.so
 
-# The declarations this example binds: Eigen's three configuration enums and the
-# functions that report and set the thread count its parallel algorithms use.
-# What is absent, and why, is in README.md.
+# The declarations this example binds: Eigen's three configuration enums, the
+# functions that report and set the thread count its parallel algorithms use,
+# the one by-value record the generator carries (IOFormat, sixteen INTEGER
+# words), and the Matrix class template as the generic API. What is absent, and
+# why, is in README.md.
 BIND := -bind Eigen::StorageOptions \
         -bind Eigen::ComputationInfo \
         -bind Eigen::UpLoType \
         -bind Eigen::nbThreads \
         -bind Eigen::setNbThreads \
-        -bind Eigen::initParallel
+        -bind Eigen::initParallel \
+        -bind Eigen::IOFormat \
+        -bind Eigen::Matrix
 
 GEN_ARGS := -header $(HEADER) -package eigen \
             -compile-commands $(DB) -out . $(BIND)
+
+# Phase two: the matrix specializations are the ones matrices/ instantiates, and
+# `-scan ./matrices` collects them. The pattern names a subpackage on purpose:
+# the generated package's own constructor body instantiates Matrix with its type
+# parameters, and scanning the generated package itself reads that as an
+# instantiation of types rather than values. missing/ is outside the pattern
+# too: it deliberately names a specialization the shim was not built for.
+SCAN_ARGS := -scan ./matrices -scan-dir .
 
 TEST_ENV := CPPGO_EIGEN_SHIM=$(CURDIR)/$(SHIM)
 
 HAVE := $(wildcard $(HEADER))
 
-.PHONY: all lib gen test vet check clean
+.PHONY: all lib gen scan test vet check clean
 
 ifneq ($(HAVE),)
 ## Eigen is installed: the real targets.
 
-all: gen test vet
+all: scan test vet
 
 lib:
 	@printf 'eigen: header-only, no shared object — the shim is the whole binary\n'
@@ -68,15 +82,18 @@ $(DB): Makefile | $(BUILD)
 gen: $(CPPGO) $(DB)
 	$(CPPGO) gen $(GEN_ARGS)
 
-test: gen
-	CGO_ENABLED=0 $(TEST_ENV) $(GO) test -tags cppgo_eigen -count=1 -v .
-	CGO_ENABLED=1 $(TEST_ENV) $(GO) test -tags cppgo_eigen -race -count=1 .
+scan: gen
+	$(CPPGO) build $(GEN_ARGS) $(SCAN_ARGS)
 
-vet: gen
-	CGO_ENABLED=0 $(GO) vet -tags cppgo_eigen .
+test: scan
+	CGO_ENABLED=0 $(TEST_ENV) $(GO) test -tags cppgo_eigen -count=1 -v ./...
+	CGO_ENABLED=1 $(TEST_ENV) $(GO) test -tags cppgo_eigen -race -count=1 ./...
+
+vet: scan
+	CGO_ENABLED=0 $(GO) vet -tags cppgo_eigen ./...
 
 check: $(CPPGO) $(DB)
-	$(CPPGO) check $(GEN_ARGS)
+	$(CPPGO) check $(GEN_ARGS) $(SCAN_ARGS)
 
 clean:
 	rm -rf $(BUILD) $(SHIM)
@@ -90,7 +107,7 @@ $(BUILD):
 else
 ## Eigen is not installed: skip, with the reason, and exit zero.
 
-all lib gen test vet check:
+all lib gen scan test vet check:
 	@printf 'eigen: %s is not installed — skipping (install libeigen3-dev, or set EIGEN_INCLUDE)\n' "$(HEADER)"
 
 clean:

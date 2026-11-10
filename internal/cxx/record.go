@@ -107,6 +107,10 @@ type Field struct {
 type Base struct {
 	// QualifiedName is the base record's qualified C++ name.
 	QualifiedName string
+	// Spelling is the base as the declaration wrote it, template arguments
+	// included ("Vec<_Tp, 4>"). A specialization substitutes into it, which is
+	// the only way a name-based instantiation can size a base subobject.
+	Spelling string
 	// Access is the inheritance access (public, protected or private).
 	Access Access
 	// IsVirtual is true for a virtual base, whose offset is resolved through
@@ -244,6 +248,13 @@ type memberTemplate struct {
 	member string
 }
 
+// funcTemplate is one free function template, kept so a manifest can name a
+// concrete instantiation of it.
+type funcTemplate struct {
+	cursor CXCursor
+	name   string
+}
+
 // Enumerator is one value of an enum.
 type Enumerator struct {
 	// Name is the enumerator as written.
@@ -322,7 +333,12 @@ func (tu *TU) extractRecords() {
 		byEnum:   make(map[string]int),
 		partials: make(map[string][]partialSpecialization),
 	}
-	tu.memberTemplates = make(map[string]memberTemplate)
+	tu.memberTemplates = make(map[string][]memberTemplate)
+	if tu.functionTemplates == nil {
+		// The symbol walk registers free function templates before this runs;
+		// a fresh map here would drop them.
+		tu.functionTemplates = make(map[string][]funcTemplate)
+	}
 	// The symbol walk has already proven the handle open; a second walk of the
 	// same translation unit cannot fail for a different reason, so its error is
 	// the same "the handle is closed" answer the symbol walk already returned.
@@ -457,8 +473,13 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 		// cannot expose and name the type parameters a specialization replaces.
 		rec.TemplateParameters = e.l.templateParameters(cursor)
 		_ = e.l.visit(cursor, func(child, parent CXCursor) int32 {
-			if e.l.f.getCursorKind(child) == cursorFieldDecl {
+			switch e.l.f.getCursorKind(child) {
+			case cursorFieldDecl:
 				rec.Fields = append(rec.Fields, e.collectField(child))
+			case cursorBaseSpecifier:
+				// The pattern's bases are part of the shape a specialization
+				// inherits: Scalar_ derives from Vec, which carries the data.
+				rec.Bases = append(rec.Bases, e.collectBase(cursor, child))
 			}
 			return visitContinue
 		})
@@ -1155,10 +1176,13 @@ func (e *recordExtractor) registerMemberTemplate(record string, cursor CXCursor,
 		return
 	}
 	key := record + "::" + member
-	if _, exists := e.tu.memberTemplates[key]; exists {
-		return
+	for _, existing := range e.tu.memberTemplates[key] {
+		if existing.cursor == cursor {
+			return
+		}
 	}
-	e.tu.memberTemplates[key] = memberTemplate{cursor: cursor, class: class, record: record, member: member}
+	e.tu.memberTemplates[key] = append(e.tu.memberTemplates[key],
+		memberTemplate{cursor: cursor, class: class, record: record, member: member})
 }
 
 // synthesizeNestedRecord builds the record for a nested type of a template
@@ -1337,22 +1361,81 @@ func (e *recordExtractor) offsetOf(loc CXSourceLocation) (string, uint32, bool) 
 // member arguments substituted. libclang exposes no mangled name for the
 // instantiation (it has no cursor in the TU). Mangled therefore stays empty,
 // and the emitter carries the call through a thunk.
-func (tu *TU) InstantiateMember(record, member string, args []TemplateArgument) (Symbol, bool) {
+//
+// A name can have several member templates: cv::Mat::at has one per rank and
+// one const/non-const pair per rank. arity selects by parameter count, and
+// wantConst picks the const overload when both forms exist; the first
+// declaration in the header wins when several still match, which is the
+// non-const accessor for the at/ptr family.
+func (tu *TU) InstantiateMember(record, member string, args []TemplateArgument, arity int, wantConst bool) (Symbol, bool) {
 	tu.once.Do(tu.extract)
-	pattern, ok := tu.memberTemplates[record+"::"+member]
-	if !ok {
-		return Symbol{}, false
+	candidates := tu.memberTemplates[record+"::"+member]
+	var fallback *memberTemplate
+	for i := range candidates {
+		pattern := candidates[i]
+		if countTemplateParameters(tu.l, pattern.cursor) != len(args) {
+			continue
+		}
+		if n := int(tu.l.f.getNumArgTypes(tu.l.f.getCursorType(pattern.cursor))); arity >= 0 && n != arity {
+			continue
+		}
+		isConst := tu.l.f.isConstQualifiedType(tu.l.f.getCursorType(pattern.cursor)) != 0
+		if isConst != wantConst {
+			if fallback == nil {
+				fallback = &candidates[i]
+			}
+			continue
+		}
+		return tu.instantiateMemberPattern(record, member, pattern, args), true
 	}
-	if countTemplateParameters(tu.l, pattern.cursor) != len(args) {
-		return Symbol{}, false
+	if fallback != nil {
+		return tu.instantiateMemberPattern(record, member, *fallback, args), true
 	}
+	return Symbol{}, false
+}
+
+// instantiateMemberPattern substitutes one member template's arguments into its
+// signature.
+func (tu *TU) instantiateMemberPattern(record, member string, pattern memberTemplate, args []TemplateArgument) Symbol {
 	own := tu.l.substitution(pattern.cursor, args)
 	combined := pattern.class.then(own)
 	extractor := &recordExtractor{l: tu.l, tu: tu}
 	sym := extractor.synthesizeMember(pattern.cursor, &Record{QualifiedName: record}, combined)
+	// A member function template's cursor kind is the template kind, so the
+	// method accessors are not asked (they cast the cursor to CXXMethodDecl)
+	// and libclang exposes no staticness for it either. The binding is a
+	// method: calling a static member through an object is legal C++, so the
+	// call the shim writes is right either way.
+	isConst := tu.l.f.isConstQualifiedType(tu.l.f.getCursorType(pattern.cursor)) != 0
+	sym.IsConst, sym.IsVirtual, sym.IsStatic = isConst, false, false
+	sym.Kind = Method
 	sym.IsTemplate = false
 	sym.QualifiedName = record + "::" + member
-	return sym, true
+	return sym
+}
+
+// InstantiateFunction returns the concrete instantiation of a free function
+// template. Like a member instantiation it has no cursor and no mangled name,
+// so the emitter carries the call through a thunk that writes the explicit
+// template arguments into the call.
+func (tu *TU) InstantiateFunction(name string, args []TemplateArgument, arity int) (Symbol, bool) {
+	tu.once.Do(tu.extract)
+	for _, pattern := range tu.functionTemplates[name] {
+		if countTemplateParameters(tu.l, pattern.cursor) != len(args) {
+			continue
+		}
+		if n := int(tu.l.f.getNumArgTypes(tu.l.f.getCursorType(pattern.cursor))); arity >= 0 && n != arity {
+			continue
+		}
+		own := tu.l.substitution(pattern.cursor, args)
+		extractor := &recordExtractor{l: tu.l, tu: tu}
+		sym := extractor.synthesizeMember(pattern.cursor, &Record{}, own)
+		sym.IsTemplate = false
+		sym.QualifiedName = name
+		sym.Parent = parentOf(name)
+		return sym, true
+	}
+	return Symbol{}, false
 }
 
 // countTemplateParameters counts the template parameters declared by a
@@ -1704,6 +1787,7 @@ func (e *recordExtractor) collectBase(parent, cursor CXCursor) Base {
 		Access:      e.l.access(cursor),
 		IsVirtual:   e.l.f.isVirtualBase(cursor) != 0,
 		OffsetBytes: -1,
+		Spelling:    e.l.str(e.l.f.getTypeSpelling(e.l.f.getCursorType(cursor))),
 	}
 	if name, ok := e.l.qualifiedName(e.l.f.getTypeDeclaration(e.l.f.getCursorType(cursor))); ok {
 		base.QualifiedName = name
@@ -1793,12 +1877,18 @@ func mergeRecord(into *Record, from Record) {
 		into.IsPolymorphic = from.IsPolymorphic
 		into.IsAbstract = from.IsAbstract
 		into.IsTemplate = from.IsTemplate
-		if len(into.Fields) == 0 {
-			into.Fields = from.Fields
-		}
-		if len(into.Bases) == 0 {
-			into.Bases = from.Bases
-		}
+	}
+	// A template pattern has no layout at all, so its fields are merged
+	// outside the size rule: the definition is what carries them, and the
+	// declaration that came first carried none.
+	if len(into.Fields) == 0 && len(from.Fields) > 0 {
+		into.Fields = from.Fields
+	}
+	if len(into.Bases) == 0 && len(from.Bases) > 0 {
+		into.Bases = from.Bases
+	}
+	if into.IsTemplate != from.IsTemplate && from.IsTemplate {
+		into.IsTemplate = true
 	}
 	if into.DeclFile == "" {
 		into.DeclFile, into.DeclLine = from.DeclFile, from.DeclLine

@@ -156,3 +156,67 @@ func TestThreads(t *testing.T) {
 		t.Fatalf("SetNbThreads(%d): %v", before, err)
 	}
 }
+
+// TestIOFormat is the by-value record case: Eigen::IOFormat holds how a matrix
+// is rendered — precision, separators, prefixes and a fill character — and its
+// constructor takes sixteen INTEGER words and one SSE word, past the register
+// file, so the arguments cross in a block.
+//
+// The constructor is copied from Eigen/src/IO/IOFormat.h:
+//
+//	IOFormat(int _precision = StreamPrecision, int _flags = 0,
+//	         const std::string& _coeffSeparator = " ",
+//	         const std::string& _rowSeparator = "\n", const std::string& _rowPrefix="",
+//	         const std::string& _rowSuffix="", const std::string& _matPrefix="",
+//	         const std::string& _matSuffix="", const char _fill=' ');
+//
+// and each accessor returns the member the constructor stored.
+func TestIOFormat(t *testing.T) {
+	format, err := NewIOFormat(3, 0, ", ", "\n", "<", ">", "[", "]", ' ')
+	if err != nil {
+		t.Fatalf("NewIOFormat: %v", err)
+	}
+	defer func() {
+		if err := format.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	if got := format.Precision(); got != 3 {
+		t.Errorf("Precision() = %d, want 3", got)
+	}
+	if got := format.Flags(); got != 0 {
+		t.Errorf("Flags() = %d, want 0", got)
+	}
+	if got, err := format.CoeffSeparator(); err != nil || got != ", " {
+		t.Errorf("CoeffSeparator() = %q, %v, want %q, nil", got, err, ", ")
+	}
+	if got, err := format.RowSeparator(); err != nil || got != "\n" {
+		t.Errorf("RowSeparator() = %q, %v, want a newline", got, err)
+	}
+	if got, err := format.RowPrefix(); err != nil || got != "<" {
+		t.Errorf("RowPrefix() = %q, %v, want %q", got, err, "<")
+	}
+	if got, err := format.RowSuffix(); err != nil || got != ">" {
+		t.Errorf("RowSuffix() = %q, %v, want %q", got, err, ">")
+	}
+	if got, err := format.MatPrefix(); err != nil || got != "[" {
+		t.Errorf("MatPrefix() = %q, %v, want %q", got, err, "[")
+	}
+	if got, err := format.MatSuffix(); err != nil || got != "]" {
+		t.Errorf("MatSuffix() = %q, %v, want %q", got, err, "]")
+	}
+	if got := format.Fill(); got != ' ' {
+		t.Errorf("Fill() = %q, want a space", got)
+	}
+
+	// The setters write the same members the accessors read.
+	format.SetPrecision(6)
+	if got := format.Precision(); got != 6 {
+		t.Errorf("Precision() after SetPrecision(6) = %d, want 6", got)
+	}
+	format.SetCoeffSeparator(";")
+	if got, err := format.CoeffSeparator(); err != nil || got != ";" {
+		t.Errorf("CoeffSeparator() after SetCoeffSeparator = %q, %v, want %q, nil", got, err, ";")
+	}
+}

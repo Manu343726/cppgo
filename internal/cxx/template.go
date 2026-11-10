@@ -369,3 +369,27 @@ func (l *Libclang) templateArguments(cursor CXCursor) []TemplateArgument {
 	}
 	return args
 }
+
+// splitTemplateArgs splits a template argument list at its top-level commas,
+// the way a reader writes one: nested brackets keep their commas.
+func splitTemplateArgs(args string) []string {
+	parts := make([]string, 0, 2)
+	depth, from := 0, 0
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case '<', '(', '[':
+			depth++
+		case '>', ')', ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, strings.TrimSpace(args[from:i]))
+				from = i + 1
+			}
+		}
+	}
+	if rest := strings.TrimSpace(args[from:]); rest != "" {
+		parts = append(parts, rest)
+	}
+	return parts
+}

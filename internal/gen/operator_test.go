@@ -81,30 +81,33 @@ private:
 `), 0o644))
 
 	cfg := Config{Headers: []string{header}, Package: "collide", Library: "libcollide", Out: "."}
-	_, err := Render(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "both map to Go name AddAssign")
-	assert.Contains(t, err.Error(), "-rename")
+	// The declared method keeps AddAssign and the operator takes the parameter
+	// suffix: the automatic rule resolves the clash, and -rename still wins.
+	result, err := RenderResult(cfg)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Outputs)
 
 	cfg.Rename = []string{"collide::Value::operator+=(const Value &)=Plus"}
-	_, err = Render(cfg)
+	result, err = RenderResult(cfg)
 	require.NoError(t, err)
+	require.NotEmpty(t, result.Outputs)
 }
 
 // TestOperatorWithUncarryableParametersIsAWarning covers the declaration rule
-// in an operator overload set: operator new's std::size_t and operator delete's
-// void * have no Go mapping yet, so they are omitted and named, and the class
-// keeps the member that can be carried.
+// in an operator overload set: the nothrow allocation overloads take a
+// std::nothrow_t the API does not model, so they are omitted and named, and the
+// class keeps the member that can be carried.
 func TestOperatorWithUncarryableParametersIsAWarning(t *testing.T) {
 	dir := t.TempDir()
 	header := filepath.Join(dir, "allocation.hpp")
 	require.NoError(t, os.WriteFile(header, []byte(`
 #include <cstddef>
+#include <new>
 namespace allocation {
 class Node {
 public:
-    static void *operator new(std::size_t size);
-    static void operator delete(void *block) noexcept;
+    static void *operator new(std::size_t size, const std::nothrow_t &) noexcept;
+    static void operator delete(void *block, const std::nothrow_t &) noexcept;
     int value() const noexcept;
 private:
     int v_;

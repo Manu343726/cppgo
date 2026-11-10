@@ -453,3 +453,28 @@ func TestSpecialMemberIdentity(t *testing.T) {
 	assert.False(t, copyCtor, "the two-argument constructor is a factory")
 	assert.False(t, moveCtor)
 }
+
+// TestDefaultArgumentExpressionSeparators covers the "=" characters that are
+// part of an expression rather than the default's separator: an operator
+// comparison, and a compound assignment.
+func TestDefaultArgumentExpressionSeparators(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want string
+		ok   bool
+	}{
+		{"int x = 3", "3", true},
+		{"int x = a == b", "a == b", true},
+		{"int x += 3", "", false},
+		{"int x", "", false},
+		{"bool x = a != b", "a != b", true},
+		{"int x = f(1, 2)", "f(1, 2)", true},
+		{"std::array<int, 2> x = {}", "{}", true},
+	} {
+		got, ok := defaultArgument(tc.text)
+		assert.Equal(t, tc.ok, ok, tc.text)
+		if ok {
+			assert.Equal(t, tc.want, got, tc.text)
+		}
+	}
+}

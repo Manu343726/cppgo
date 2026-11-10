@@ -449,6 +449,14 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 	if !ok {
 		return
 	}
+	if e.l.f.getCursorKind(cursor) == cursorFunctionTemplate && e.tu != nil {
+		if e.tu.functionTemplates == nil {
+			e.tu.functionTemplates = make(map[string][]funcTemplate)
+		}
+		// The walk visits each declaration once, so the template is appended
+		// to its name's list without a duplicate check.
+		e.tu.functionTemplates[name] = append(e.tu.functionTemplates[name], funcTemplate{cursor: cursor, name: name})
+	}
 	spec := e.l.exceptionSpec(cursor)
 	symKind := e.l.kind(cursor)
 	sym := Symbol{
