@@ -305,6 +305,14 @@ the arithmetic is exactly what is missing. The two-phase flow avoids the static
 assertion by instantiating per member, which is why it is the flow this module
 uses.
 
+The generator can now also synthesize a specialization from its pattern by name
+(the mechanism that carries `cv::Size_<int>` in the OpenCV slice), so
+`-instantiate 'Eigen::Matrix<double, 2, 2, 1, 2, 2>'` builds the record with the
+pattern's own members. It does not change this wall: `Matrix`'s arithmetic is
+still inherited, a synthesized specialization still carries no base list, and
+its inherited members are still not copied. This module keeps the two-phase flow
+because that is the flow that instantiates the members a caller uses.
+
 **The scan cannot read the generated package itself.** `-scan .` in this
 directory fails with
 

@@ -173,6 +173,9 @@ type wireArg struct {
 	stdArgs  []string
 	stdElem  *goType
 	stdType  *goType
+	// cstringKeeps are the byte slices that keep a const char * argument
+	// NUL-terminated for the call; each must stay alive until it returns.
+	cstringKeeps []string
 	// stdOutCopy is true for the primary word of a standard-library parameter
 	// the callee replaces: after the call, the shim copies the local's elements
 	// into the block the out-parameters describe.
@@ -203,6 +206,9 @@ type binding struct {
 	// instantiation supplies. The call written into the shim spells them, which
 	// is what makes the compiler instantiate the function.
 	templateArgs []string
+	// cstringKeeps are the byte slices that keep a const char * argument
+	// NUL-terminated for the call; each must stay alive until it returns.
+	cstringKeeps []string
 	// GoName is the final Go identifier.
 	GoName string
 
@@ -1495,6 +1501,7 @@ func (b *builder) cStringParam(binding *binding, name string, mapped *goType, p 
 	ptr := "cppgo_" + name + "_cstr"
 	keep := ptr + "_keep"
 	binding.stdDecls = append(binding.stdDecls, ptr+", "+keep+" := cppgoCString("+name+")")
+	binding.cstringKeeps = append(binding.cstringKeeps, keep)
 	b.usesCString = true
 	add(&wireArg{
 		label:    "a" + itoa(len(binding.Wire)),

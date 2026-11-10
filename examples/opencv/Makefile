@@ -33,10 +33,11 @@ OPENCV_INCLUDE ?= /usr/include/opencv4
 # OpenCV module names libopencv_core among its dependencies, so linking imgproc
 # also resolves the core symbols Mat's constructors need. The image-codec module
 # is not linked: imread and imwrite are refused, see README.md.
-OPENCV_LIB     ?= /usr/lib/x86_64-linux-gnu/libopencv_imgproc.so
+OPENCV_LIB     ?= /usr/lib/x86_64-linux-gnu/libopencv_imgcodecs.so
 
-CORE    := $(OPENCV_INCLUDE)/opencv2/core.hpp
-IMGPROC := $(OPENCV_INCLUDE)/opencv2/imgproc.hpp
+CORE     := $(OPENCV_INCLUDE)/opencv2/core.hpp
+IMGPROC  := $(OPENCV_INCLUDE)/opencv2/imgproc.hpp
+IMGCODEC := $(OPENCV_INCLUDE)/opencv2/imgcodecs.hpp
 BUILD  := build
 CPPGO  := $(BUILD)/cppgo
 DB     := $(BUILD)/compile_commands.json
@@ -59,28 +60,57 @@ BIND := -bind cv::NormTypes \
         -bind cv::getNumberOfCPUs \
         -bind cv::useOptimized \
         -bind cv::setUseOptimized \
-        -bind 'cv::Mat::Mat()' \
-        -bind 'cv::Mat::Mat(int, int, int)' \
-        -bind cv::Mat::total \
-        -bind cv::Mat::type \
-        -bind cv::Mat::setTo \
+        -bind cv::Mat \
         -bind 'cv::_InputArray::_InputArray()' \
         -bind 'cv::_InputArray::_InputArray(const Mat &)' \
         -bind 'cv::_InputArray::_InputArray(const double &)' \
         -bind 'cv::_OutputArray::_OutputArray()' \
         -bind 'cv::_OutputArray::_OutputArray(Mat &)' \
-        -bind cv::cvtColor \
         -bind cv::ColorConversionCodes \
-        -bind 'cv::norm(InputArray, int, InputArray)'
+        -bind cv::InterpolationFlags \
+        -bind cv::ThresholdTypes \
+        -bind cv::BorderTypes \
+        -bind cv::cvtColor \
+        -bind cv::threshold \
+        -bind cv::resize \
+        -bind cv::GaussianBlur \
+        -bind cv::blur \
+        -bind cv::Canny \
+        -bind cv::contourArea \
+        -bind cv::boundingRect \
+        -bind 'cv::norm(InputArray, int, InputArray)' \
+        -bind cv::mean \
+        -bind cv::sum \
+        -bind cv::minMaxLoc \
+        -bind cv::add \
+        -bind cv::subtract \
+        -bind cv::multiply \
+        -bind cv::divide \
+        -bind cv::imread \
+        -bind cv::imwrite \
+        -bind cv::imencode
 
-GEN_ARGS := -header $(CORE) -header $(IMGPROC) -package opencv -library $(OPENCV_LIB) \
-            -compile-commands $(DB) -out . $(BIND)
+# The concrete instantiations the slice uses. A member function template has no
+# Go spelling (Go has no type parameters on methods), and a class template
+# specialization is not a declaration libclang visits unless the header names
+# it; the manifest names both, and the emitter writes the arguments into the
+# call.
+INSTANTIATE := -instantiate 'cv::Mat::at<unsigned char>(int, int)' \
+               -instantiate 'cv::Mat::at<double>(int, int)' \
+               -instantiate 'cv::Size_<int>' \
+               -instantiate 'cv::Scalar_<double>' \
+               -instantiate 'cv::Point_<int>' \
+               -instantiate 'cv::Rect_<int>'
+
+GEN_ARGS := $(foreach h,$(CORE) $(IMGPROC) $(IMGCODEC),-header $(h)) -package opencv \
+            -library $(OPENCV_LIB) -compile-commands $(DB) -out . -coverage coverage.txt \
+            $(BIND) $(INSTANTIATE)
 
 TEST_ENV := CPPGO_OPENCV_LIB=$(OPENCV_LIB) CPPGO_OPENCV_SHIM=$(CURDIR)/$(SHIM)
 
-HAVE := $(and $(wildcard $(CORE)),$(wildcard $(IMGPROC)),$(wildcard $(OPENCV_LIB)))
+HAVE := $(and $(wildcard $(CORE)),$(wildcard $(IMGPROC)),$(wildcard $(IMGCODEC)),$(wildcard $(OPENCV_LIB)))
 
-.PHONY: all lib gen test vet check clean
+.PHONY: all lib gen test vet check coverage clean
 
 ifneq ($(HAVE),)
 ## The library is installed: the real targets.
@@ -94,15 +124,24 @@ lib:
 ## parse and the shim compile with the same include root the example does. One
 ## entry per header: cppgo looks the file up by path.
 $(DB): Makefile | $(BUILD)
-	@printf '[{"directory":"%s","file":"%s","arguments":["clang++","-std=c++17","-I%s","-xc++-header","%s","-c","%s"]},\n' \
-		"$(CURDIR)" "$(CORE)" "$(OPENCV_INCLUDE)" "$(CORE)" "$(CORE)" > $@
-	@printf ' {"directory":"%s","file":"%s","arguments":["clang++","-std=c++17","-I%s","-xc++-header","%s","-c","%s"]}]\n' \
-		"$(CURDIR)" "$(IMGPROC)" "$(OPENCV_INCLUDE)" "$(IMGPROC)" "$(IMGPROC)" >> $@
+	@printf '[' > $@
+	@sep=; for h in $(CORE) $(IMGPROC) $(IMGCODEC); do \
+		printf '%s{"directory":"%s","file":"%s","arguments":["clang++","-std=c++17","-I%s","-xc++-header","%s","-c","%s"]}' \
+			"$$sep" "$(CURDIR)" "$$h" "$(OPENCV_INCLUDE)" "$$h" "$$h" >> $@; \
+		sep=,; \
+	done
+	@printf ']\n' >> $@
 
 gen: $(CPPGO) $(DB)
 	$(CPPGO) gen $(GEN_ARGS)
 
-test: gen
+## The coverage report is a committed output: regeneration compares it with the
+## file on disk, so a declaration that stops binding shows up as a diff and the
+## targets job fails on it.
+coverage: $(CPPGO) $(DB)
+	$(CPPGO) check $(GEN_ARGS)
+
+test: gen coverage
 	CGO_ENABLED=0 $(TEST_ENV) $(GO) test -tags cppgo_opencv -count=1 -v .
 	CGO_ENABLED=1 $(TEST_ENV) $(GO) test -tags cppgo_opencv -race -count=1 .
 

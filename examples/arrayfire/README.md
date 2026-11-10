@@ -315,23 +315,18 @@ still cannot carry, each with the exact message the generator prints:
 | binding `af::array` by name | `af::array::array_proxy::operator array() const and af::array::array_proxy::operator array() both map to Go name ArrayPtr; rename one with -rename '<signature>=<GoName>'` — the members this slice needs are named one by one instead |
 | binding `af::dim4` by name | `af::dim4::elements() and af::dim4::elements() const both map to Go name Elements; rename one with -rename '<signature>=<GoName>'` (then `ndims` and `operator[]`, the same way); only the four-argument constructor is selected, and `dims(unsigned)` is how a shape is read |
 | `af::dim4::dims()` | `is not bound: result: "dim_t[4]" is a C array; decay it to a pointer and a length at the C++ boundary` |
-| binding `af::range` by name | the generator panics: `panic: runtime error: index out of range [6] with length 6` — one overload of the set lays out more argument registers than the carrier has slots. The single `range(const dim4 &, const int, const dtype)` signature binds; the set does not |
-| binding `af::identity` by name | the shim does not compile: `conflicting declaration 'void** cppgo_result'` — the set mixes the by-value record result with the overloads that take `dim4`. The `identity(dim_t, dim_t, dtype)` signature binds on its own |
+| binding `af::range` by name | it binds as a whole set. The panic this row used to record (`index out of range [6] with length 6`) was the register budget not counting an out-pointer's word; the generator now counts every wire word and takes the argument block when the call needs one |
+| binding `af::identity` by name | it binds as a whole set. The `conflicting declaration 'void** cppgo_result'` this row used to record was a second out-pointer added to a by-value record result by the default-argument path; the generator no longer adds it |
 
-Two declarations are reported as bound by the generator but the generated Go
-package does not compile, so the slice leaves them out:
-
-- `af::exception`'s `const char *` constructors generate calls to helpers that
-  are never emitted: `zz_cppgo.gen.go:812:78: undefined: cppgo_msg_cstr` (and
-  `cppgo_file_cstr`, `cppgo_arg1_cstr`). `what()` itself is generated correctly,
-  as a method that copies the C string out — but with no constructor there is no
-  value to call it on, so the exception type is absent from this package.
-- `af::infoString(bool)` — a free function with a `const char *` result —
-  generates `zz_cppgo.gen.go:1623:9: cannot use cppgoResult (variable of type
-  unsafe.Pointer) as string value in return statement`: the method path copies
-  the C string out, the free-function path does not.
-
-Both are generator findings, recorded here rather than worked around.
+`af::exception` (its `const char *` constructors and `what()`) and
+`af::infoString(bool)` were a generator finding until the emitter wave that
+carried OpenCV: a `const char *` parameter of a *constructor* was emitted without
+the NUL-terminated copy its body declares, and a `const char *` result arriving
+through the status out-pointer was returned as an `unsafe.Pointer` instead of a
+Go string. Both directions now compile — the constructor emits its
+`cppgoCString` slice and keeps it alive, and the result is copied with
+`cppgoGoString` — but this module is scoped to the array pipeline and does not
+bind them; the exception type crosses as a Go `error`'s message, not as a value.
 
 ## Commands
 

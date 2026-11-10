@@ -447,6 +447,9 @@ func (m *packageModel) emitConstructor(b *strings.Builder, record *recordModel, 
 	doc := fmt.Sprintf("New%s constructs a %s.", strings.TrimPrefix(ctor.GoName, "New"), record.CxxName)
 	m.emitBindingDoc(b, ctor, doc)
 	fmt.Fprintf(b, "func %s(%s) (*%s, error) {\n", ctor.GoName, goParams(ctor.Params), record.GoName)
+	for _, decl := range ctor.stdDecls {
+		fmt.Fprintf(b, "\t%s\n", decl)
+	}
 	b.WriteString("\tif err := cppgoOpen(\"\"); err != nil {\n\t\treturn nil, err\n\t}\n")
 	b.WriteString("\tcppgo.ProbeStack()\n")
 	hasDtor := record.Dtor != nil
@@ -473,6 +476,9 @@ func (m *packageModel) emitConstructor(b *strings.Builder, record *recordModel, 
 		fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", ctor.sym.QualifiedName)
 	} else {
 		fmt.Fprintf(b, "\t%s\n", call)
+	}
+	if len(ctor.cstringKeeps) > 0 {
+		fmt.Fprintf(b, "\tcppgo.KeepAlive(%s)\n", strings.Join(ctor.cstringKeeps, ", "))
 	}
 	if hasDtor {
 		b.WriteString("\tconstructed = true\n")
@@ -1272,6 +1278,12 @@ func convertResult(binding *binding, local string) string {
 // convertFromLocal converts an out-pointer local, whose type is the exact C
 // width, to the Go result.
 func convertFromLocal(result *goType, local string) string {
+	if result.CString {
+		// A C string result is copied out of the library's pointer before the
+		// call returns, whether it arrived through the result register or an
+		// out-pointer.
+		return "cppgoGoString(" + local + ")"
+	}
 	switch result.Kind {
 	case goBool:
 		return local + " != 0"
