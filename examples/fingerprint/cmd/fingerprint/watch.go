@@ -147,11 +147,11 @@ type segSlot struct {
 	outDir  string
 	verbose bool
 	out     io.Writer
-	err     error
+	logs    *sink
 }
 
-func newSegSlot(stats *watchStats, outDir string, verbose bool, out io.Writer) *segSlot {
-	return &segSlot{wake: make(chan struct{}, 1), stats: stats, outDir: outDir, verbose: verbose, out: out}
+func newSegSlot(stats *watchStats, outDir string, verbose bool, out io.Writer, logs *sink) *segSlot {
+	return &segSlot{wake: make(chan struct{}, 1), stats: stats, outDir: outDir, verbose: verbose, out: out, logs: logs}
 }
 
 // offer hands a frame to the worker. If a frame is already pending it is
@@ -231,11 +231,11 @@ func (s *segSlot) process(frame Frame) {
 	enrollment, err := fingerprint.Enroll(frame.Data)
 	// The call buffered its records; this one delivers them, and it is the call
 	// that takes the callback because only a reentrant call may deliver one.
-	if _, deliverErr := fingerprint.DeliverLog(bindingLogs.record); deliverErr != nil && err == nil {
+	if _, deliverErr := fingerprint.DeliverLog(s.logs.record); deliverErr != nil && err == nil {
 		err = deliverErr
 	}
 	elapsed := time.Since(started)
-	bindingLogs.pump(s.out, s.verbose)
+	s.logs.pump(s.out, s.verbose)
 	if err != nil {
 		// The pipeline found no finger in a frame the trigger selected. The
 		// hold window is why: it keeps a stream alive across a few frames after
@@ -262,7 +262,7 @@ func (s *segSlot) process(frame Frame) {
 			return
 		}
 	}
-	processed := atomic.AddInt64(&s.stats.Processed, 1)
+	atomic.AddInt64(&s.stats.Processed, 1)
 
 	cppMicros := enrollment.TotalMicros()
 	goMicros := float64(elapsed.Microseconds()) - cppMicros
@@ -275,7 +275,6 @@ func (s *segSlot) process(frame Frame) {
 		fmt.Fprintf(s.out, "  frame %04d %-24s segmented: %d minutiae, %.1f ms in C++, %.1f µs in Go\n",
 			frame.Index, frame.Name, enrollment.Minutiae(), cppMicros/1000, goMicros)
 	}
-	_ = processed
 }
 
 // --- the statistics the run reports ----------------------------------------
@@ -309,16 +308,12 @@ type watchStats struct {
 	WallMicros      float64
 }
 
-func (s *watchStats) add(name string, value float64) {
+// addTrigger records one frame's trigger time: what C++ reported for its own
+// stages, and the rest of the call, which is the boundary and the loop.
+func (s *watchStats) addTrigger(cppMicros, goMicros float64) {
 	s.mu.Lock()
-	switch name {
-	case "trigger":
-		s.TriggerMicros += value
-	case "trigger-go":
-		s.TriggerGoMicros += value
-	default:
-		panic("unknown statistic " + name)
-	}
+	s.TriggerMicros += cppMicros
+	s.TriggerGoMicros += goMicros
 	s.mu.Unlock()
 }
 
@@ -409,11 +404,11 @@ func (s watchReport) report(out io.Writer) {
 
 // --- the command -----------------------------------------------------------
 
-func runWatch(args []string, stdout, stderr io.Writer) error {
-	return watchCommand(args, stdout, stderr)
+func runWatch(args []string, logs *sink, stdout, stderr io.Writer) error {
+	return watchCommand(args, logs, stdout, stderr)
 }
 
-func watchCommand(args []string, stdout, stderr io.Writer) error {
+func watchCommand(args []string, logs *sink, stdout, stderr io.Writer) error {
 	stdout = &syncWriter{w: stdout}
 	stderr = &syncWriter{w: stderr}
 	flags := newWatchFlags(stderr)
@@ -437,7 +432,7 @@ func watchCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	defer source.Close()
 
-	if err := openBinding(flags.verbose); err != nil {
+	if err := openBinding(); err != nil {
 		return err
 	}
 	if flags.outDir != "" {
@@ -448,7 +443,7 @@ func watchCommand(args []string, stdout, stderr io.Writer) error {
 
 	var stats watchStats
 	started := time.Now()
-	slot := newSegSlot(&stats, flags.outDir, flags.verbose, stdout)
+	slot := newSegSlot(&stats, flags.outDir, flags.verbose, stdout, logs)
 	worker := make(chan struct{})
 	go func() {
 		defer close(worker)
@@ -484,7 +479,7 @@ func watchCommand(args []string, stdout, stderr io.Writer) error {
 			outcome, err = trigger.Evaluate(frame.Data, &state)
 		}
 		elapsed := time.Since(callStarted)
-		bindingLogs.pump(stderr, flags.verbose)
+		logs.pump(stderr, flags.verbose)
 		if err != nil {
 			slot.finish()
 			<-worker
@@ -494,8 +489,7 @@ func watchCommand(args []string, stdout, stderr io.Writer) error {
 
 		atomic.AddInt64(&stats.Frames, 1)
 		cppMicros := outcome.DecodeMicros + outcome.PrefilterMicros
-		stats.add("trigger", cppMicros)
-		stats.add("trigger-go", float64(elapsed.Microseconds())-cppMicros)
+		stats.addTrigger(cppMicros, float64(elapsed.Microseconds())-cppMicros)
 
 		verdict := outcome.Verdict
 		if verdict.Fire {
@@ -514,7 +508,7 @@ func watchCommand(args []string, stdout, stderr io.Writer) error {
 	snapshot := stats.snapshot()
 	snapshot.report(stdout)
 	if flags.verbose {
-		fmt.Fprintf(stdout, "C++ log records: %s\n", bindingLogs.summary())
+		fmt.Fprintf(stdout, "C++ log records: %s\n", logs.summary())
 	}
 	return nil
 }

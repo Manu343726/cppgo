@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -50,7 +49,7 @@ func libraryPath() string {
 	return defaultLibrary
 }
 
-// logs is the Go end of the library's spdlog sink.
+// sink is the Go end of the library's spdlog sink.
 //
 // The C++ sink calls the function once per record, with the record's level and
 // the number of records its buffer now holds. The function is the argument of
@@ -62,14 +61,14 @@ func libraryPath() string {
 // scalars, so a C string cannot cross as one. The records are read with
 // DrainLog when the call returns, which is also the cheaper shape — one
 // crossing for a burst of records instead of one per record.
-type logs struct {
+type sink struct {
 	mu      sync.Mutex
 	records int64
 	levels  [6]int64
 	pumped  int64
 }
 
-func (l *logs) record(level int32, pending int32) {
+func (l *sink) record(level int32, pending int32) {
 	l.mu.Lock()
 	if level >= 0 && level < int32(len(l.levels)) {
 		l.levels[level]++
@@ -80,7 +79,7 @@ func (l *logs) record(level int32, pending int32) {
 
 // pump reads the buffered records and writes them when asked to. It is called
 // after every call that can log, so the buffer never grows across a stream.
-func (l *logs) pump(out io.Writer, verbose bool) {
+func (l *sink) pump(out io.Writer, verbose bool) {
 	l.mu.Lock()
 	total := l.records
 	changed := total != l.pumped
@@ -103,7 +102,7 @@ func (l *logs) pump(out io.Writer, verbose bool) {
 }
 
 // summary is the per-level count of the records delivered through the callback.
-func (l *logs) summary() string {
+func (l *sink) summary() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	names := []string{"trace", "debug", "info", "warn", "error", "critical"}
@@ -123,15 +122,12 @@ func (l *logs) summary() string {
 	return out
 }
 
-var bindingLogs logs
-
 // openBinding loads the shim and the library.
-func openBinding(verbose bool) error {
+func openBinding() error {
 	fingerprint.CppgoLibraryPath = libraryPath()
 	if err := fingerprint.Open(shimPath()); err != nil {
 		return fmt.Errorf("opening the generated binding: %w", err)
 	}
-	_ = verbose
 	return nil
 }
 
@@ -178,15 +174,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 		usage(stderr)
 		return flag.ErrHelp
 	}
+	// One record counter per invocation: the C++ side buffers, and this is what
+	// reads what it wrote. It lives on the command's stack, not the package's:
+	// two runs in one process (which is what a test is) do not share it.
+	logs := &sink{}
 	switch args[0] {
 	case "enroll":
-		return runEnroll(args[1:], stdout, stderr)
+		return runEnroll(args[1:], logs, stdout, stderr)
 	case "dump":
-		return runDump(args[1:], stdout, stderr)
+		return runDump(args[1:], logs, stdout, stderr)
 	case "watch":
-		return runWatch(args[1:], stdout, stderr)
+		return runWatch(args[1:], logs, stdout, stderr)
 	case "version":
-		return runVersion(args[1:], stdout, stderr)
+		return runVersion(args[1:], logs, stdout, stderr)
 	case "-h", "--help", "help":
 		usage(stdout)
 		return nil
@@ -215,7 +215,7 @@ func usage(w io.Writer) {
 `)
 }
 
-func runEnroll(args []string, stdout, stderr io.Writer) error {
+func runEnroll(args []string, logs *sink, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("enroll", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	out := flags.String("out", "template.ansi", "where to write the template")
@@ -226,7 +226,7 @@ func runEnroll(args []string, stdout, stderr io.Writer) error {
 	if flags.NArg() != 1 {
 		return errors.New("enroll takes exactly one photo")
 	}
-	if err := openBinding(*verbose); err != nil {
+	if err := openBinding(); err != nil {
 		return err
 	}
 	photo, err := os.ReadFile(flags.Arg(0))
@@ -237,10 +237,10 @@ func runEnroll(args []string, stdout, stderr io.Writer) error {
 	enrollment, err := fingerprint.Enroll(photo)
 	// Delivering is the second step: the call above buffered its records, and
 	// this one hands them to the callback. Both happen before the text is read.
-	if _, deliverErr := fingerprint.DeliverLog(bindingLogs.record); deliverErr != nil {
+	if _, deliverErr := fingerprint.DeliverLog(logs.record); deliverErr != nil {
 		return deliverErr
 	}
-	bindingLogs.pump(stderr, *verbose)
+	logs.pump(stderr, *verbose)
 	if err != nil {
 		return fmt.Errorf("enrolling %s: %w", flags.Arg(0), err)
 	}
@@ -262,11 +262,11 @@ func runEnroll(args []string, stdout, stderr io.Writer) error {
 		timeString(enrollment.TotalMicros()), enrollment.DecodeMicros()/1000, enrollment.SegmentMicros()/1000,
 		enrollment.EnhanceMicros()/1000, enrollment.ExtractMicros()/1000, enrollment.EncodeMicros()/1000)
 	fmt.Fprintf(stdout, "  wrote %s (%d bytes)\n", *out, len(bytes))
-	fmt.Fprintf(stdout, "  C++ log records: %s\n", bindingLogs.summary())
+	fmt.Fprintf(stdout, "  C++ log records: %s\n", logs.summary())
 	return nil
 }
 
-func runDump(args []string, stdout, stderr io.Writer) error {
+func runDump(args []string, logs *sink, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("dump", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	verbose := flags.Bool("v", false, "print the C++ library's log records")
@@ -276,7 +276,7 @@ func runDump(args []string, stdout, stderr io.Writer) error {
 	if flags.NArg() != 1 {
 		return errors.New("dump takes exactly one template")
 	}
-	if err := openBinding(*verbose); err != nil {
+	if err := openBinding(); err != nil {
 		return err
 	}
 	bytes, err := os.ReadFile(flags.Arg(0))
@@ -284,7 +284,7 @@ func runDump(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	text, err := fingerprint.DumpAnsi378(bytes)
-	bindingLogs.pump(stderr, *verbose)
+	logs.pump(stderr, *verbose)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", flags.Arg(0), err)
 	}
@@ -292,18 +292,18 @@ func runDump(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func runVersion(args []string, stdout, stderr io.Writer) error {
+func runVersion(args []string, logs *sink, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("version", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	verbose := flags.Bool("v", false, "emit one log record per level and print them")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if err := openBinding(*verbose); err != nil {
+	if err := openBinding(); err != nil {
 		return err
 	}
 	version, err := fingerprint.Version()
-	bindingLogs.pump(stderr, *verbose)
+	logs.pump(stderr, *verbose)
 	if err != nil {
 		return err
 	}
@@ -317,11 +317,11 @@ func runVersion(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "trigger: %dx%d working image\n", trigger.Width(), trigger.Height())
 
 	if *verbose {
-		if err := fingerprint.EmitLogSamples(bindingLogs.record); err != nil {
+		if err := fingerprint.EmitLogSamples(logs.record); err != nil {
 			return err
 		}
-		bindingLogs.pump(stdout, true)
-		fmt.Fprintf(stdout, "C++ log records: %s\n", bindingLogs.summary())
+		logs.pump(stdout, true)
+		fmt.Fprintf(stdout, "C++ log records: %s\n", logs.summary())
 	}
 	return nil
 }
@@ -335,5 +335,5 @@ func timeString(micros float64) string {
 
 // templateName is the file one processed frame of a watch run is written to.
 func templateName(index int) string {
-	return filepath.Join("", fmt.Sprintf("template-%04d.ansi", index))
+	return fmt.Sprintf("template-%04d.ansi", index)
 }
