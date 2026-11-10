@@ -517,26 +517,25 @@ The rules a registration lives by:
 
 ### Go memory on its way into a callback-capable call
 
-A call that may run a callback hands Go values to code that can move them: the
-callback is Go code on the goroutine that made the call, and Go code may grow
-that goroutine's stack, which copies everything in it. The generated binding
-therefore copies every Go value the call hands to C++ into a heap object and pins
-it for the duration of the call, and copies a writable one back when the call
-returns:
+A callback runs Go code on the goroutine that made the call, and Go code may grow
+that goroutine's stack. A call that may run one therefore works on its own copy
+of every Go value it hands to C++, so the callee reads the same bytes whether or
+not the callback moved anything:
 
-- a `[]T` parameter is a pinned copy, and the callee's writes reach the caller's
-  slice;
-- a `const char *` parameter is the NUL-terminated copy it always was, pinned;
-- a `*T` parameter is a pinned copy of the value, and the callee's writes reach
-  the caller's value;
-- a result the thunk writes through an out-pointer is a pinned heap cell.
+- a `[]T` parameter is copied for the call, and the callee's writes reach the
+  caller's slice;
+- a `const char *` parameter is the NUL-terminated copy it always was;
+- a `*T` parameter is copied for the call, and the callee's writes reach the
+  caller's value;
+- a result the callee fills in is Go's own value, never a stale address.
 
-What is left is the shapes no copy can make safe, each with a warning: a
+What is left is the shapes a copy cannot make safe, each with a warning: a
 `std::span` or a `std::string_view` parameter (a view whose whole purpose is to
-keep naming the caller's bytes), a `std::vector` the callee replaces (the
-copy-back is a word of the goroutine's frame), a `void *` (nothing says what it
-names, so nothing can copy it), and a standard-library result other than
-`std::string`.
+keep naming the caller's bytes), a `std::vector` the callee replaces (the value
+goes back into the caller's slice after the call), a `void *` (nothing says what
+it names, so nothing can copy it), and a standard-library result other than
+`std::string`. The mechanism is in
+[Carriers]({{< ref "explanation/carriers.md" >}}#reentrant).
 
 ## Templates
 
