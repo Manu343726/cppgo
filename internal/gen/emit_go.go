@@ -25,6 +25,9 @@ func (m *packageModel) emitGo() ([]byte, error) {
 		b.WriteString("\t\"os\"\n\t\"path/filepath\"\n")
 	}
 	b.WriteString("\t\"sync\"\n")
+	if m.usesPin {
+		b.WriteString("\t\"runtime\"\n")
+	}
 	if usesUnsafe {
 		b.WriteString("\t\"unsafe\"\n")
 	}
@@ -69,6 +72,129 @@ func cppgoGoString(p unsafe.Pointer) string {
 `)
 	}
 
+	if m.usesPin {
+		b.WriteString(`
+// cppgoHeapCell returns a zero value of T in a heap cell. It is a function and
+// not new(T) at the use site because the allocation site is what decides
+// whether the cell is a stack object: a cell that only ever reaches a uintptr
+// can be stack allocated, and the runtime moves a stack. A returned pointer is
+// a heap pointer.
+//
+//go:noinline
+func cppgoHeapCell[T any]() *T {
+	return new(T)
+}
+
+// cppgoPinValue pins a copy of v in a heap cell and returns it, for the same
+// reason: the cell must be a heap object, and the pin is what keeps the
+// collector from moving it while a callback runs.
+//
+//go:noinline
+func cppgoPinValue[T any](cppgoPin *runtime.Pinner, v T) *T {
+	cell := new(T)
+	*cell = v
+	cppgoPin.Pin(cell)
+	return cell
+}
+
+// cppgoPinSlice pins a copy of s through the same rule: the copy is what the
+// callee reads, so neither the caller nor the collector can move or change it
+// for the duration of the call.
+//
+//go:noinline
+func cppgoPinSlice[T any](cppgoPin *runtime.Pinner, s []T) []T {
+	copyOf := make([]T, len(s))
+	copy(copyOf, s)
+	if len(copyOf) != 0 {
+		cppgoPin.Pin(&copyOf[0])
+	}
+	return copyOf
+}
+`)
+	}
+	if m.usesRetain {
+		b.WriteString(`
+// CallbackRegistration is one retained callback: a Go function the C++ side
+// stores after the registering call returns and calls again, during later calls
+// made from Go, until the caller closes the registration.
+//
+// The registration keeps the Go function alive and holds its slot in the
+// callback table, which is why a callback does not have to be re-registered for
+// every call. Close releases the slot, and waits for the calls already inside
+// the function to return, so nothing of it runs afterwards.
+//
+// A function the callee stored may only be called while C++ is inside a call
+// made from Go: a C++ thread that Go never started must not deliver a record,
+// and there is no state in which the runtime could accept it. Tell the C++ side
+// to forget the callback before Close — pass a nil function to the registering
+// call — because a call after Close reaches the released slot and panics with
+// the slot's number rather than delivering a record.
+type CallbackRegistration struct {
+	mu   sync.Mutex
+	fn   any
+	code uintptr
+	done bool
+}
+
+// cppgoRetain is the registration a retained binding returns. The closure is
+// kept here as well as in the callback table: the table is what C calls, and
+// this value is what keeps the function reachable for as long as the caller
+// holds the registration.
+func cppgoRetain(code uintptr, fn any) *CallbackRegistration {
+	return &CallbackRegistration{fn: fn, code: code}
+}
+
+// Close releases the registration. A second Close, or a Close on a nil
+// registration, reports cppgo.ErrClosed.
+func (r *CallbackRegistration) Close() error {
+	if r == nil {
+		return cppgo.ErrClosed
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.done {
+		return cppgo.ErrClosed
+	}
+	r.done = true
+	r.fn = nil
+	return cppgo.ReleaseCallback(r.code)
+}
+`)
+	}
+	if m.usesWord {
+		b.WriteString(`
+// cppgoWord is the pointer a word of the argument frame holds. The frame is
+// the C argument registers, so a pointer arrives there as an integer; reading
+// it back is spelled here, once, instead of at every conversion.
+func cppgoWord(word uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&word))
+}
+`)
+	}
+	if m.usesBytes {
+		b.WriteString(`
+// cppgoGoBytes copies n bytes at p into a Go string. The bytes are the C
+// caller's, and they are read here and only while the callback that received
+// them runs: nothing on the Go side holds them afterwards.
+func cppgoGoBytes(p unsafe.Pointer, n uintptr) string {
+	if p == nil || n == 0 {
+		return ""
+	}
+	return string(unsafe.Slice((*byte)(p), int(n)))
+}
+
+// cppgoGoSlice is a view of n elements at p, the memory the C caller passed to
+// the callback. Nothing on the Go side owns it, so the slice is valid only
+// while the callback runs.
+func cppgoGoSlice[T any](p unsafe.Pointer, n uintptr) []T {
+	if p == nil || n == 0 {
+		return nil
+	}
+	return unsafe.Slice((*T)(p), int(n))
+}
+`)
+	}
+
 	for _, record := range m.records {
 		m.emitRecord(&b, record)
 	}
@@ -90,7 +216,7 @@ func (m *packageModel) usesUnsafe() bool {
 		// whatever the instantiation.
 		return true
 	}
-	if m.usesCString {
+	if m.usesCString || m.usesBytes || m.usesWord {
 		return true
 	}
 	for _, record := range m.records {
@@ -619,31 +745,23 @@ func (m *packageModel) wireExprs(binding *binding, ctx callContext) []string {
 // argument frame is filled from the wire words, the call is made, and the
 // recorded panic, the status and the result are read back in that order.
 func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx callContext) {
+	if binding.retained {
+		m.emitRetained(b, binding, ctx)
+		return
+	}
 	for _, arg := range binding.Wire {
 		if arg.callable != nil {
-			m.emitCallbackRegistration(b, binding, arg)
+			m.emitCallbackRegistration(b, binding, arg, true)
 		}
 	}
-	if binding.Out != nil && binding.outPointer {
-		fmt.Fprintf(b, "\tcppgoResult := new(%s)\n", binding.OutLocal)
-	}
-	b.WriteString("\tvar cppgoFrame cppgo.Args\n")
-	// The frame is filled from the same expressions the NOSPLIT trampoline
-	// would load, in wire order, into the two register banks.
-	exprs := m.wireExprs(binding, ctx)
-	ints, floats := 0, 0
-	for i, arg := range binding.Wire {
-		if arg.class == classFloat {
-			fmt.Fprintf(b, "\tcppgoFrame.F[%d] = float64(%s)\n", floats, exprs[i])
-			floats++
-			continue
-		}
-		fmt.Fprintf(b, "\tcppgoFrame.I[%d] = uintptr(%s)\n", ints, exprs[i])
-		ints++
-	}
-	fmt.Fprintf(b, "\tcppgo.CallReentrant(%s, &cppgoFrame)\n", binding.SymbolVar)
+	// A Go pointer the callee reads — or writes — is a pinned heap copy, made
+	// before the frame is filled: a callback may grow this goroutine's stack,
+	// and the original may live in the frame that moves.
+	m.emitPinDecls(b, binding)
+	m.emitFrameAndCall(b, binding, ctx, nil)
 	m.emitKeepAlive(b, binding, ctx)
 	b.WriteString("\tif cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {\n\t\tpanic(cppgoPanic.Value)\n\t}\n")
+	m.emitPinAfter(b, binding)
 	if !binding.Status {
 		switch {
 		case binding.Out != nil:
@@ -664,10 +782,129 @@ func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx c
 	b.WriteString("\treturn nil\n")
 }
 
+// emitRetained writes a call whose callback the callee keeps: the Go function
+// is registered and its slot is handed over, the call returns, and the slot
+// stays live in the registration this binding returns. Only Close releases it.
+//
+// A nil Go function is the documented way to clear the sink: the call is made
+// with a null callback address, nothing is registered, and no registration is
+// returned.
+func (m *packageModel) emitRetained(b *strings.Builder, binding *binding, ctx callContext) {
+	arg := callbackArgOf(binding)
+	if arg == nil {
+		return
+	}
+	fn := arg.callbackParam
+	index := 0
+	for _, other := range binding.Wire {
+		if other == arg {
+			break
+		}
+		if other.callable != nil {
+			index++
+		}
+	}
+	fmt.Fprintf(b, "\tif %s == nil {\n", fn)
+	// A null callback address clears what the callee stored. The other words
+	// are still filled, so a signature that takes arguments beside the callback
+	// is called with its zeroes rather than with whatever the frame held.
+	m.emitPinDecls(b, binding)
+	m.emitFrameAndCall(b, binding, ctx, arg)
+	m.emitKeepAlive(b, binding, ctx)
+	b.WriteString("\t\tif cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {\n\t\t\tpanic(cppgoPanic.Value)\n\t\t}\n")
+	m.emitStatusCheck(b, binding, "\t\t", "")
+	b.WriteString("\t\treturn nil, nil\n\t}\n")
+	m.emitCallbackRegistration(b, binding, arg, false)
+	m.emitPinDecls(b, binding)
+	m.emitFrameAndCall(b, binding, ctx, nil)
+	m.emitKeepAlive(b, binding, ctx)
+	b.WriteString("\tif cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {\n")
+	fmt.Fprintf(b, "\t\tcppgo.ReleaseCallback(cppgoCallback%d)\n", index)
+	b.WriteString("\t\tpanic(cppgoPanic.Value)\n\t}\n")
+	m.emitPinAfter(b, binding)
+	if binding.Status {
+		b.WriteString("\tif cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {\n")
+		fmt.Fprintf(b, "\t\tcppgo.ReleaseCallback(cppgoCallback%d)\n", index)
+		fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", binding.sym.QualifiedName)
+	}
+	fmt.Fprintf(b, "\treturn cppgoRetain(cppgoCallback%d, %s), nil\n", index, fn)
+}
+
+// emitStatusCheck writes the status branch of a call, or nothing when the
+// declaration has no status to read.
+func (m *packageModel) emitStatusCheck(b *strings.Builder, binding *binding, indent, failure string) {
+	if !binding.Status {
+		return
+	}
+	fmt.Fprintf(b, "%sif cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {\n", indent)
+	fmt.Fprintf(b, "%s\treturn %scppgoCallError(%q)\n%s}\n", indent, errorZeroPrefix(binding), binding.sym.QualifiedName, indent)
+}
+
+// emitPinDecls writes the pinned heap copies a callback-capable call hands to C,
+// with the pinner that keeps them still.
+func (m *packageModel) emitPinDecls(b *strings.Builder, binding *binding) {
+	for _, decl := range binding.pinDecls() {
+		for _, line := range strings.Split(decl, "\n") {
+			fmt.Fprintf(b, "\t%s\n", line)
+		}
+	}
+}
+
+// emitPinAfter writes the copies back into the caller's values, once the call
+// returned and before any early return can skip them.
+func (m *packageModel) emitPinAfter(b *strings.Builder, binding *binding) {
+	for _, line := range binding.pinAfter() {
+		for _, part := range strings.Split(line, "\n") {
+			fmt.Fprintf(b, "\t%s\n", part)
+		}
+	}
+}
+
+// emitFrameAndCall fills the argument frame from the wire expressions, in wire
+// order, into the two register banks, and makes the call. A nullCallback names
+// the wire argument whose word is passed as zero instead: the way a retained
+// registration tells the callee to forget what it stored.
+func (m *packageModel) emitFrameAndCall(b *strings.Builder, binding *binding, ctx callContext, nullCallback *wireArg) {
+	b.WriteString("\tvar cppgoFrame cppgo.Args\n")
+	exprs := m.wireExprs(binding, ctx)
+	ints, floats := 0, 0
+	for i, arg := range binding.Wire {
+		expr := exprs[i]
+		if arg == nullCallback {
+			expr = "0"
+		}
+		if arg.class == classFloat {
+			fmt.Fprintf(b, "\tcppgoFrame.F[%d] = float64(%s)\n", floats, expr)
+			floats++
+			continue
+		}
+		fmt.Fprintf(b, "\tcppgoFrame.I[%d] = uintptr(%s)\n", ints, expr)
+		ints++
+	}
+	fmt.Fprintf(b, "\tcppgo.CallReentrant(%s, &cppgoFrame)\n", binding.SymbolVar)
+}
+
+// callbackArgOf returns the wire argument that carries the call's Go function,
+// nil when the signature has none.
+func callbackArgOf(binding *binding) *wireArg {
+	for _, arg := range binding.Wire {
+		if arg.callable != nil {
+			return arg
+		}
+	}
+	return nil
+}
+
 // emitCallbackRegistration writes one Go function into the callback table. The
 // closure marshals the C argument frame to the Go signature and the Go result
 // back to the one result register the ABI carries.
-func (m *packageModel) emitCallbackRegistration(b *strings.Builder, binding *binding, arg *wireArg) {
+//
+// A string argument is a Go string built from the callee's bytes: copied for a
+// (const char *, size_t) pair and for a NUL-terminated pointer, and never held
+// past the callback. A slice argument is a view of the callee's memory for the
+// same reason the pointer can be passed at all: nothing on the Go side owns it,
+// so the view is valid only while the callback runs.
+func (m *packageModel) emitCallbackRegistration(b *strings.Builder, binding *binding, arg *wireArg, release bool) {
 	index := 0
 	for _, other := range binding.Wire {
 		if other == arg {
@@ -681,15 +918,30 @@ func (m *packageModel) emitCallbackRegistration(b *strings.Builder, binding *bin
 	args := make([]string, len(callable.Params))
 	ints, floats := 0, 0
 	for i, param := range callable.Params {
-		switch param.Kind {
-		case goFloat:
+		switch {
+		case param.Shape == callbackCString:
+			args[i] = fmt.Sprintf("cppgoGoString(cppgoWord(cppgoFrame.I[%d]))", ints)
+			ints++
+		case param.Shape == callbackBytes:
+			args[i] = fmt.Sprintf("cppgoGoBytes(cppgoWord(cppgoFrame.I[%d]), cppgoFrame.I[%d])", ints, ints+1)
+			ints += 2
+		case param.Shape == callbackView:
+			args[i] = fmt.Sprintf("cppgoGoSlice[%s](cppgoWord(cppgoFrame.I[%d]), cppgoFrame.I[%d])", param.Type.Elem.Go, ints, ints+1)
+			ints += 2
+		case param.Shape == callbackPointer:
+			args[i] = fmt.Sprintf("(*%s)(cppgoWord(cppgoFrame.I[%d]))", param.Type.Elem.Go, ints)
+			ints++
+		case param.Shape == callbackOpaque:
+			args[i] = fmt.Sprintf("cppgoWord(cppgoFrame.I[%d])", ints)
+			ints++
+		case param.Type.Kind == goFloat:
 			args[i] = fmt.Sprintf("cppgoFrame.F[%d]", floats)
 			floats++
-		case goBool:
+		case param.Type.Kind == goBool:
 			args[i] = fmt.Sprintf("cppgoFrame.I[%d] != 0", ints)
 			ints++
 		default:
-			args[i] = fmt.Sprintf("%s(cppgoFrame.I[%d])", param.Go, ints)
+			args[i] = fmt.Sprintf("%s(cppgoFrame.I[%d])", param.Type.Go, ints)
 			ints++
 		}
 	}
@@ -715,7 +967,9 @@ func (m *packageModel) emitCallbackRegistration(b *strings.Builder, binding *bin
 	} else {
 		b.WriteString("\tif cppgoCallbackErr != nil {\n\t\tpanic(cppgoCallbackErr)\n\t}\n")
 	}
-	fmt.Fprintf(b, "\tdefer cppgo.ReleaseCallback(cppgoCallback%d)\n", index)
+	if release {
+		fmt.Fprintf(b, "\tdefer cppgo.ReleaseCallback(cppgoCallback%d)\n", index)
+	}
 }
 
 // unsignedType reports whether a mapped integer has no sign bit to extend. The
@@ -955,6 +1209,45 @@ func byValueNote(binding *binding) string {
 	if binding.Result != nil && binding.Result.CString {
 		notes = append(notes, "The result is copied out of the library's own C string before the call returns, so the Go string owns its bytes.")
 	}
+	if binding.retained {
+		// The lifetime and the threading rule are the whole difference between
+		// this binding and any other callback: the callee keeps the function,
+		// and only a call made from Go may deliver it.
+		notes = append(notes, "The C++ side stores the function and calls it again during later calls made from Go, until Close releases the registration; a C++ thread that Go did not start must not call it. Pass a nil function to clear the callee's callback, and close the registration after the callee has been told to forget it.")
+	}
+	for _, param := range binding.Params {
+		if param.Type.Kind != goFunc && param.Type.Callback == nil {
+			continue
+		}
+		notes = append(notes, callbackPayloadNote(param.Type))
+	}
+	return strings.Join(notes, " ")
+}
+
+// callbackPayloadNote describes what a callback's arguments are made of. The
+// memory belongs to the callee, which is the only reason a pointer can cross to
+// Go at all: a string is a copy taken during the callback, and a slice is a view
+// of the callee's bytes that ends when the callback returns.
+func callbackPayloadNote(callable *goType) string {
+	if callable.Callback == nil {
+		return ""
+	}
+	var copies, views bool
+	for _, param := range callable.Callback.Params {
+		switch param.Shape {
+		case callbackCString, callbackBytes:
+			copies = true
+		case callbackView:
+			views = true
+		}
+	}
+	var notes []string
+	if copies {
+		notes = append(notes, "The text the callback receives is copied into a Go string for the duration of the callback.")
+	}
+	if views {
+		notes = append(notes, "A slice the callback receives is a view of the callee's memory: it is valid only while the callback runs, and anything kept past its return must be copied.")
+	}
 	return strings.Join(notes, " ")
 }
 
@@ -1171,6 +1464,10 @@ func goParams(params []*goParam) string {
 // goResults renders a Go result list.
 func goResults(binding *binding) string {
 	switch {
+	case binding.retained:
+		// The call's outcome is the registration: the Go function stays
+		// registered until the caller closes it.
+		return " (*CallbackRegistration, error)"
 	case binding.dynamicCast:
 		// A derived view reports whether the object really is that type.
 		return " (" + binding.Result.Go + ", bool)"
@@ -1188,6 +1485,9 @@ func goResults(binding *binding) string {
 // errorZeroPrefix is the zero value a failed error-returning binding reports,
 // plus a comma: every one of them has an error as its last result.
 func errorZeroPrefix(binding *binding) string {
+	if binding.retained {
+		return "nil, "
+	}
 	if binding.Result == nil {
 		return ""
 	}

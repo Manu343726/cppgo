@@ -92,13 +92,54 @@ type goType struct {
 	CString bool
 }
 
+// callbackShape says how the C argument words of one callback parameter become
+// the Go value the user's function receives.
+type callbackShape uint8
+
+const (
+	// callbackWord is one register word widened to its Go integer, bool or
+	// double.
+	callbackWord callbackShape = iota
+	// callbackCString is a NUL-terminated `const char *`: the bytes are the
+	// callee's, and Go copies them into a string for the duration of the
+	// callback.
+	callbackCString
+	// callbackBytes is a `(const char *, size_t)` pair copied into a Go string:
+	// the count says how many bytes, so the buffer need not be terminated.
+	callbackBytes
+	// callbackView is a `(const T *, size_t)` pair handed to Go as a []T view of
+	// the callee's memory. The view is valid only while the callback runs.
+	callbackView
+	// callbackPointer is a `T *` of the callee's memory, handed to Go as a *T.
+	callbackPointer
+	// callbackOpaque is a `void *`: Go receives an untyped pointer, and nothing
+	// on either side knows what it points at.
+	callbackOpaque
+)
+
+// callbackArg is one argument of a callback: the Go value the user's function
+// takes, the C argument words that fill it, and how the words become the value.
+type callbackArg struct {
+	// Type is the Go type of the argument.
+	Type *goType
+	// Words are the C argument words the argument consumes: two for a
+	// (pointer, length) pair folded into one Go value, one otherwise.
+	Words int
+	// Shape decides the expression the generated Go closure builds the value
+	// with.
+	Shape callbackShape
+	// C are the C++ spellings of the words, in order, for the function-pointer
+	// type the shim casts the callback address to.
+	C []string
+}
+
 // callbackType is the signature of a Go function handed to C++. The carrier
 // reads its arguments from the register file and writes one result register,
 // so only scalars are carried: six INTEGER and eight SSE arguments, one
 // register result.
 type callbackType struct {
 	// Params are the callback's arguments, in declaration order.
-	Params []*goType
+	Params []*callbackArg
 	// Result is the callback's result, nil for void.
 	Result *goType
 	// Go is the Go function type: "func(int32, int32) int32".
@@ -892,18 +933,21 @@ func functionPointer(p cxx.Param) (signature, bool) {
 
 // mapFunction maps a function-pointer or std::function parameter: the Go value
 // is a func, the C++ value is built by the shim from the callback table's
-// address, and only scalars are carried.
+// address, and a scalar, a string or a view of the callee's bytes is carried.
 func (m *mapper) mapFunction(p cxx.Param, callable signature, std bool) (*goType, error) {
 	mapped := &callbackType{Std: std}
-	for _, spelling := range callable.params {
-		element, err := m.callbackElement(spelling)
+	for i := 0; i < len(callable.params); i++ {
+		arg, err := m.callbackArg(callable.params[i:])
 		if err != nil {
 			return nil, err
 		}
-		mapped.Params = append(mapped.Params, element)
+		mapped.Params = append(mapped.Params, arg)
+		// A (pointer, length) pair is one Go value and two C words, so the
+		// next spelling is part of this argument and not one of its own.
+		i += arg.Words - 1
 	}
 	if result := strings.TrimSpace(callable.result); result != "" && result != "void" {
-		element, err := m.callbackElement(result)
+		element, err := m.callbackResult(result)
 		if err != nil {
 			return nil, err
 		}
@@ -913,11 +957,11 @@ func (m *mapper) mapFunction(p cxx.Param, callable signature, std bool) (*goType
 	// arguments, and one register result.
 	ints, floats := 0, 0
 	for _, param := range mapped.Params {
-		if param.Kind == goFloat {
+		if param.Type.Kind == goFloat && param.Words == 1 {
 			floats++
-		} else {
-			ints++
+			continue
 		}
+		ints += param.Words
 	}
 	switch {
 	case ints > maxIntRegs:
@@ -944,28 +988,175 @@ func stdKindFor(std bool) stdKind {
 	return stdNone
 }
 
-// callbackElement maps one callback argument or its result.
-func (m *mapper) callbackElement(spelling string) (*goType, error) {
+// callbackResult maps a callback's result: one register, so one scalar. A
+// result is never a string or a view, because the callee would have to read it
+// out of Go memory the caller no longer holds when it returns.
+func (m *mapper) callbackResult(spelling string) (*goType, error) {
 	element, err := m.mapElement(spelling)
 	if err != nil {
 		return nil, err
 	}
 	if element.Kind == goFloat && element.Go == "float32" {
-		return nil, pending(fmt.Sprintf("the callback argument %q is a float", spelling),
-			"take a double instead: a float argument is not carried by this build yet")
+		return nil, pending(fmt.Sprintf("the callback result %q is a float", spelling),
+			"return a double instead: a float result is not carried by this build yet")
 	}
 	if element.Kind == goRecord || element.Kind == goString || element.Kind == goSlice || element.Kind == goArray {
-		return nil, pending(fmt.Sprintf("the callback argument %q is not a scalar", spelling),
-			"take an integer, a double or a pointer instead")
+		return nil, pending(fmt.Sprintf("the callback result %q is not a scalar", spelling),
+			"return an integer, a double or a pointer instead")
 	}
 	return element, nil
+}
+
+// callbackArg maps one callback argument, and the spellings it takes with it: a
+// (pointer, length) pair is one Go value — a string or a slice — filling two C
+// argument words, and spellings holds the rest of the parameter list so the
+// length can be read.
+//
+// The memory a pointer argument names belongs to the C caller, which is why it
+// can be handed to Go at all: a Go callback may grow the goroutine's stack, and
+// a Go pointer handed to C would move with it. A view is valid for the duration
+// of the callback; a string is a copy.
+func (m *mapper) callbackArg(spellings []string) (*callbackArg, error) {
+	spelling := strings.TrimSpace(spellings[0])
+	// A leading const qualifies what the pointer points at, not the pointer:
+	// `const T *` is a pointer to const T, and the shim's cast has to say so.
+	base, pointeeConst := unqualified(spelling)
+	if !strings.HasSuffix(base, "*") {
+		element, err := m.mapElement(spelling)
+		if err != nil {
+			return nil, err
+		}
+		if element.Kind == goFloat && element.Go == "float32" {
+			return nil, pending(fmt.Sprintf("the callback argument %q is a float", spelling),
+				"take a double instead: a float argument is not carried by this build yet")
+		}
+		if element.Kind == goRecord || element.Kind == goString || element.Kind == goSlice || element.Kind == goArray {
+			return nil, pending(fmt.Sprintf("the callback argument %q is not a scalar", spelling),
+				"take an integer, a double or a pointer instead")
+		}
+		return &callbackArg{Type: element, Words: 1, Shape: callbackWord, C: []string{element.C}}, nil
+	}
+	pointee, ownConst := unqualified(strings.TrimSpace(strings.TrimSuffix(base, "*")))
+	pointeeConst = pointeeConst || ownConst
+	if pointee == "" || strings.HasSuffix(pointee, "*") || strings.HasSuffix(pointee, "&") {
+		return nil, pending(fmt.Sprintf("the callback argument %q is not a pointer this build carries", spelling),
+			"take a pointer to a scalar, a record, or a (pointer, length) pair of them")
+	}
+	if pointee == "void" {
+		return &callbackArg{
+			Type:  &goType{Kind: goPointer, Go: "unsafe.Pointer"},
+			Words: 1,
+			Shape: callbackOpaque,
+			C:     []string{cPointer("void", pointeeConst)},
+		}, nil
+	}
+	if pointee == "char" {
+		if len(spellings) > 1 && isCallbackLength(spellings[1]) {
+			return &callbackArg{
+				Type:  &goType{Kind: goString, Go: "string"},
+				Words: 2,
+				Shape: callbackBytes,
+				C:     []string{cPointer("char", pointeeConst), lengthCType(spellings[1])},
+			}, nil
+		}
+		return &callbackArg{
+			Type:  &goType{Kind: goString, Go: "string", CString: true},
+			Words: 1,
+			Shape: callbackCString,
+			C:     []string{cPointer("char", pointeeConst)},
+		}, nil
+	}
+	element, err := m.mapElement(pointee)
+	if err != nil {
+		return nil, err
+	}
+	if element.Kind == goString || element.Kind == goSlice || element.Kind == goArray {
+		return nil, pending(fmt.Sprintf("the callback argument %q is not a pointer this build carries", spelling),
+			"take a pointer to a scalar or a record")
+	}
+	if element.Kind == goPointer {
+		// mapElement answers an opaque record with *T, which is a Go wrapper of
+		// C++ storage that nothing on the Go side owns: an address the callee
+		// hands over cannot be wrapped.
+		return nil, pending(fmt.Sprintf("the callback argument %q is a pointer to an opaque record", spelling),
+			"take the record by value, or a scalar pointer")
+	}
+	if len(spellings) > 1 && isCallbackLength(spellings[1]) {
+		if element.Kind == goRecord && (element.Record == nil || !element.Record.Mirrored) {
+			return nil, pending(fmt.Sprintf("the callback argument %q is a pair of an opaque record", spelling),
+				"take the record as a pointer, or the bytes as a (const char *, size_t) pair")
+		}
+		return &callbackArg{
+			Type:  &goType{Kind: goSlice, Go: "[]" + element.Go, Elem: element, Record: element.Record},
+			Words: 2,
+			Shape: callbackView,
+			C:     []string{cPointer(element.Cxx, pointeeConst), lengthCType(spellings[1])},
+		}, nil
+	}
+	if element.Kind != goInteger && element.Kind != goFloat && element.Kind != goBool &&
+		element.Kind != goEnum && element.Kind != goRecord {
+		return nil, pending(fmt.Sprintf("the callback argument %q is not a pointer this build carries", spelling),
+			"take a pointer to a scalar or a record")
+	}
+	return &callbackArg{
+		Type:  &goType{Kind: goPointer, Go: "*" + element.Go, Elem: element, Record: element.Record, Const: pointeeConst},
+		Words: 1,
+		Shape: callbackPointer,
+		C:     []string{cPointer(element.Cxx, pointeeConst)},
+	}, nil
+}
+
+// unqualified splits a leading const or volatile off a spelling, and reports
+// whether one was there.
+func unqualified(spelling string) (string, bool) {
+	name := strings.TrimSpace(spelling)
+	const_ := false
+	for {
+		switch {
+		case strings.HasPrefix(name, "const "):
+			const_ = true
+			name = strings.TrimSpace(name[len("const "):])
+		case strings.HasPrefix(name, "volatile "):
+			name = strings.TrimSpace(name[len("volatile "):])
+		default:
+			return name, const_
+		}
+	}
+}
+
+// cPointer renders the C++ spelling of a pointer to a type, keeping the
+// pointee's constness: the shim casts the callback address to a function
+// pointer whose parameter types must be the declaration's own.
+func cPointer(name string, isConst bool) string {
+	if isConst {
+		return "const " + name + " *"
+	}
+	return name + " *"
+}
+
+// isCallbackLength reports whether a callback's parameter spelling is the count
+// half of a (pointer, length) pair.
+func isCallbackLength(spelling string) bool {
+	name, _ := unqualified(spelling)
+	scalar, ok := elementScalars[name]
+	return ok && scalar.kind == goInteger && scalar.goName == "uint64"
+}
+
+// lengthCType is the C++ type a length word is cast to: the mapped width of the
+// count, which is the declared type's own width on LP64.
+func lengthCType(spelling string) string {
+	name, _ := unqualified(spelling)
+	if scalar, ok := elementScalars[name]; ok {
+		return scalar.cName
+	}
+	return "uint64_t"
 }
 
 // goFunctionType renders the Go func type of a callback.
 func goFunctionType(callback *callbackType) string {
 	params := make([]string, len(callback.Params))
 	for i, param := range callback.Params {
-		params[i] = param.Go
+		params[i] = param.Type.Go
 	}
 	out := "func(" + strings.Join(params, ", ") + ")"
 	if callback.Result != nil {
@@ -977,29 +1168,31 @@ func goFunctionType(callback *callbackType) string {
 // cxxFunctionType renders the C++ function-pointer type the shim casts the
 // callback address to, in the C spellings the Go types already carry.
 func cxxFunctionType(callback *callbackType) string {
-	params := make([]string, len(callback.Params))
-	for i, param := range callback.Params {
-		params[i] = param.C
-	}
-	result := "void"
-	if callback.Result != nil {
-		result = callback.Result.C
-	}
-	return result + " (*)(" + strings.Join(params, ", ") + ")"
+	return callback.resultType() + " (*)(" + strings.Join(callbackCParams(callback), ", ") + ")"
 }
 
 // stdFunctionType renders the std::function the shim builds from a plain
 // function pointer when the C++ parameter is one.
 func stdFunctionType(callback *callbackType) string {
-	params := make([]string, len(callback.Params))
-	for i, param := range callback.Params {
-		params[i] = param.C
+	return "std::function<" + callback.resultType() + "(" + strings.Join(callbackCParams(callback), ", ") + ")>"
+}
+
+// callbackCParams renders the C++ parameter spellings of a callback, one per
+// argument word.
+func callbackCParams(callback *callbackType) []string {
+	var params []string
+	for _, param := range callback.Params {
+		params = append(params, param.C...)
 	}
-	result := "void"
-	if callback.Result != nil {
-		result = callback.Result.C
+	return params
+}
+
+// resultType is the callback's C++ result spelling.
+func (c *callbackType) resultType() string {
+	if c.Result == nil {
+		return "void"
 	}
-	return "std::function<" + result + "(" + strings.Join(params, ", ") + ")>"
+	return c.Result.C
 }
 
 // templateParam reports whether a type spelling names one of the template's

@@ -27,6 +27,16 @@ import "unsafe"
 // The results are read from a.Ret and a.RetF, which the wrapper writes after the
 // call. That keeps one result path for both carriers, even though cgocall itself
 // has only an int32 result.
+//
+// It is nosplit, and so is the wrapper and runtime.cgocall: the caller fills the
+// argument block and then calls here, and a stack growth in between would move
+// every Go object the block holds a uintptr of, leaving C reading the old
+// address. Nothing may grow this goroutine's stack between the frame being
+// filled and the callee reading it. The nil checks below panic, which is an
+// abort rather than a call that has to return, so the growth the panic needs is
+// nobody's problem.
+//
+//go:nosplit
 func CallReentrant(fn unsafe.Pointer, a *Args) (uintptr, float64) {
 	if a == nil {
 		panic("cppgo: asm.CallReentrant: nil Args")

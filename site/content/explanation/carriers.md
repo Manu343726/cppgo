@@ -76,6 +76,15 @@ runtime accepts a callback: a call on the direct path never enters it, so a
 callback reached that way kills the process. A binding whose signature passes a
 Go function to C++ therefore gets this carrier.
 
+A **retained** callback — one the callee stores with `-retain` and calls during
+later calls of its own — makes every binding of its package reentrant, because
+any call made from Go may deliver a record and the header cannot say which. The
+lifetime is the other half of the rule, and it is the caller's: the registration
+the registering call returns keeps the Go function alive, and `Close` releases it.
+A C++ thread that Go did not start is outside the rule altogether: it has no
+goroutine to run the callback on, so a library that delivers from a thread of its
+own cannot be bound this way.
+
 Template calls go through this carrier as well: the generated generic code calls
 `cppgo.CallReentrant`
 ([runtime reference]({{< ref "reference/runtime.md" >}}#calls-and-callbacks)),
@@ -159,7 +168,8 @@ pointers in, and **SSE**, the eight floating-point registers beside them.
 | a record Go cannot mirror: a bitfield, a packed struct, a union, a private or mixed-access field | thunk, one getter and setter per public field | supported as an opaque record: Go holds the pointer and the fields are methods |
 | more than 6 INTEGER / 8 SSE arguments | thunk, through an argument block both sides assert | supported |
 | exception-throwing call | thunk (`try`/`catch`) | supported |
-| callback parameter, `std::function` (C++'s wrapper around any callable) | reentrant | emitted, not exercised by an example |
+| callback parameter: a function pointer, a `std::function` (C++'s wrapper around any callable), or a typedef of one | reentrant | supported |
+| a callback the callee stores (`-retain`) | reentrant, for every binding of the package | supported: the registering call returns a registration, and `Close` releases it |
 | class / function template | thunk, called reentrantly | supported for scalar type arguments and non-type dimensions; a public field, a dependent signature and a parameter pack stop the run |
 | static member | thunk, no `this` (the object a method was called on) | supported |
 | enum | — | supported: a named Go integer type over the underlying width |

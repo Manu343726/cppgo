@@ -574,8 +574,16 @@ func (b *builder) checkCollisions() error {
 		seen[key] = binding
 	}
 	recordNames := map[string]bool{}
+	if b.usesRetain {
+		// The retained registration type is part of the generated API, and a
+		// header type of the same name would collide with it.
+		recordNames["CallbackRegistration"] = true
+	}
 	for _, name := range b.order {
 		record := b.records[name]
+		if b.usesRetain && record.GoName == "CallbackRegistration" {
+			return fmt.Errorf("cppgo: the record %s maps to Go type CallbackRegistration, which a retained callback declares; rename it with -rename '<signature>=<GoName>'", record.CxxName)
+		}
 		if recordNames[record.GoName] {
 			return fmt.Errorf("cppgo: two records map to Go type %s; rename one with -rename '<signature>=<GoName>'", record.GoName)
 		}

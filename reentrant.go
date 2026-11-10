@@ -24,6 +24,14 @@ type Args = asm.Args
 // that passes none does not need it, and costs less.
 //
 // The results are read from a.Ret and a.RetF after the call returns.
+//
+// It does not grow the goroutine's stack, on purpose: a binding fills the
+// argument block and calls here, and a stack growth between the two would move
+// every Go object that block names, leaving the callee reading the old address.
+// The reentrant carrier therefore hands C a pinned copy of any Go memory the
+// call may still be reading when a callback runs.
+//
+//go:nosplit
 func CallReentrant(fn uintptr, a *Args) {
 	asm.CallReentrant(rtl.Pointer(fn), a)
 }
