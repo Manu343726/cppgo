@@ -49,18 +49,25 @@
 # here because it decides how a bump is done:
 #
 #   Eigen 3.4.0        package `libeigen3-dev` (trixie). Header-only, no runtime.
-#   OpenCV 4.10.0      packages `libopencv-core-dev`, `libopencv-imgproc-dev`,
-#                      `libopencv-imgcodecs-dev` (trixie). The component -dev
-#                      packages and NOT the `libopencv-dev` metapackage: the
-#                      metapackage pulls the whole GUI chain (Qt5, GTK, Vulkan,
-#                      OpenCL ICD) for `highgui`, which this image has no use
-#                      for. The consequence, said plainly: OpenCV's own
-#                      `opencv4.pc` and `OpenCVConfig.cmake` ship only in that
-#                      metapackage, so the interface here is the header tree plus
-#                      the component libraries:
+#   OpenCV 4.10.0      the component -dev packages of every headless module
+#                      issue #132 binds (trixie): core, imgproc, imgcodecs,
+#                      video, calib3d, features2d, objdetect, photo, flann, ml,
+#                      dnn and stitching. The component -dev packages and NOT
+#                      the `libopencv-dev` metapackage: the metapackage pulls
+#                      the whole GUI chain (Qt5, GTK, Vulkan, OpenCL ICD) for
+#                      `highgui`, which this image has no use for, and the
+#                      codec stack (ffmpeg, gstreamer) for `videoio`, which no
+#                      binding here reads a stream from. The consequence, said
+#                      plainly: OpenCV's own `opencv4.pc` and
+#                      `OpenCVConfig.cmake` ship only in that metapackage, so
+#                      the interface here is the header tree plus the component
+#                      libraries:
 #
 #                        -I/usr/include/opencv4
 #                        -lopencv_core -lopencv_imgproc -lopencv_imgcodecs
+#                        -lopencv_video -lopencv_calib3d -lopencv_features2d
+#                        -lopencv_objdetect -lopencv_photo -lopencv_flann
+#                        -lopencv_ml -lopencv_dnn -lopencv_stitching
 #
 #                      `pkg-config --modversion opencv4` therefore does NOT
 #                      work in this image, by choice; `dpkg-query -W
@@ -71,6 +78,14 @@
 #                      install. CPU backend only — no CUDA, no OpenCL, no oneAPI,
 #                      no graphics, no image IO, no tests, no examples — installed
 #                      to /usr/local as `libaf` (unified) plus `libafcpu`.
+#   Python 3 +         the toolchain `examples/fingerprint` (#137) needs: its C++
+#   Conan 2.28.1       dependency (spdlog, header-only) is Conan's, and its Makefile
+#                      runs `conan install` before CMake. Python comes from trixie
+#                      because Conan is a Python program; Conan is pinned to the
+#                      exact patch the lockfile was resolved with. Both live in a
+#                      venv at /opt/conan, installed last in the final stage so the
+#                      ArrayFire and OpenCV layers above stay cached — moving this
+#                      block up would rebuild the whole image to add 40 MB.
 #
 # Qt is out of scope and is not installed anywhere in this image.
 #
@@ -329,13 +344,11 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 #                    out-of-line bodies. Its absence makes those tests SKIP and
 #                    the coverage gate fail — exactly the class of bug this
 #                    image exists to prevent, so it is explicit, not implicit.
-#   libeigen3-dev,   the target libraries #15's tests bind: Eigen's headers,
-#   libopencv-       OpenCV's core/imgproc/imgcodecs components (not the GUI
-#   core-dev,        chain — see the header), and ArrayFire, which is copied in
-#   libopencv-       from the stage above because trixie has no package for it.
-#   imgproc-dev,
-#   libopencv-
-#   imgcodecs-dev
+#   libeigen3-dev,   the target libraries #15/#132's tests bind: Eigen's
+#   libopencv-*      headers, OpenCV's headless module components (not the GUI
+#                    or codec chain — see the header), and ArrayFire, which is
+#                    copied in from the stage above because trixie has no
+#                    package for it.
 #   libfftw3-*3,     ArrayFire's *runtime*: the CPU backend links FFTW, LAPACKE
 #   liblapacke,      and OpenBLAS in the builder stage, so those shared objects
 #   libopenblas0     must exist here too. Without them `dlopen("libafcpu.so.3")`
@@ -358,9 +371,18 @@ RUN apt-get update \
       libfftw3-single3 \
       liblapacke \
       libopenblas0 \
+      libopencv-calib3d-dev \
       libopencv-core-dev \
+      libopencv-dnn-dev \
+      libopencv-features2d-dev \
+      libopencv-flann-dev \
       libopencv-imgcodecs-dev \
       libopencv-imgproc-dev \
+      libopencv-ml-dev \
+      libopencv-objdetect-dev \
+      libopencv-photo-dev \
+      libopencv-stitching-dev \
+      libopencv-video-dev \
       make \
       nodejs \
       pkg-config \
@@ -485,15 +507,37 @@ cat >/tmp/targets-check/check.cpp <<'CHECK'
 #include <af/array.h>
 #include <af/data.h>
 #include <af/util.h>
+
+#include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/core/version.hpp>
+#include <opencv2/dnn.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/flann.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/ml.hpp>
+#include <opencv2/objdetect.hpp>
+#include <opencv2/photo.hpp>
+#include <opencv2/stitching.hpp>
+#include <opencv2/video/background_segm.hpp>
 
+/* The libraries this image carries, each proven by a call and a value it
+ * returns rather than by a package listing: Eigen by a trace, ArrayFire by a
+ * reduction through the CPU backend, and every OpenCV module issue #132 binds
+ * by one call — the nine headless modules added on top of core/imgproc:
+ * video, calib3d, features2d, objdetect, photo, flann, ml, dnn, stitching. A
+ * module that is installed but broken fails the build here, at build time,
+ * instead of as an `undefined symbol` in a test months later.
+ *
+ * Two of these deliberately prove the error path of a file-driven API: there is
+ * no cascade and no ONNX model in this image, so `CascadeClassifier` is empty
+ * and `dnn::Net` is empty. The examples ship the smallest real fixture they
+ * need; this probe proves the module links and runs. */
 int main() {
     const Eigen::Matrix3d m = Eigen::Matrix3d::Identity();
     const double trace = m.trace();
 
-    cv::Mat bgr(4, 4, CV_8UC3, cv::Scalar(0, 0, 255));
+    cv::Mat bgr(16, 16, CV_8UC3, cv::Scalar(0, 0, 255));
     cv::Mat gray;
     cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
     const int g = gray.at<uchar>(0, 0);
@@ -504,21 +548,87 @@ int main() {
     int major = 0, minor = 0, patch = 0;
     af_get_version(&major, &minor, &patch);
 
-    std::printf("eigen=%d.%d.%d trace=%.0f opencv=%s gray=%d arrayfire=%d.%d.%d sum=%.1f\n",
+    /* video: a background model, which is the module's entry point. */
+    cv::Ptr<cv::BackgroundSubtractor> mog = cv::createBackgroundSubtractorMOG2();
+    cv::Mat mask;
+    mog->apply(bgr, mask, 0.5);
+    const int foreground = cv::countNonZero(mask);
+
+    /* calib3d: the rotation-vector conversion, the cheapest exact answer. */
+    cv::Mat rvec, jacobian;
+    cv::Rodrigues(cv::Mat::eye(3, 3, CV_64F), rvec, jacobian);
+    const double rvecNorm = cv::norm(rvec);
+
+    /* features2d: ORB over a deterministic texture, and the descriptor width
+     * proves the module computed descriptors and not just keypoints. */
+    cv::Mat field(128, 128, CV_8UC1);
+    unsigned seed = 12345u;
+    for (int y = 0; y < field.rows; y++) {
+        for (int x = 0; x < field.cols; x++) {
+            seed = seed * 1664525u + 1013904223u;
+            field.at<uchar>(y, x) = uchar(seed >> 24);
+        }
+    }
+    cv::Ptr<cv::ORB> orb = cv::ORB::create(500);
+    std::vector<cv::KeyPoint> keys;
+    cv::Mat descriptors;
+    orb->detectAndCompute(field, cv::noArray(), keys, descriptors);
+    const int keypointCount = int(keys.size());
+
+    /* objdetect: no cascade file ships in the image. */
+    cv::CascadeClassifier cascade;
+    const int cascadeEmpty = int(cascade.empty());
+
+    /* photo: denoising leaves a constant field where it was. */
+    cv::Mat denoised;
+    cv::fastNlMeansDenoising(gray, denoised, 3.0f, 3, 7);
+    const int denoisedValue = denoised.at<uchar>(0, 0);
+
+    /* flann: an index parameter object and the value it carries. */
+    cv::flann::KDTreeIndexParams trees(4);
+    const int treeCount = trees.getInt("trees", 0);
+
+    /* ml and dnn: a model object of each, with the state it reports. */
+    cv::Ptr<cv::ml::SVM> svm = cv::ml::SVM::create();
+    const int svmType = svm->getType();
+    cv::dnn::Net net;
+    const int netEmpty = int(net.empty());
+
+    /* stitching: the pipeline object, which is the module's entry point. */
+    cv::Ptr<cv::Stitcher> stitcher = cv::Stitcher::create();
+
+    std::printf("eigen=%d.%d.%d trace=%.0f opencv=%s gray=%d arrayfire=%d.%d.%d sum=%.1f "
+                "fg=%d rvec=%.1f keypoints=%d descriptors=%d cascade_empty=%d denoised=%d "
+                "flann_trees=%d svm_type=%d net_empty=%d stitcher=%d\n",
                 EIGEN_WORLD_VERSION, EIGEN_MAJOR_VERSION, EIGEN_MINOR_VERSION, trace,
-                CV_VERSION, g, major, minor, patch, total);
+                CV_VERSION, g, major, minor, patch, total,
+                foreground, rvecNorm, keypointCount, descriptors.cols, cascadeEmpty,
+                denoisedValue, treeCount, svmType, netEmpty, int(stitcher != nullptr));
 
     if (std::fabs(trace - 3.0) > 1e-9) return 1;
-    if (g <= 0) return 2;              /* BGR(0,0,255) is red: its grey is 76 */
+    if (g != 76) return 2;            /* BGR(0,0,255) is red: its grey is 76 */
     if (std::fabs(total - 4.5) > 1e-9) return 3;
     if (major == 0) return 4;
+    if (foreground != 256) return 5;  /* the first frame of a 16x16 is foreground */
+    if (rvecNorm > 1e-9) return 6;
+    if (keypointCount == 0) return 7;
+    if (descriptors.rows != keypointCount || descriptors.cols != 32) return 8;
+    if (cascadeEmpty == 0) return 9;
+    if (denoisedValue != g) return 10;
+    if (treeCount != 4) return 11;
+    if (svmType != cv::ml::SVM::C_SVC) return 12;
+    if (netEmpty == 0) return 13;
+    if (stitcher == nullptr) return 14;
     return 0;
 }
 CHECK
 
 g++ -std=c++17 -O2 -o /tmp/targets-check/check /tmp/targets-check/check.cpp \
     -I/usr/include/eigen3 -I/usr/include/opencv4 \
-    -lopencv_core -lopencv_imgproc \
+    -lopencv_core -lopencv_imgproc -lopencv_imgcodecs \
+    -lopencv_video -lopencv_calib3d -lopencv_features2d \
+    -lopencv_objdetect -lopencv_photo -lopencv_flann \
+    -lopencv_ml -lopencv_dnn -lopencv_stitching \
     -laf
 
 ldconfig -p | grep -E 'libaf(cpu)?\.so|libspdlog\.so' || {
@@ -540,8 +650,55 @@ test -f /usr/include/eigen3/Eigen/Dense
 test -f /usr/include/opencv4/opencv2/imgproc.hpp
 test -f /usr/local/include/af/array.h
 ldconfig -p | grep -q 'libafcpu\.so'
+
+# The nine headless modules #132 binds, each by the header its binding is
+# generated from. The compile above proves they link and run; this proves the
+# header tree the generator reads is there, which is what a missing `-dev`
+# package takes away and what makes `cppgo gen` refuse a module in CI.
+for header in \
+    video/background_segm.hpp \
+    calib3d.hpp \
+    features2d.hpp \
+    objdetect.hpp \
+    photo.hpp \
+    flann.hpp \
+    ml.hpp \
+    dnn.hpp \
+    stitching.hpp; do
+  test -f "/usr/include/opencv4/opencv2/${header}"
+done
+
 rm -rf /tmp/targets-check
 SCRIPT
+
+# ---------------------------------------------------------------------------
+# Python 3 + Conan 2 (#137), last in the final stage on purpose: everything
+# above — the ArrayFire source build, the OpenCV packages, the target probe —
+# is expensive and already cached, and this is the only addition a new recipe
+# needs. Moving it up would rebuild a ~3 GB image to add ~40 MB.
+#
+# A venv, not `pip install` into the system interpreter: trixie's python3 is
+# externally managed (PEP 668) and refuses it with
+# `error: externally-managed-environment`. `/opt/conan` is a self-contained
+# environment with its own pip, and the single symlink into /usr/local/bin is
+# what puts `conan` on PATH — so the version the workflow reports and the venv
+# it lives in cannot drift apart. Conan is pinned to the patch release the
+# example's `conan.lock` was resolved with; a Conan minor changes how a lock is
+# consumed, so the pin follows the lockfile rather than the newest release.
+# `--no-cache-dir` keeps pip's wheel cache out of the layer.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends python3 python3-venv; \
+    rm -rf \
+      /var/lib/apt/lists/* \
+      /var/cache/apt/* \
+      /usr/share/doc/* \
+      /usr/share/man/* \
+      /usr/share/info/*; \
+    python3 -m venv /opt/conan; \
+    /opt/conan/bin/pip install --no-cache-dir 'conan==2.28.1'; \
+    ln -sfn /opt/conan/bin/conan /usr/local/bin/conan; \
+    conan --version | grep -q 'Conan version 2\.28\.1'
 
 # Fail the build, not the job, if a pinned tool is missing or wrong.
 RUN set -eux; \
@@ -554,8 +711,11 @@ RUN set -eux; \
     g++ --version | head -n 1; \
     clang --version | head -n 1; \
     cmake --version | head -n 1; \
+    python3 --version; \
+    conan --version; \
     hugo version | grep -qi extended; \
     go version | grep -q "go1\.27\.3 "; \
-    clang --version | grep -q "clang version ${CLANG_VERSION}\."
+    clang --version | grep -q "clang version ${CLANG_VERSION}\."; \
+    conan --version | grep -q 'Conan version 2\.28\.1'
 
 CMD ["bash"]
