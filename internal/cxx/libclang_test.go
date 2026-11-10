@@ -267,6 +267,7 @@ func TestKindConstants(t *testing.T) {
 		{typeRecord, "Record"},
 		{typeEnum, "Enum"},
 		{typeTypedef, "Typedef"},
+		{typeFunctionProto, "FunctionProto"},
 		{typeNullPtr, "NullPtr"},
 	} {
 		assert.Equal(t, tc.want, library.str(library.f.getTypeKindSpelling(tc.kind)), "type kind %d", tc.kind)
