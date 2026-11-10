@@ -392,6 +392,12 @@ func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
 		}
 		return expr, nil
 	}
+	// A one-byte integer pointer is a char buffer: the wire names it with the
+	// fixed-width type the thunk prototype uses (int8_t), and the declaration
+	// says char, signed char or unsigned char. The cast is exact and says why.
+	if p.Ptr && p.Pointee != nil && p.Pointee.Kind == cxx.TypeInteger && p.Pointee.SizeBytes == 1 {
+		return "reinterpret_cast<" + p.Spelling + ">(" + name + ")", nil
+	}
 	if reference {
 		return "*" + name, nil
 	}
@@ -483,7 +489,7 @@ func (m *packageModel) stdLocals(binding *binding) string {
 		case stdStringView:
 			fmt.Fprintf(&b, "\t\tstd::string_view %s(%s, %s);\n", arg.stdLocal, arg.stdArgs[0], arg.stdArgs[1])
 		case stdVector:
-			b.WriteString(m.containerLocal(arg))
+			b.WriteString(m.containerLocal(binding, arg))
 		case stdSpan:
 			qualifier := ""
 			if elem.Const {
@@ -522,14 +528,6 @@ func (m *packageModel) stdResult(binding *binding, call string) (string, error) 
 	case stdVector:
 		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
 		b.WriteString(containerOutCopy("cppgo_value", elem, "cppgo_out_data", "cppgo_out_size", "cppgo_out_bounds"))
-	case stdSpan:
-		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
-		b.WriteString("\t\tconst size_t cppgo_size = cppgo_value.size();\n")
-		fmt.Fprintf(&b, "\t\t%s *cppgo_copy = static_cast<%s *>(::operator new[]((cppgo_size == 0 ? 1 : cppgo_size) * sizeof(%s)));\n",
-			elem.Cxx, elem.Cxx, elem.Cxx)
-		b.WriteString("\t\tfor (size_t cppgo_i = 0; cppgo_i < cppgo_size; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }\n")
-		b.WriteString("\t\t*cppgo_out_data = cppgo_copy;\n")
-		b.WriteString("\t\t*cppgo_out_size = cppgo_size;\n")
 	case stdArray:
 		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
 		fmt.Fprintf(&b, "\t\t%s *cppgo_copy = static_cast<%s *>(cppgo_out_data);\n", elem.Cxx, elem.Cxx)

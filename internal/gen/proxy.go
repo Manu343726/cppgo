@@ -33,7 +33,7 @@ type proxyAdaptation struct {
 
 // parseProxy reads one -proxy entry, written as
 //
-//	<declaration>#<index>=<C++ type>
+//	<declaration>@<index>=<C++ type>
 //
 // The declaration is a qualified name or a full signature, exactly as -bind
 // writes it; the index selects one parameter; the type is a C++ spelling the
@@ -42,25 +42,25 @@ func parseProxy(entry string) (*proxyAdaptation, error) {
 	text := strings.TrimSpace(entry)
 	equals := strings.LastIndex(text, "=")
 	if equals <= 0 || equals == len(text)-1 {
-		return nil, fmt.Errorf("cppgo: -proxy %s: write it as <declaration>#<index>=<C++ type>", entry)
+		return nil, fmt.Errorf("cppgo: -proxy %s: write it as <declaration>@<index>=<C++ type>", entry)
 	}
 	selector, spelling := strings.TrimSpace(text[:equals]), strings.TrimSpace(text[equals+1:])
-	hash := strings.LastIndex(selector, "#")
-	if hash <= 0 || hash == len(selector)-1 {
-		return nil, fmt.Errorf("cppgo: -proxy %s: the declaration needs a #<index> naming the parameter", entry)
+	at := strings.LastIndex(selector, "@")
+	if at <= 0 || at == len(selector)-1 {
+		return nil, fmt.Errorf("cppgo: -proxy %s: the declaration needs an @<index> naming the parameter", entry)
 	}
-	index, err := strconv.Atoi(strings.TrimSpace(selector[hash+1:]))
+	index, err := strconv.Atoi(strings.TrimSpace(selector[at+1:]))
 	if err != nil || index < 0 {
-		return nil, fmt.Errorf("cppgo: -proxy %s: %q is not a parameter index", entry, selector[hash+1:])
+		return nil, fmt.Errorf("cppgo: -proxy %s: %q is not a parameter index", entry, selector[at+1:])
 	}
 	adapted := &proxyAdaptation{
 		Entry:    entry,
-		Selector: strings.TrimSpace(selector[:hash]),
+		Selector: strings.TrimSpace(selector[:at]),
 		Index:    index,
 		Spelling: spelling,
 	}
 	if adapted.Selector == "" {
-		return nil, fmt.Errorf("cppgo: -proxy %s: the declaration before the # is empty", entry)
+		return nil, fmt.Errorf("cppgo: -proxy %s: the declaration before the @ is empty", entry)
 	}
 	return adapted, nil
 }

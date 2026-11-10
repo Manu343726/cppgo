@@ -128,6 +128,11 @@ type Record struct {
 	QualifiedName string
 	// Kind is the keyword it was declared with.
 	Kind RecordKind
+	// Access is the record's visibility inside the class that encloses it
+	// (AccessNone at namespace scope). A protected or private nested type is
+	// not nameable from outside its owner, so nothing the shim writes can reach
+	// it.
+	Access Access
 	// IsTemplate is true for a template pattern. Its layout and its members'
 	// symbols do not exist until an instantiation names them.
 	IsTemplate bool
@@ -444,6 +449,7 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 	rec := Record{
 		QualifiedName: name,
 		Kind:          e.recordKind(cursor),
+		Access:        e.l.access(cursor),
 		IsTemplate:    isTemplate,
 		SizeBytes:     -1,
 		AlignBytes:    -1,
@@ -1202,6 +1208,7 @@ func (e *recordExtractor) synthesizeNestedRecord(outer *Record, cursor CXCursor,
 	nested := Record{
 		QualifiedName: outer.QualifiedName + "::" + simple,
 		Kind:          e.recordKind(cursor),
+		Access:        e.l.access(cursor),
 		SizeBytes:     -1,
 		AlignBytes:    -1,
 		// It is built from the pattern, not from a definition cursor of its

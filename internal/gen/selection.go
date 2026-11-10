@@ -103,6 +103,10 @@ func (b *builder) applySelection() error {
 		}
 	}
 	b.order = keptRecords
+	b.selectedRecords = make(map[string]bool, len(keptRecords))
+	for _, name := range keptRecords {
+		b.selectedRecords[name] = true
+	}
 
 	kept := b.bindings[:0]
 	for _, binding := range b.bindings {

@@ -12,8 +12,8 @@ import (
 func proxyConfig() Config {
 	cfg := fixtureConfig("proxy", "proxy.hpp")
 	cfg.Proxy = []string{
-		"prx::trace#0=std::vector<std::vector<prx::Point>> &",
-		"prx::total#0=std::vector<std::vector<prx::Point>>",
+		"prx::trace@0=std::vector<std::vector<prx::Point>> &",
+		"prx::total@0=std::vector<std::vector<prx::Point>>",
 	}
 	return cfg
 }
@@ -44,7 +44,7 @@ func TestProxyParameterIsTheContainer(t *testing.T) {
 
 // TestParseProxy pins the entry grammar and every way it is wrong.
 func TestParseProxy(t *testing.T) {
-	adapted, err := parseProxy("cv::findContours#1=std::vector<std::vector<cv::Point_<int>>> &")
+	adapted, err := parseProxy("cv::findContours@1=std::vector<std::vector<cv::Point_<int>>> &")
 	require.NoError(t, err)
 	assert.Equal(t, "cv::findContours", adapted.Selector)
 	assert.Equal(t, 1, adapted.Index)
@@ -52,10 +52,10 @@ func TestParseProxy(t *testing.T) {
 
 	for _, bad := range []string{
 		"cv::findContours=std::vector<int>",
-		"cv::findContours#=std::vector<int>",
-		"cv::findContours#x=std::vector<int>",
-		"cv::findContours#1=",
-		"cv::findContours#-1=std::vector<int>",
+		"cv::findContours@=std::vector<int>",
+		"cv::findContours@x=std::vector<int>",
+		"cv::findContours@1=",
+		"cv::findContours@-1=std::vector<int>",
 	} {
 		_, err := parseProxy(bad)
 		assert.Error(t, err, bad)
@@ -67,7 +67,7 @@ func TestParseProxy(t *testing.T) {
 // it is named with the declaration it was meant for.
 func TestProxyUnmatchedIsAManifestError(t *testing.T) {
 	cfg := proxyConfig()
-	cfg.Proxy = append(cfg.Proxy, "prx::missing#0=std::vector<int> &")
+	cfg.Proxy = append(cfg.Proxy, "prx::missing@0=std::vector<int> &")
 	_, err := Render(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prx::missing")
@@ -80,13 +80,13 @@ func TestProxyUnmatchedIsAManifestError(t *testing.T) {
 func TestProxyOfANonRecordIsReported(t *testing.T) {
 	cfg := proxyConfig()
 	cfg.Bind = []string{"prx::traceWithFlags"}
-	cfg.Proxy = []string{"prx::traceWithFlags#1=std::vector<int> &"}
+	cfg.Proxy = []string{"prx::traceWithFlags@1=std::vector<int> &"}
 	_, err := Render(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not a record parameter")
 
 	cfg = proxyConfig()
-	cfg.Proxy = append(cfg.Proxy, "prx::missing#0=std::vector<int> &")
+	cfg.Proxy = append(cfg.Proxy, "prx::missing@0=std::vector<int> &")
 	_, err = Render(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no selected declaration matches")

@@ -83,6 +83,12 @@ type Config struct {
 	// is a readable file its dynamic symbol table is the cross-check for every
 	// direct binding.
 	Library string
+	// Libraries are the other shared objects the shim links against. A slice
+	// that spans several modules of one library names each: the shim records
+	// them all as DT_NEEDED, so a symbol from any of them resolves when the
+	// shim is loaded, and the first remains the one the package loads. Library
+	// is the first of the list.
+	Libraries []string
 	// Out is the directory the generated files are written to.
 	Out string
 	// Check verifies that the generated files are up to date instead of
@@ -124,10 +130,14 @@ type Config struct {
 	// Coverage, when set, names the file the per-declaration coverage report is
 	// written to. It is one of the generated outputs, so check compares it.
 	Coverage string
+	// Alias names a library template that is an alias of a standard-library one,
+	// written <C++ template>=<std template>: OpenCV's cv::Ptr<T> is
+	// std::shared_ptr<T>, and the model reads the alias as the standard shape.
+	Alias []string
 	// Proxy names the container a parameter is carried as, for a declaration
 	// whose parameter is an InputArray/OutputArray proxy: the shim constructs
 	// the proxy around the container, so one thunk holds both. The entries are
-	// written <declaration>#<index>=<C++ type>.
+	// written <declaration>@<index>=<C++ type>.
 	Proxy []string
 }
 
@@ -234,7 +244,11 @@ func Generate(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("cppgo: creating the shim build directory: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(scratch) }()
+	if os.Getenv("CPPGO_KEEP_SCRATCH") != "" {
+		fmt.Fprintf(os.Stderr, "cppgo: scratch %s\n", scratch)
+	} else {
+		defer func() { _ = os.RemoveAll(scratch) }()
+	}
 	if err := writeOutputs(scratch, result.Outputs); err != nil {
 		return err
 	}

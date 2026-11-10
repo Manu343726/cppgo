@@ -141,3 +141,17 @@ void take(`+tc.parameter+`);
 		})
 	}
 }
+
+// TestElementShapeAndCTypes covers the two small decisions every container wire
+// makes: how its element crosses, and the C type the prototype names for it.
+func TestElementShapeAndCTypes(t *testing.T) {
+	assert.Equal(t, containerFlat, elementShape(nil))
+	assert.Equal(t, containerNested, elementShape(&goType{Kind: goSlice}))
+	assert.Equal(t, containerOpaque, elementShape(&goType{Record: &recordModel{GoName: "Thing"}}))
+	assert.Equal(t, containerFlat, elementShape(&goType{Record: &recordModel{GoName: "Point", Mirrored: true}}))
+
+	mirrored := &goType{Kind: goRecord, Cxx: "::ns::Point", Record: &recordModel{GoName: "Point", Mirrored: true}}
+	assert.Equal(t, "void *", containerCTypes(mirrored), "a record crosses as a pointer to void")
+	assert.Equal(t, "int32_t *", containerCTypes(&goType{Kind: goInteger, Cxx: "int32_t"}))
+	assert.Equal(t, "const int32_t *", containerCTypes(&goType{Kind: goInteger, Cxx: "int32_t", Const: true}))
+}

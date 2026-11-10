@@ -452,6 +452,11 @@ type builder struct {
 	// neededRecords are records a manifest request depends on (the receiver of
 	// an instantiated member), which are roots even without a -bind entry.
 	neededRecords map[string]bool
+	// selectedRecords is the set of record names the manifest kept. A base view
+	// and a base's members are only emitted for a type that is part of the API.
+	selectedRecords map[string]bool
+	// aliases are the -alias replacements, library template to standard one.
+	aliases map[string]string
 	// proxies are the -proxy adaptations, and proxyMatched tracks the ones a
 	// declaration used.
 	proxies      []*proxyAdaptation
@@ -495,6 +500,16 @@ func build(cfg Config) (*packageModel, error) {
 		bindMatched:        make([]bool, len(cfg.Bind)),
 		excludeMatched:     make([]bool, len(cfg.Exclude)),
 	}
+	for _, entry := range cfg.Alias {
+		alias, target, ok := strings.Cut(entry, "=")
+		if !ok || strings.TrimSpace(alias) == "" || strings.TrimSpace(target) == "" {
+			return nil, fmt.Errorf("cppgo: -alias %s: write it as <C++ template>=<std template>", entry)
+		}
+		if b.aliases == nil {
+			b.aliases = map[string]string{}
+		}
+		b.aliases[strings.TrimSpace(alias)] = strings.TrimSpace(target)
+	}
 	for _, entry := range cfg.Proxy {
 		adapted, err := parseProxy(entry)
 		if err != nil {
@@ -518,7 +533,7 @@ func build(cfg Config) (*packageModel, error) {
 	// a field's Go type needs the enum model the name produces.
 	b.assignTypeNames()
 	b.buildEnums()
-	b.mapper = &mapper{records: b.records, enums: b.enums}
+	b.mapper = &mapper{records: b.records, enums: b.enums, aliases: b.aliases}
 	b.buildRecords()
 	b.buildTemplates()
 	if err := b.loadInstantiations(); err != nil {
@@ -610,11 +625,12 @@ func (b *builder) closeProjects() {
 	b.projects = nil
 }
 
-// symbolKey is the identity of a symbol across headers.
+// symbolKey is the identity of a symbol across headers: its qualified name and
+// its signature, never the mangled name. A constructor and a destructor are
+// mangled twice (C1/C2, D1/D2), so two kinds of one declaration would otherwise
+// be two bindings that share a thunk name; the signature is what tells two
+// declarations apart, and it is the same in both manglings.
 func symbolKey(sym cxx.Symbol) string {
-	if sym.Mangled != "" {
-		return sym.Mangled
-	}
 	return sym.QualifiedName + "|" + sym.Signature()
 }
 
@@ -646,6 +662,14 @@ func (b *builder) buildRecords() {
 			DefaultConstructible: rec.IsDefaultConstructible,
 			CopyConstructible:    rec.IsCopyConstructible,
 			Comment:              rec.Comment,
+		}
+		if rec.Access == cxx.AccessPrivate || rec.Access == cxx.AccessProtected {
+			// A nested type of a class is nameable only inside it: no thunk can
+			// spell it, so neither the type nor its members are part of the API.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is not part of the generated API: a %s nested type is not nameable from outside the class that declares it",
+				rec.QualifiedName, rec.Access))
+			continue
 		}
 		model.Mirrored = b.mirrorable(rec)
 		if existing, seen := b.records[rec.QualifiedName]; seen {
@@ -1017,7 +1041,15 @@ func (b *builder) buildBindings() {
 		if b.rawRecord(owner.CxxName).IsAbstract {
 			continue
 		}
-		clone := b.syntheticClone(owner)
+		clone, err := b.syntheticClone(owner)
+		if err != nil {
+			// The evidence a record is copy-constructible is its fields; a copy
+			// this build cannot lower is reported, and the record keeps its
+			// other members.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s has no Clone: its copy constructor is not carried: %v", owner.CxxName, err))
+			continue
+		}
 		owner.Clone = clone
 		b.bindings = append(b.bindings, clone)
 	}
@@ -1107,7 +1139,7 @@ func (b *builder) syntheticConstructor(owner *recordModel) *binding {
 // syntheticClone is the Clone() binding of a record that is copy-constructible
 // without declaring a copy constructor. The thunk placement-news the copy, which
 // is exactly what the implicit copy constructor does.
-func (b *builder) syntheticClone(owner *recordModel) *binding {
+func (b *builder) syntheticClone(owner *recordModel) (*binding, error) {
 	pointee := cxx.Param{
 		Kind:       cxx.TypeRecord,
 		Spelling:   "const " + owner.CxxName,
@@ -1133,11 +1165,14 @@ func (b *builder) syntheticClone(owner *recordModel) *binding {
 		Params:            []cxx.Param{reference},
 	}
 	sym.Result = cxx.Param{Kind: cxx.TypeVoid, ClangKind: "Void", Spelling: "void"}
-	clone, _ := b.newBinding(sym, owner)
+	clone, err := b.newBinding(sym, owner)
+	if err != nil {
+		return nil, err
+	}
 	clone.IsConstructor = false
 	clone.IsClone = true
 	clone.Params = nil
-	return clone
+	return clone, nil
 }
 
 // qualifyNestedParams rewrites a type name that libclang spelled against the
@@ -1276,7 +1311,9 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	if binding.Carrier.shimCarried() && binding.Result != nil {
 		switch {
 		case binding.StdResult:
-			b.addStdResult(binding)
+			if err := b.addStdResult(binding); err != nil {
+				return nil, err
+			}
 		case binding.Result.ByValue && binding.Result.Record != nil && !binding.Result.Record.Mirrored:
 			// The shim constructs the result into the storage the Go side
 			// allocated; the pointer is the object's address, and the object
@@ -1384,7 +1421,7 @@ func (b *builder) lowerParams(binding *binding) error {
 		if adapted != nil {
 			p = *adapted
 		}
-		if _, isStd := stdTypeName(p); isStd {
+		if _, isStd := stdTypeNameWith(p, b.mapper.aliases); isStd {
 			wireStart := len(binding.Wire)
 			mapped, err := b.mapper.mapType(p)
 			if err != nil {
@@ -1720,7 +1757,7 @@ func (b *builder) markProxy(binding *binding, from int, proxyCxx string) {
 
 // addStdResult appends the out-parameters a standard-library result crosses
 // through, and the Go locals they aim at.
-func (b *builder) addStdResult(binding *binding) {
+func (b *builder) addStdResult(binding *binding) error {
 	result := binding.Result
 	out := func(expr, keep, cType, cName string) *wireArg {
 		arg := &wireArg{
@@ -1747,11 +1784,11 @@ func (b *builder) addStdResult(binding *binding) {
 	case stdVector:
 		b.stdVectorResultWire(binding, result)
 	case stdSpan:
-		binding.stdDecls = []string{"var cppgoData unsafe.Pointer", "var cppgoSize uint64"}
-		out("unsafe.Pointer(&cppgoData)", "&cppgoData", "void **", "cppgo_out_data")
-		out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
-		binding.usesFree = true
-		b.usesFree = true
+		// A span is a view: as a result it would name C++ storage whose owner
+		// the Go side does not hold. The declaration is reported instead of
+		// handing out an address that can dangle.
+		return pending(fmt.Sprintf("%q is a span result", result.Param.Spelling),
+			"take the span as a parameter, or return the container it views")
 	case stdArray:
 		binding.stdDecls = []string{"var cppgoResult " + result.Go}
 		out("unsafe.Pointer(&cppgoResult[0])", "&cppgoResult", "void *", "cppgo_out_data")
@@ -1760,6 +1797,7 @@ func (b *builder) addStdResult(binding *binding) {
 		out("unsafe.Pointer(&cppgoResult)", "&cppgoResult", "void *", "cppgo_out_value")
 		out("unsafe.Pointer(&cppgoHas)", "&cppgoHas", "int32_t *", "cppgo_out_has")
 	}
+	return nil
 }
 
 // paramWire builds the wire argument for one ordinary parameter.
@@ -2262,23 +2300,48 @@ func (m *packageModel) report() []string {
 // links against and what the generated Go records: a build path never reaches
 // either artifact.
 func (b *builder) loadExporteds() error {
-	info, err := os.Stat(b.cfg.Library)
-	if err != nil || info.IsDir() {
-		return nil
-	}
-	names, err := cxx.DefinedDynamicSymbols(b.cfg.Library)
-	if err != nil {
-		return fmt.Errorf("cppgo: %s: %w", b.cfg.Library, err)
-	}
-	b.exported = make(map[string]bool, len(names))
-	for _, name := range names {
-		b.exported[name] = true
-	}
-	if b.linkedName, err = cxx.Soname(b.cfg.Library); err != nil {
-		return fmt.Errorf("cppgo: %s: %w", b.cfg.Library, err)
+	for _, library := range b.cfg.libraries() {
+		info, err := os.Stat(library)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		names, err := cxx.DefinedDynamicSymbols(library)
+		if err != nil {
+			return fmt.Errorf("cppgo: %s: %w", library, err)
+		}
+		if b.exported == nil {
+			b.exported = make(map[string]bool, len(names))
+		}
+		for _, name := range names {
+			b.exported[name] = true
+		}
+		if b.linkedName == "" {
+			if b.linkedName, err = cxx.Soname(library); err != nil {
+				return fmt.Errorf("cppgo: %s: %w", library, err)
+			}
+		}
 	}
 	return nil
 }
+
+// libraries is every shared object the shim links against: -library and the
+// extra ones, in the order they were given.
+func (c Config) libraries() []string {
+	out := make([]string, 0, 1+len(c.Libraries))
+	if c.Library != "" {
+		out = append(out, c.Library)
+	}
+	for _, library := range c.Libraries {
+		if library == "" || library == c.Library {
+			continue
+		}
+		out = append(out, library)
+	}
+	return out
+}
+
+// libraries is every shared object the shim links against.
+func (m *packageModel) libraries() []string { return m.cfg.libraries() }
 
 // outOfLine reports whether a dynamic symbol exists for the declaration: the
 // header saw a definition, or the library exports the mangled name. Both halves
@@ -2313,7 +2376,11 @@ func (b *builder) crossCheck() error {
 			return fmt.Errorf("cppgo: %s: the direct binding's symbol %s is not exported by %s", displaySignature(binding.sym), binding.Symbol, b.cfg.Library)
 		}
 	}
-	b.verified = filepath.Base(b.cfg.Library)
+	names := make([]string, 0, len(b.cfg.libraries()))
+	for _, library := range b.cfg.libraries() {
+		names = append(names, filepath.Base(library))
+	}
+	b.verified = strings.Join(names, " ")
 	return nil
 }
 

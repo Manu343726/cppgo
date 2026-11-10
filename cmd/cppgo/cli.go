@@ -173,10 +173,17 @@ func (c *cli) generate(args []string, m mode) int {
 		return exitUsage
 	}
 
+	libraries := []string(v.libraries)
+	var library string
+	if len(libraries) > 0 {
+		library = libraries[0]
+		libraries = libraries[1:]
+	}
 	cfg := gen.Config{
 		Headers:         v.headers,
 		Package:         v.packageName,
-		Library:         v.library,
+		Library:         library,
+		Libraries:       libraries,
 		CXX:             v.cxx,
 		Out:             v.out,
 		Check:           v.check,
@@ -187,6 +194,7 @@ func (c *cli) generate(args []string, m mode) int {
 		Rename:          v.rename,
 		Status:          v.status,
 		Proxy:           v.proxy,
+		Alias:           v.aliases,
 		Scan:            v.scan,
 		ScanDir:         v.scanDir,
 		Coverage:        v.coverage,
@@ -229,6 +237,8 @@ func wantsHelp(args []string) bool {
 // flagValues holds the values of the flag set that gen, check and build share.
 type flagValues struct {
 	headers, bind, exclude, instantiate, rename, status, scan, proxy stringList
+	aliases                                                          stringList
+	libraries                                                        stringList
 	packageName, library, cxx, out, compileCommands, scanDir         string
 	coverage                                                         string
 	check, quiet                                                     bool
@@ -242,7 +252,7 @@ func newFlagSet(m mode) (*flag.FlagSet, *flagValues) {
 	v := &flagValues{}
 	fs.Var(&v.headers, "header", "C++ header to read; repeatable")
 	fs.StringVar(&v.packageName, "package", "", "Go package name")
-	fs.StringVar(&v.library, "library", "", "the user's shared object the shim links against")
+	fs.Var(&v.libraries, "library", "the user's shared object the shim links against; repeatable")
 	fs.StringVar(&v.cxx, "cxx", "", "C++ compiler for the shim (default g++, then clang++)")
 	fs.StringVar(&v.out, "out", ".", "output directory")
 	fs.StringVar(&v.compileCommands, "compile-commands", "", "compile_commands.json (or its directory) for the header's flags")
@@ -251,7 +261,8 @@ func newFlagSet(m mode) (*flag.FlagSet, *flagValues) {
 	fs.Var(&v.instantiate, "instantiate", "concrete template specialization to emit; repeatable")
 	fs.Var(&v.rename, "rename", "<qualified signature>=<GoName>; repeatable")
 	fs.Var(&v.status, "status", "declaration whose int32 return is a status code; repeatable")
-	fs.Var(&v.proxy, "proxy", "<declaration>#<index>=<C++ container type>; repeatable")
+	fs.Var(&v.aliases, "alias", "<C++ template>=<std template>; repeatable")
+	fs.Var(&v.proxy, "proxy", "<declaration>@<index>=<C++ container type>; repeatable")
 	fs.Var(&v.scan, "scan", "Go package whose template instantiations to collect; repeatable")
 	fs.StringVar(&v.scanDir, "scan-dir", ".", "directory the -scan patterns resolve against")
 	fs.StringVar(&v.coverage, "coverage", "", "write the per-declaration coverage report to this file")
@@ -271,7 +282,7 @@ type flagDoc struct {
 // flagOrder is the order the shared flags are documented in.
 var flagOrder = []string{
 	"header", "package", "library", "out", "compile-commands",
-	"bind", "exclude", "instantiate", "rename", "status", "proxy",
+	"bind", "exclude", "instantiate", "rename", "status", "alias", "proxy",
 	"scan", "scan-dir", "coverage", "cxx", "check", "q",
 }
 
@@ -349,8 +360,16 @@ func flagDocs(m mode) map[string]flagDoc {
 			lines: []string{"resolve a Go name collision; repeatable"},
 			def:   "none",
 		},
+		"alias": {
+			meta: "C++ template=std template",
+			lines: []string{
+				"read a library template as the standard one it names: OpenCV's",
+				"cv::Ptr<T> is std::shared_ptr<T>; repeatable",
+			},
+			def: "none",
+		},
 		"proxy": {
-			meta: "declaration#index=type",
+			meta: "declaration@index=type",
 			lines: []string{
 				"carry an InputArray/OutputArray parameter as a container: the shim",
 				"constructs the proxy around it, so one thunk holds both. A trailing",

@@ -127,6 +127,9 @@ type mapper struct {
 	// usesSpan is true when std::span is part of the API, whose header needs
 	// C++20.
 	usesSpan bool
+	// aliases are the library templates that name standard-library ones:
+	// "cv::Ptr" -> "std::shared_ptr". The model reads the alias as the shape.
+	aliases map[string]string
 	// templateParams maps a class or function template's parameter names —
 	// and libclang's indexed "type-parameter-0-N" spelling — to the Go name
 	// the generic API declares. It is nil for a non-template declaration.
@@ -149,7 +152,7 @@ func (m *mapper) mapType(p cxx.Param) (*goType, error) {
 	if name, ok := m.templateParam(p.Spelling); ok {
 		return &goType{Kind: goTypeParam, Go: name, ParamName: name, Param: p}, nil
 	}
-	if name, ok := stdTypeName(p); ok {
+	if name, ok := stdTypeNameWith(p, m.aliases); ok {
 		return m.mapStd(p, name)
 	}
 	switch p.Kind {
@@ -467,6 +470,13 @@ func arrayCount(spelling string) (int64, error) {
 // a pointer to a library type (as opposed to a reference or a value) is left to
 // mapStd's error.
 func stdTypeName(p cxx.Param) (string, bool) {
+	return stdTypeNameWith(p, nil)
+}
+
+// stdTypeNameWith is stdTypeName with the manifest's aliases applied: a library
+// template that names a standard one (cv::Ptr<T> is std::shared_ptr<T>) is read
+// as the standard shape before anything else is asked.
+func stdTypeNameWith(p cxx.Param, aliases map[string]string) (string, bool) {
 	if p.Kind != cxx.TypeRecord && p.Kind != cxx.TypePointer {
 		return "", false
 	}
@@ -482,6 +492,7 @@ func stdTypeName(p cxx.Param) (string, bool) {
 		}
 	}
 trimmed:
+	s = expandAlias(s, aliases)
 	s = strings.TrimSuffix(s, "&&")
 	s = strings.TrimSuffix(s, "&")
 	s = strings.TrimSuffix(s, "*")
@@ -519,6 +530,22 @@ trimmed:
 		}
 	}
 	return "", false
+}
+
+// expandAlias rewrites a library template spelling into the standard-library
+// template it names, at the front of the spelling only: Ptr<ORB> becomes
+// std::shared_ptr<ORB>.
+func expandAlias(s string, aliases map[string]string) string {
+	for alias, target := range aliases {
+		// A declaration inside the alias's own namespace spells it unqualified
+		// ("Ptr<ORB>" for cv::Ptr<ORB>), so both spellings name it.
+		for _, key := range []string{alias, simpleName(alias)} {
+			if strings.HasPrefix(s, key+"<") {
+				return target + s[len(key):]
+			}
+		}
+	}
+	return s
 }
 
 // canonicalFamily reports whether a canonical standard-library name is one the

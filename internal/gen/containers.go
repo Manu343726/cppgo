@@ -242,11 +242,7 @@ func (b *builder) marshalContainer(binding *binding, p cxx.Param, mapped *goType
 	// The caller's value is a slice for a read-only parameter and a pointer to
 	// one for an out-parameter: cppgo.Ptr takes either the slice or what the
 	// pointer names, and the length comes from the same place.
-	keep := value
-	if keep == "" {
-		keep = goName
-	}
-	if keep != goName {
+	if value != goName {
 		return primary("cppgo.Ptr(*"+goName+")", "*"+goName, containerCTypes(elem), data)
 	}
 	return primary("cppgo.Ptr("+goName+")", goName, containerCTypes(elem), data)
@@ -280,38 +276,42 @@ func (b *builder) nilElementCheck(binding *binding, param string) string {
 // containerLocal is the C++ value the shim builds for one container parameter.
 // It is rendered inside the thunk's try block, so an allocation failure becomes
 // an ordinary error.
-func (m *packageModel) containerLocal(arg *wireArg) string {
+//
+// Every word it reads goes through bodyName: an over-full call carries its
+// arguments in a block, and the same name is then a field of that block.
+func (m *packageModel) containerLocal(binding *binding, arg *wireArg) string {
 	elem := arg.stdElem
+	word := func(name string) string { return m.bodyName(binding, name) }
 	var b strings.Builder
 	switch elementShape(elem) {
 	case containerNested:
 		inner := elem.Elem
-		count := arg.stdArgs[2]
+		count := word(arg.stdArgs[2])
 		fmt.Fprintf(&b, "\t\tstd::vector<std::vector<%s>> %s;\n", inner.Cxx, arg.stdLocal)
 		fmt.Fprintf(&b, "\t\tif (%s != 0) {\n", count)
 		fmt.Fprintf(&b, "\t\t\t%s.reserve(%s);\n", arg.stdLocal, count)
 		fmt.Fprintf(&b, "\t\t\tfor (size_t cppgo_i = 0; cppgo_i < %s; ++cppgo_i) {\n", count)
 		fmt.Fprintf(&b, "\t\t\t\t%s.emplace_back(static_cast<const %s *>(%s) + %s[cppgo_i], static_cast<const %s *>(%s) + %s[cppgo_i + 1]);\n",
-			arg.stdLocal, inner.Cxx, arg.stdArgs[0], arg.stdOffsets, inner.Cxx, arg.stdArgs[0], arg.stdOffsets)
+			arg.stdLocal, inner.Cxx, word(arg.stdArgs[0]), word(arg.stdOffsets), inner.Cxx, word(arg.stdArgs[0]), word(arg.stdOffsets))
 		b.WriteString("\t\t\t}\n\t\t}\n")
 	case containerOpaque:
-		count := arg.stdArgs[1]
+		count := word(arg.stdArgs[1])
 		fmt.Fprintf(&b, "\t\tstd::vector<%s> %s;\n", elem.Cxx, arg.stdLocal)
 		fmt.Fprintf(&b, "\t\tif (%s != 0) {\n", count)
 		fmt.Fprintf(&b, "\t\t\t%s.reserve(%s);\n", arg.stdLocal, count)
 		fmt.Fprintf(&b, "\t\t\tfor (size_t cppgo_i = 0; cppgo_i < %s; ++cppgo_i) {\n", count)
 		fmt.Fprintf(&b, "\t\t\t\t%s.push_back(*static_cast<const %s *>(static_cast<void * const *>(%s)[cppgo_i]));\n",
-			arg.stdLocal, elem.Cxx, arg.stdArgs[0])
+			arg.stdLocal, elem.Cxx, word(arg.stdArgs[0]))
 		b.WriteString("\t\t\t}\n\t\t}\n")
 	default:
 		fmt.Fprintf(&b, "\t\tstd::vector<%s> %s;\n", elem.Cxx, arg.stdLocal)
 		if elem.Kind == goRecord {
-			fmt.Fprintf(&b, "\t\tconst %s *cppgo_elems = static_cast<const %s *>(%s);\n", elem.Cxx, elem.Cxx, arg.stdArgs[0])
+			fmt.Fprintf(&b, "\t\tconst %s *cppgo_elems = static_cast<const %s *>(%s);\n", elem.Cxx, elem.Cxx, word(arg.stdArgs[0]))
 			fmt.Fprintf(&b, "\t\tif (%s != 0) { %s.assign(cppgo_elems, cppgo_elems + %s); }\n",
-				arg.stdArgs[1], arg.stdLocal, arg.stdArgs[1])
+				word(arg.stdArgs[1]), arg.stdLocal, word(arg.stdArgs[1]))
 		} else {
 			fmt.Fprintf(&b, "\t\tif (%s != 0) { %s.assign(%s, %s + %s); }\n",
-				arg.stdArgs[1], arg.stdLocal, arg.stdArgs[0], arg.stdArgs[0], arg.stdArgs[1])
+				word(arg.stdArgs[1]), arg.stdLocal, word(arg.stdArgs[0]), word(arg.stdArgs[0]), word(arg.stdArgs[1]))
 		}
 	}
 	return b.String()

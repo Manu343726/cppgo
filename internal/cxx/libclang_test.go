@@ -159,6 +159,7 @@ func fakeLibclangSource() string {
 		"clang_getCursorPrettyPrinted", "clang_getCursorPrintingPolicy",
 		"clang_PrintingPolicy_dispose",
 		"clang_Cursor_getStorageClass", "clang_CXXMethod_isStatic",
+		"clang_Cursor_isInlineNamespace",
 		"clang_CXXMethod_isVirtual", "clang_CXXMethod_isConst",
 		"clang_CXXMethod_isDefaulted", "clang_CXXMethod_isDeleted",
 		"clang_CXXConstructor_isCopyConstructor",

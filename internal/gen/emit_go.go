@@ -1214,7 +1214,7 @@ func (m *packageModel) emitStdOutCopies(b *strings.Builder, binding *binding) {
 		if !arg.stdOutCopy {
 			continue
 		}
-		m.emitContainerValue(b, arg.stdType, "*"+arg.stdGoName, arg.stdOutData, arg.stdOutSize, arg.stdOutOffsets)
+		m.emitContainerValue(b, arg.stdType, "cppgoValue"+exportName(arg.stdGoName), "*"+arg.stdGoName, arg.stdOutData, arg.stdOutSize, arg.stdOutOffsets)
 	}
 }
 
@@ -1223,18 +1223,18 @@ func (m *packageModel) emitStdOutCopies(b *strings.Builder, binding *binding) {
 // slice per inner vector for the nested one, and one view per element for a
 // vector of records, over a single owner object that runs their destructors and
 // frees the block.
-func (m *packageModel) emitContainerValue(b *strings.Builder, container *goType, target, data, size, bounds string) {
+func (m *packageModel) emitContainerValue(b *strings.Builder, container *goType, local, target, data, size, bounds string) {
 	elem := container.Elem
-	fmt.Fprintf(b, "\tvar cppgoValue %s\n", container.Go)
+	fmt.Fprintf(b, "\tvar %s %s\n", local, container.Go)
 	switch elementShape(elem) {
 	case containerNested:
 		inner := elem.Elem
 		fmt.Fprintf(b, "\tif %s != 0 {\n", size)
 		fmt.Fprintf(b, "\t\tcppgoBounds := unsafe.Slice((*uint64)(%s), int(%s)+1)\n", bounds, size)
 		fmt.Fprintf(b, "\t\tcppgoFlat := unsafe.Slice((*%s)(%s), int(cppgoBounds[%s]))\n", inner.Go, data, size)
-		fmt.Fprintf(b, "\t\tcppgoValue = make(%s, int(%s))\n", container.Go, size)
-		b.WriteString("\t\tfor cppgo_i := range cppgoValue {\n")
-		fmt.Fprintf(b, "\t\t\tcppgoValue[cppgo_i] = append([]%s(nil), cppgoFlat[cppgoBounds[cppgo_i]:cppgoBounds[cppgo_i+1]]...)\n", inner.Go)
+		fmt.Fprintf(b, "\t\t%s = make(%s, int(%s))\n", local, container.Go, size)
+		fmt.Fprintf(b, "\t\tfor cppgo_i := range %s {\n", local)
+		fmt.Fprintf(b, "\t\t\t%s[cppgo_i] = append([]%s(nil), cppgoFlat[cppgoBounds[cppgo_i]:cppgoBounds[cppgo_i+1]]...)\n", local, inner.Go)
 		b.WriteString("\t\t}\n\t}\n")
 		fmt.Fprintf(b, "\tcppgoFree(cppgoFreeSym, %s)\n", data)
 		fmt.Fprintf(b, "\tcppgoFree(cppgoFreeSym, %s)\n", bounds)
@@ -1252,19 +1252,19 @@ func (m *packageModel) emitContainerValue(b *strings.Builder, container *goType,
 		}
 		fmt.Fprintf(b, "\t\t\tcppgoFree(cppgoFreeSym, %s)\n", data)
 		b.WriteString("\t\t})\n")
-		fmt.Fprintf(b, "\t\tcppgoValue = make([]*%s, cppgoCount)\n", record.GoName)
+		fmt.Fprintf(b, "\t\t%s = make([]*%s, cppgoCount)\n", local, record.GoName)
 		b.WriteString("\t\tfor cppgo_i := 0; cppgo_i < cppgoCount; cppgo_i++ {\n")
 		b.WriteString("\t\t\tcppgoBlock.Retain()\n")
-		fmt.Fprintf(b, "\t\t\tcppgoValue[cppgo_i] = &%s{obj: cppgoBlock, addr: uintptr(%s) + uintptr(cppgo_i)*%d}\n",
-			record.GoName, data, record.Size)
+		fmt.Fprintf(b, "\t\t\t%s[cppgo_i] = &%s{obj: cppgoBlock, addr: uintptr(%s) + uintptr(cppgo_i)*%d}\n",
+			local, record.GoName, data, record.Size)
 		b.WriteString("\t\t}\n\t\tcppgoBlock.Release()\n\t}\n")
 	default:
-		fmt.Fprintf(b, "\tif %s != 0 {\n\t\tcppgoValue = append(cppgoValue, unsafe.Slice((*%s)(%s), int(%s))...)\n\t}\n",
-			size, elem.Go, data, size)
+		fmt.Fprintf(b, "\tif %s != 0 {\n\t\t%s = append(%s, unsafe.Slice((*%s)(%s), int(%s))...)\n\t}\n",
+			size, local, local, elem.Go, data, size)
 		fmt.Fprintf(b, "\tcppgoFree(cppgoFreeSym, %s)\n", data)
 	}
-	if target != "" && target != "cppgoValue" {
-		fmt.Fprintf(b, "\t%s = cppgoValue\n", target)
+	if target != "" && target != local {
+		fmt.Fprintf(b, "\t%s = %s\n", target, local)
 	}
 }
 
@@ -1280,7 +1280,7 @@ func (m *packageModel) emitStdReturn(b *strings.Builder, binding *binding) {
 		b.WriteString("\tcppgoFree(cppgoFreeSym, cppgoData)\n")
 		b.WriteString("\treturn cppgoResult, nil\n")
 	case stdVector, stdSpan:
-		m.emitContainerValue(b, result, "", "cppgoData", "cppgoSize", "cppgoBounds")
+		m.emitContainerValue(b, result, "cppgoValue", "", "cppgoData", "cppgoSize", "cppgoBounds")
 		b.WriteString("\treturn cppgoValue, nil\n")
 	case stdArray:
 		b.WriteString("\treturn cppgoResult, nil\n")

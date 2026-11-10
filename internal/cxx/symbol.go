@@ -740,12 +740,53 @@ func (l *Libclang) qualifiedName(cursor CXCursor) (string, bool) {
 				spelling = specializationName(spelling, args)
 			}
 		}
-		parents = append(parents, parentName{kind: kind, spelling: spelling})
+		// An inline namespace is a versioning device, transparent to C++: the
+		// declaration is cv::dnn::Net, not cv::dnn::dnn4_v20240521::Net, and the
+		// name a header, a manifest or a Go reader writes is the transparent
+		// one. The mangled name keeps it, and that is the compiler's business.
+		inline := kind == cursorNamespace && (l.f.cursorIsInlineNamespace(cursor) != 0 || abiNamespaceName(spelling))
+		parents = append(parents, parentName{kind: kind, spelling: spelling, inline: inline})
 		if kind == cursorTranslationUnit || kind == cursorInvalidFile || kind == cursorNoDeclFound {
 			break
 		}
 	}
 	return qualify(spelling, parents)
+}
+
+// abiNamespaceName reports whether a namespace component is a library's ABI
+// version marker rather than part of the name a reader writes: OpenCV nests its
+// declarations in `dnn4_v20240521`, and many libraries use `v1`, `v2`. The name
+// is transparent in C++ — `cv::dnn::Net` is `cv::dnn::dnn4_v20240521::Net` — so
+// it is dropped from the model's name while the mangled name keeps it.
+//
+// libclang's own predicate answers for a namespace cursor it reports as
+// inline; this is the spelling half, for the parsers and versions that do not.
+func abiNamespaceName(name string) bool {
+	if name == "" {
+		return false
+	}
+	if name[0] == 'v' {
+		digits := name[1:]
+		if digits == "" {
+			return false
+		}
+		for i := 0; i < len(digits); i++ {
+			if digits[i] < '0' || digits[i] > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	marker := strings.LastIndex(name, "_v")
+	if marker <= 0 || len(name)-marker-2 != 8 {
+		return false
+	}
+	for i := marker + 2; i < len(name); i++ {
+		if name[i] < '0' || name[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isSpecializationRecordKind reports the cursor kinds a specialization can be
@@ -763,6 +804,9 @@ func isSpecializationRecordKind(kind int32) bool {
 type parentName struct {
 	kind     int32
 	spelling string
+	// inline marks an inline namespace, which contributes no component to the
+	// name: it is transparent in C++, and the name a caller writes omits it.
+	inline bool
 }
 
 // qualify joins a cursor's spelling and its parent chain (innermost first) into
@@ -787,12 +831,12 @@ func qualify(spelling string, parents []parentName) (string, bool) {
 			}
 			return strings.Join(parts, "::"), true
 		case cursorNamespace:
-			if parent.spelling == "" {
+			if parent.spelling == "" && !parent.inline {
 				// An anonymous namespace has internal linkage.
 				return "", false
 			}
 		}
-		if parent.spelling != "" {
+		if parent.spelling != "" && !parent.inline {
 			parts = append(parts, parent.spelling)
 		}
 	}

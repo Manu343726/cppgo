@@ -383,3 +383,21 @@ func TestSyntheticDestructorName(t *testing.T) {
 	require.Len(t, rec.Members, 1)
 	assert.Equal(t, "ns::Box<int>::~Box", rec.Members[0].QualifiedName)
 }
+
+// TestABINamespaceName covers the spelling half of an inline namespace: the
+// version markers a library nests its declarations in.
+func TestABINamespaceName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"v1":               true,
+		"v12":              true,
+		"dnn4_v20240521":   true,
+		"__cxx11":          false,
+		"detail":           false,
+		"v":                false,
+		"dnn_v2024":        false,
+		"4_v20240521":      true,
+		"something_longer": false,
+	} {
+		assert.Equal(t, want, abiNamespaceName(name), name)
+	}
+}

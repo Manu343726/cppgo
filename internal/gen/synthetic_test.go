@@ -531,3 +531,134 @@ func TestBuildRecordsKeepsTheCompleteSpecialization(t *testing.T) {
 		assert.True(t, model.Mirrored)
 	}
 }
+
+// TestAliasReadsALibraryTemplateAsTheStandardOne covers -alias at the type
+// map: OpenCV's cv::Ptr<T> is std::shared_ptr<T>, and the model reads the
+// library's spelling as the standard shape. A smart-pointer parameter or result
+// is then refused with that shape's own reason instead of being an unknown
+// record — the next thing to carry, named honestly.
+func TestAliasReadsALibraryTemplateAsTheStandardOne(t *testing.T) {
+	aliased := cxx.Param{Kind: cxx.TypeRecord, ClangKind: "Record", Spelling: "Ptr<ORB>", RecordName: "cv::Ptr<cv::ORB>"}
+	_, ok := stdTypeNameWith(aliased, nil)
+	assert.False(t, ok, "without the alias the spelling is a record the table does not know")
+
+	name, ok := stdTypeNameWith(aliased, map[string]string{"cv::Ptr": "std::shared_ptr"})
+	require.True(t, ok)
+	assert.Equal(t, "std::shared_ptr<ORB>", name)
+}
+
+// TestAliasEntryGrammar covers the malformed forms of -alias.
+func TestAliasEntryGrammar(t *testing.T) {
+	for _, bad := range []string{"cv::Ptr", "=std::shared_ptr", "cv::Ptr="} {
+		_, err := Render(Config{Headers: []string{"x"}, Package: "x", Alias: []string{bad}})
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), "-alias")
+	}
+}
+
+// TestExpandAlias covers the two spellings an alias is written with: the
+// qualified one a manifest writes, and the unqualified one a declaration inside
+// the alias's own namespace uses.
+func TestExpandAlias(t *testing.T) {
+	aliases := map[string]string{"cv::Ptr": "std::shared_ptr"}
+	assert.Equal(t, "std::shared_ptr<cv::ORB>", expandAlias("cv::Ptr<cv::ORB>", aliases))
+	assert.Equal(t, "std::shared_ptr<ORB>", expandAlias("Ptr<ORB>", aliases))
+	assert.Equal(t, "std::vector<int>", expandAlias("std::vector<int>", aliases))
+	assert.Equal(t, "Ptr", expandAlias("Ptr", aliases), "no bracket, no template")
+}
+
+// TestSymbolKeyCollapsesTwoManglings covers the identity a constructor has: it
+// is mangled twice (C1 and C2: complete and base object), and one declaration
+// is one binding, not two thunks that share a trampoline name.
+func TestSymbolKeyCollapsesTwoManglings(t *testing.T) {
+	complete := cxx.Symbol{QualifiedName: "ns::T::T", Kind: cxx.Constructor, Mangled: "_ZN2ns1TC1Ev",
+		Params: []cxx.Param{{Kind: cxx.TypeInteger, Spelling: "int", SizeBytes: 4}}}
+	base := complete
+	base.Mangled = "_ZN2ns1TC2Ev"
+	assert.Equal(t, symbolKey(complete), symbolKey(base))
+
+	overload := complete
+	overload.Params = []cxx.Param{{Kind: cxx.TypeFloat, Spelling: "double", SizeBytes: 8}}
+	assert.NotEqual(t, symbolKey(complete), symbolKey(overload), "two signatures are two declarations")
+}
+
+// TestLibrariesAreEveryLinkedObject covers -library repeated: the shim links
+// every shared object a slice crosses modules through, and the first is the one
+// the package loads.
+func TestLibrariesAreEveryLinkedObject(t *testing.T) {
+	cfg := Config{Library: "liba.so", Libraries: []string{"libb.so", "", "liba.so", "libc.so"}}
+	assert.Equal(t, []string{"liba.so", "libb.so", "libc.so"}, cfg.libraries())
+
+	empty := Config{}
+	assert.Empty(t, empty.libraries())
+}
+
+// TestShimArgCastsACharBuffer covers a one-byte integer pointer: the wire names
+// it with the fixed-width type the thunk prototype uses, and the declaration
+// says char, so the call casts.
+func TestShimArgCastsACharBuffer(t *testing.T) {
+	m := &packageModel{cfg: Config{}}
+	expr, err := m.shimArg(cxx.Param{Kind: cxx.TypePointer, Ptr: true, Spelling: "const char *",
+		Pointee: &cxx.Param{Kind: cxx.TypeInteger, Spelling: "char", SizeBytes: 1}}, "data")
+	require.NoError(t, err)
+	assert.Equal(t, "reinterpret_cast<const char *>(data)", expr)
+
+	expr, err = m.shimArg(cxx.Param{Kind: cxx.TypePointer, Ptr: true, Spelling: "const int *",
+		Pointee: &cxx.Param{Kind: cxx.TypeInteger, Spelling: "int", SizeBytes: 4}}, "data")
+	require.NoError(t, err)
+	assert.Equal(t, "data", expr)
+}
+
+// TestProtectedNestedRecordIsReported covers a nested type of a class that is
+// not public inside it: no thunk can spell the name, so the type is reported
+// and the rest of the class binds.
+func TestProtectedNestedRecordIsReported(t *testing.T) {
+	header := filepath.Join(t.TempDir(), "nested.hpp")
+	require.NoError(t, os.WriteFile(header, []byte(`
+namespace ns {
+class Owner {
+public:
+    Owner() noexcept;
+    int value() const noexcept;
+protected:
+    class Hidden {
+    public:
+        Hidden() noexcept;
+    };
+};
+}
+`), 0o644))
+	rendered, err := RenderResult(Config{Headers: []string{header}, Package: "ns", Library: "libns", Out: "."})
+	require.NoError(t, err)
+	assert.Contains(t, joinWarnings(rendered.Warnings), "ns::Owner::Hidden is not part of the generated API")
+	goFile := ""
+	for _, out := range rendered.Outputs {
+		if out.Name == GenFileName {
+			goFile = string(out.Data)
+		}
+	}
+	assert.Contains(t, goFile, "func NewOwner()", "the class itself still binds")
+	assert.NotContains(t, goFile, "type Hidden", "the protected nested type is not emitted")
+}
+
+// TestProxyOfANonContainerIsTheInvocationsMistake covers the second -proxy
+// mistake: the declaration's parameter is adapted to a type the model does not
+// read as a container.
+func TestProxyOfANonContainerIsTheInvocationsMistake(t *testing.T) {
+	header := filepath.Join(t.TempDir(), "proxy2.hpp")
+	require.NoError(t, os.WriteFile(header, []byte(`
+namespace ns {
+class Proxy {
+public:
+    Proxy() noexcept;
+};
+void sink(const Proxy &p) noexcept;
+}
+`), 0o644))
+	_, err := Render(Config{
+		Headers: []string{header}, Package: "ns", Library: "libns", Out: ".",
+		Proxy: []string{"ns::sink@0=int"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not map as a container")
+}
