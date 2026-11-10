@@ -179,6 +179,8 @@ const (
 	typeEnum            int32 = 106
 	typeTypedef         int32 = 107
 
+	typeFunctionProto int32 = 111
+
 	typeConstantArray       int32 = 112
 	typeIncompleteArray     int32 = 114
 	typeVariableArray       int32 = 115

@@ -209,6 +209,9 @@ type wireArg struct {
 	callable *callbackType
 	// callbackParam is the Go name of the function value the closure calls.
 	callbackParam string
+	// pin is set for a word that hands C a pointer into Go memory: the copy
+	// that keeps it still for a call that may run a callback.
+	pin *pinPlan
 }
 
 // binding is one callable C++ declaration bound to Go.
@@ -353,6 +356,18 @@ type binding struct {
 	// of the block, one cast from the block's word to the declaration's own
 	// type.
 	blockReads map[string]string
+	// retained is true when the callee stores this binding's callback
+	// parameter: the registration lives until the caller closes it, and the
+	// binding returns that registration instead of releasing the slot.
+	retained bool
+	// callbackArg is the first wire word that carries a Go function, nil when
+	// the signature has none.
+	callbackArg *wireArg
+	// pinned is true when the call hands C a Go pointer, which it copies into
+	// a heap object and pins for the duration of the call.
+	pinned bool
+	// pins are the copies, in wire order.
+	pins []pinPlan
 	// selected is set by the binding manifest.
 	selected bool
 }
@@ -387,6 +402,20 @@ type packageModel struct {
 	// usesCString is true when a C++ `char *` crosses as a Go string, which
 	// makes the generated package carry the NUL-termination helpers.
 	usesCString bool
+	// usesBytes is true when a callback receives the callee's bytes: a
+	// (const char *, size_t) pair as a Go string, or a (const T *, size_t) pair
+	// as a slice view of that memory.
+	usesBytes bool
+	// usesWord is true when a callback argument is a pointer: the register
+	// frame carries it as a uintptr, and the generated package converts it with
+	// one helper instead of a conversion go vet refuses.
+	usesWord bool
+	// usesPin is true when a call copies a Go pointer into a pinned heap
+	// object, which makes the generated package import runtime.
+	usesPin bool
+	// usesRetain is true when the package has a retained callback, which is
+	// what makes the generated package declare the registration type.
+	usesRetain bool
 	// spans is the line range of every thunk in the generated translation unit,
 	// which is how a compiler diagnostic names the binding it belongs to.
 	spans []thunkSpan
@@ -458,6 +487,26 @@ type builder struct {
 	flags       []string
 	usesFree    bool
 	usesCString bool
+	// usesBytes is true when a callback receives the callee's bytes as a string
+	// or a slice view, which makes the generated package carry the counted
+	// reads.
+	usesBytes bool
+	// usesWord is true when a callback argument is a pointer, which the
+	// generated package turns from its frame word with one helper.
+	usesWord bool
+	// usesPin is true when a call copies a Go pointer into a pinned heap
+	// object, which makes the generated package import runtime.
+	usesPin bool
+	// retains are the -retain entries, retainMatched the ones a declaration
+	// matched, and forceReentrant is true as soon as one entry exists: a
+	// callback the callee stores may be delivered by any call made from Go, so
+	// every call has to be callback-capable.
+	retains        []string
+	retainMatched  []bool
+	forceReentrant bool
+	// usesRetain is true when the package has a retained callback, which is
+	// what makes the generated package declare the registration type.
+	usesRetain bool
 	// projects are the parsed translation units. They stay open until the
 	// manifest's function instantiations are resolved, because only the project
 	// can synthesize one: it holds the pattern cursors libclang does not visit.
@@ -513,6 +562,9 @@ func build(cfg Config) (*packageModel, error) {
 		skipClasses:        map[string]string{},
 		instantiateMatched: make([]bool, len(cfg.Instantiate)),
 		statusMatched:      make([]bool, len(cfg.Status)),
+		retains:            append([]string(nil), cfg.Retain...),
+		retainMatched:      make([]bool, len(cfg.Retain)),
+		forceReentrant:     len(cfg.Retain) > 0,
 		bindMatched:        make([]bool, len(cfg.Bind)),
 		excludeMatched:     make([]bool, len(cfg.Exclude)),
 	}
@@ -562,6 +614,11 @@ func build(cfg Config) (*packageModel, error) {
 	b.buildBindings()
 	if b.manifestErr != nil {
 		return nil, b.manifestErr
+	}
+	for i, entry := range b.cfg.Retain {
+		if !b.retainMatched[i] {
+			return nil, fmt.Errorf("cppgo: -retain %s: it names nothing this header declares", entry)
+		}
 	}
 	b.buildStaticFields()
 	b.expandDefaults()
@@ -1251,6 +1308,10 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	binding.IsConstructor = sym.Kind == cxx.Constructor
 	binding.IsDestructor = sym.Kind == cxx.Destructor
 	binding.IsStatic = sym.Kind == cxx.StaticMethod
+	if b.retainNamed(sym) {
+		binding.retained = true
+		b.usesRetain = true
+	}
 
 	if err := b.lowerParams(binding); err != nil {
 		return nil, err
@@ -1306,7 +1367,18 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 			}
 		}
 	}
+	if binding.retained {
+		if err := b.checkRetained(binding); err != nil {
+			return nil, err
+		}
+	}
 	b.chooseCarrier(binding)
+	if binding.retained {
+		// The registration's own lifetime is the call's outcome: a nil Go
+		// function or a full callback table is reported as an error, whatever
+		// the declaration promises about exceptions.
+		binding.ErrorResult = true
+	}
 	if crossesOpaqueByValue(binding) {
 		// A record Go cannot mirror is copied by the shim, in one direction or
 		// the other, and that copy can throw whatever the declaration promises.
@@ -1362,11 +1434,18 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				cName:    "cppgo_result",
 			}
 			if binding.Carrier == reentrant {
-				// A callback may grow the goroutine stack, so the block the
-				// thunk writes into is a heap allocation, never a stack local.
+				// A callback may grow the goroutine stack and move it, and the
+				// thunk writes this result after the callback returned: the
+				// cell has to be a heap object the call pins, never a stack
+				// local. `new` alone does not promise that — a cell nothing
+				// escapes can be stack allocated — so it is pinned, which is
+				// both the promise and what makes it escape.
 				binding.outPointer = true
 				out.expr = "unsafe.Pointer(cppgoResult)"
 				out.keep = "cppgoResult"
+				binding.pins = append(binding.pins, pinPlan{shape: pinCell, local: "cppgoResult", elem: binding.OutLocal})
+				binding.pinned = true
+				b.usesPin = true
 			}
 			binding.Wire = append(binding.Wire, out)
 		}
@@ -1392,6 +1471,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	if err := b.routeRegisters(binding); err != nil {
 		return nil, err
 	}
+	b.pinCall(binding)
 	return binding, nil
 }
 
@@ -1508,6 +1588,9 @@ func (b *builder) lowerParams(binding *binding) error {
 						cType:    cType,
 						cName:    params[k].Name,
 						param:    params[k],
+						// The slice's backing array may live in this frame, so a
+						// call that may run a callback needs a pinned copy of it.
+						pin: &pinPlan{shape: pinSlice, name: name, elem: elem.Go, writeBack: !params[k].Pointee.IsConst},
 					})
 				}
 				for _, param := range group {
@@ -1608,6 +1691,9 @@ func (b *builder) cStringParam(binding *binding, name string, mapped *goType, p 
 		cType:    mapped.C,
 		cName:    p.Name,
 		param:    p,
+		// The NUL-terminated copy is Go memory the callee reads for the whole
+		// call; a callback may move everything else.
+		pin: &pinPlan{shape: pinString, name: p.Name, local: keep},
 	})
 }
 
@@ -1640,7 +1726,25 @@ func (b *builder) callbackWire(binding *binding, name string, mapped *goType, p 
 		arg.stdLocal = "cppgo_" + cIdent(p.Name)
 		arg.stdArgs = []string{arg.cName}
 	}
+	// The payload shapes decide the helpers the generated package carries: the
+	// NUL-terminated read for a `const char *`, and the counted reads for a
+	// (pointer, length) pair.
+	for _, param := range mapped.Callback.Params {
+		switch param.Shape {
+		case callbackCString:
+			b.usesCString = true
+			b.usesWord = true
+		case callbackBytes, callbackView:
+			b.usesBytes = true
+			b.usesWord = true
+		case callbackPointer, callbackOpaque:
+			b.usesWord = true
+		}
+	}
 	add(arg)
+	if binding.callbackArg == nil {
+		binding.callbackArg = arg
+	}
 	binding.hasCallback = true
 }
 
@@ -1795,9 +1899,32 @@ func (b *builder) addStdResult(binding *binding) error {
 	}
 	switch result.Std {
 	case stdString, stdStringView:
-		binding.stdDecls = []string{"var cppgoData unsafe.Pointer", "var cppgoSize uint64"}
-		out("unsafe.Pointer(&cppgoData)", "&cppgoData", "void **", "cppgo_out_data")
-		out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
+		if binding.Carrier == reentrant {
+			// The thunk writes the result through these words after the call's
+			// own work is done, which is after any callback may have grown the
+			// goroutine's stack: the storage is a heap cell the call pins, and
+			// the names the result conversion reads are assigned from it once
+			// the call returned.
+			// Appended, not assigned: the same declaration may also be a
+			// `const char *` parameter's NUL-terminated copy.
+			binding.stdDecls = append(binding.stdDecls,
+				"cppgoDataCell := cppgoHeapCell[unsafe.Pointer]()",
+				"cppgoSizeCell := cppgoHeapCell[uint64]()")
+			out("unsafe.Pointer(cppgoDataCell)", "cppgoDataCell", "void **", "cppgo_out_data")
+			out("unsafe.Pointer(cppgoSizeCell)", "cppgoSizeCell", "size_t *", "cppgo_out_size")
+			binding.pins = append(binding.pins,
+				pinPlan{shape: pinOut, name: "cppgoData", local: "cppgoDataCell"},
+				pinPlan{shape: pinOut, name: "cppgoSize", local: "cppgoSizeCell"},
+			)
+			binding.pinned = true
+			b.usesPin = true
+		} else {
+			binding.stdDecls = append(binding.stdDecls,
+				"var cppgoData unsafe.Pointer",
+				"var cppgoSize uint64")
+			out("unsafe.Pointer(&cppgoData)", "&cppgoData", "void **", "cppgo_out_data")
+			out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
+		}
 		binding.usesFree = true
 		b.usesFree = true
 	case stdVector:
@@ -1809,16 +1936,20 @@ func (b *builder) addStdResult(binding *binding) error {
 		return pending(fmt.Sprintf("%q is a span result", result.Param.Spelling),
 			"take the span as a parameter, or return the container it views")
 	case stdArray:
-		binding.stdDecls = []string{"var cppgoResult " + result.Go}
+		binding.stdDecls = append(binding.stdDecls, "var cppgoResult "+result.Go)
 		out("unsafe.Pointer(&cppgoResult[0])", "&cppgoResult", "void *", "cppgo_out_data")
 	case stdSharedPtr, stdUniquePtr:
-		binding.stdDecls = []string{"var cppgoRef unsafe.Pointer", "var cppgoPointee unsafe.Pointer"}
+		binding.stdDecls = append(binding.stdDecls,
+			"var cppgoRef unsafe.Pointer",
+			"var cppgoPointee unsafe.Pointer")
 		out("unsafe.Pointer(&cppgoPointee)", "&cppgoPointee", "void **", "cppgo_out_pointee")
 		out("unsafe.Pointer(&cppgoRef)", "&cppgoRef", "void **", "cppgo_out_ref")
 		binding.usesFree = true
 		b.usesFree = true
 	case stdOptional:
-		binding.stdDecls = []string{"var cppgoResult " + result.Elem.Go, "var cppgoHas int32"}
+		binding.stdDecls = append(binding.stdDecls,
+			"var cppgoResult "+result.Elem.Go,
+			"var cppgoHas int32")
 		out("unsafe.Pointer(&cppgoResult)", "&cppgoResult", "void *", "cppgo_out_value")
 		out("unsafe.Pointer(&cppgoHas)", "&cppgoHas", "int32_t *", "cppgo_out_has")
 	}
@@ -1875,6 +2006,16 @@ func (b *builder) paramWire(name string, mapped *goType, param cxx.Param) *wireA
 		arg.size = 8
 		arg.expr = "unsafe.Pointer(" + name + ")"
 		arg.keep = name
+		if mapped.Go == "unsafe.Pointer" {
+			// An untyped pointer: Go knows nothing about what it names, so it
+			// cannot be copied. checkReentrant refuses it on a callback-capable
+			// call.
+			return arg
+		}
+		// A pointer to a scalar or to a mirrored record is the address of a Go
+		// value that may live in this frame: a call that may run a callback
+		// hands over a pinned copy instead.
+		arg.pin = &pinPlan{shape: pinValue, name: name, elem: strings.TrimPrefix(mapped.Go, "*"), writeBack: !mapped.Const}
 	}
 	return arg
 }
@@ -1910,6 +2051,13 @@ func isLengthParam(p cxx.Param) bool {
 func (b *builder) chooseCarrier(binding *binding) {
 	sym := binding.sym
 	switch {
+	case b.forceReentrant:
+		// A callback the callee stores can be delivered by any call made from
+		// Go, and only the reentrant carrier is a state the Go runtime accepts a
+		// callback in. The header cannot say which calls deliver, so every one
+		// of them has to be callback-capable.
+		binding.Carrier = reentrant
+		binding.Reason = "a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall"
 	case binding.hasCallback:
 		binding.Carrier = reentrant
 		binding.Reason = "callback: the call enters C through runtime.cgocall, so C++ may call back into Go"
@@ -1997,6 +2145,34 @@ func (b *builder) forceThunk(binding *binding, reason string) {
 	binding.Symbol = binding.Thunk
 }
 
+// retainNamed reports whether -retain names this declaration, by qualified name
+// or by its full signature. It marks the entry as matched.
+func (b *builder) retainNamed(sym cxx.Symbol) bool {
+	for i, entry := range b.retains {
+		if entry == sym.QualifiedName || entry == displaySignature(sym) {
+			b.retainMatched[i] = true
+			return true
+		}
+	}
+	return false
+}
+
+// checkRetained validates a -retain entry against the declaration it named: the
+// call must take a callback for the entry to be about anything, and it must
+// produce nothing but its status, because the registration the Go side hands
+// back is what the call's outcome is.
+func (b *builder) checkRetained(binding *binding) error {
+	if !binding.hasCallback {
+		return manifestError{fmt.Errorf("cppgo: -retain %s: the declaration takes no callback parameter, so there is nothing the callee could store", displaySignature(binding.sym))}
+	}
+	// A status declaration's integer is not a value: -status turns it into the
+	// error the registration is reported through.
+	if binding.Result != nil && binding.Result.Kind != goVoid && !b.statusNamed(binding.sym) {
+		return manifestError{fmt.Errorf("cppgo: -retain %s: the declaration returns a value, and a retained registration consumes the call's result: drop the result, or mark it with -status and return a status code", displaySignature(binding.sym))}
+	}
+	return nil
+}
+
 // statusNamed reports whether -status names this declaration, by qualified name
 // or by its full signature. It marks the entry as matched.
 func (b *builder) statusNamed(sym cxx.Symbol) bool {
@@ -2032,23 +2208,47 @@ func (b *builder) applyStatus(binding *binding) error {
 	return nil
 }
 
-// checkReentrant refuses the combinations the reentrant carrier cannot carry
-// yet: a call that runs a callback must receive no pointer into Go memory (the
-// callback may grow the goroutine stack and move it), and a standard-library
-// result would be copied out through locals the same growth invalidates.
+// checkReentrant refuses what a call that may run a callback cannot carry.
+//
+// Such a call enters C through runtime.cgocall, and the callback it runs is Go
+// code on the same goroutine: that code may grow the goroutine's stack, and
+// growing it moves everything in the frame. Every Go pointer the call hands to
+// C is therefore copied into a pinned heap object first (see pinCall), which is
+// what makes a slice, a string and a pointer-to-value parameter safe. What is
+// left is the shapes no copy can make safe: a standard-library view, whose
+// whole purpose is to keep naming the Go bytes after the call starts, a void
+// pointer, which names something nothing on either side knows the shape of,
+// and a standard-library result the thunk copies out through words the frame
+// owns.
 func (b *builder) checkReentrant(binding *binding) error {
 	if binding.Carrier != reentrant {
 		return nil
 	}
-	if binding.StdResult {
-		return pending(fmt.Sprintf("%q returns a standard-library value and takes a callback", displaySignature(binding.sym)),
-			"return the value through an out parameter the callee fills, or drop the callback from this declaration")
+	if binding.StdResult && binding.Result.Std != stdString && binding.Result.Std != stdStringView {
+		return pending(fmt.Sprintf("%q returns a %s, and a call that may run a callback copies a standard-library result out through the goroutine's frame", displaySignature(binding.sym), binding.Result.Param.Spelling),
+			"return the value through an out parameter the callee fills, or as a (pointer, length) pair")
 	}
 	for _, param := range binding.Params {
 		switch param.Type.Kind {
-		case goString, goSlice, goArray, goPointer, goOptional:
-			return pending(fmt.Sprintf("the parameter %q of a callback binding is a %s", param.Name, param.Type.Go),
-				"pass a scalar: a pointer into Go memory would move when the callback grows the stack")
+		case goString:
+			if param.Type.Std == stdStringView {
+				return pending(fmt.Sprintf("the parameter %q of a callback-capable call is a %s, a view of Go memory the callee keeps for the whole call", param.Name, param.Type.Param.Spelling),
+					"take a std::string, which the thunk copies before the call starts, or a const char *")
+			}
+		case goSlice:
+			if param.Type.Std == stdSpan {
+				return pending(fmt.Sprintf("the parameter %q of a callback-capable call is a %s, a view of Go memory the callee keeps for the whole call", param.Name, param.Type.Param.Spelling),
+					"take a std::vector, which the thunk copies before the call starts, or a (pointer, length) pair")
+			}
+			if param.StdOut {
+				return pending(fmt.Sprintf("the parameter %q of a callback-capable call is a %s the callee replaces", param.Name, param.Type.Param.Spelling),
+					"take it by value or by const reference: the copy-back the thunk writes is a word of the goroutine's frame")
+			}
+		case goPointer:
+			if param.Type.Go == "unsafe.Pointer" {
+				return pending(fmt.Sprintf("the parameter %q of a callback-capable call is a %s", param.Name, param.Type.Param.Spelling),
+					"expose a typed pointer at the C++ boundary: a void pointer names memory nothing can copy")
+			}
 		}
 	}
 	return nil
@@ -2285,6 +2485,10 @@ func (b *builder) model() *packageModel {
 		usesFree:       b.usesFree,
 		usesSpan:       b.mapper.usesSpan,
 		usesCString:    b.usesCString,
+		usesBytes:      b.usesBytes,
+		usesWord:       b.usesWord,
+		usesPin:        b.usesPin,
+		usesRetain:     b.usesRetain,
 	}
 }
 

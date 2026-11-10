@@ -417,7 +417,7 @@ func TestMapElementRefusesAnElementAContainerCannotHold(t *testing.T) {
 // with the same reason.
 func TestCallbackElementReportsTheRefusal(t *testing.T) {
 	m := &mapper{}
-	_, err := m.callbackElement("std::vector<std::string>")
+	_, err := m.callbackArg([]string{"std::vector<std::string>"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "standard-library element")
 }

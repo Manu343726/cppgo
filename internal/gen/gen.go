@@ -110,6 +110,13 @@ type Config struct {
 	// -status. Their Go signature returns only an error: nothing is emitted for
 	// the integer, and a non-zero value is the failure.
 	Status []string
+	// Retain names the declarations whose callback parameter the callee stores,
+	// from -retain. The generator cannot infer that: a function pointer says
+	// nothing about how long the callee keeps it. A retained declaration's Go
+	// binding registers the Go function and returns a registration the caller
+	// closes; every call in the package becomes callback-capable, because any
+	// of them may deliver a record.
+	Retain []string
 	// Scan names the Go packages the two-phase flow parses to collect the
 	// template instantiations a program uses, from -scan. Empty means the
 	// generic API is emitted with no concrete shim.

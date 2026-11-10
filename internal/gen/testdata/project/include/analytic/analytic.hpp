@@ -112,4 +112,28 @@ bool truthy(bool (*fn)(bool), bool value) noexcept;
 // Sample is written through the storage the caller owns.
 Sample cb_blend(double (*fn)(double), double t) noexcept;
 
+// A callback whose arguments are the callee's memory. The text is a
+// NUL-terminated `const char *`, which Go copies into a string while the
+// callback runs; the bytes are a counted buffer the library owns, which Go
+// reads as a slice view that is valid for the same span.
+using MessageCallback = void (*)(std::int32_t level, const char *message);
+
+void deliver_messages(MessageCallback fn);
+
+void deliver_bytes(void (*fn)(const std::uint8_t *data, std::size_t n));
+
+// The same, for a record: the pointer names a Point the callee holds, and Go
+// reads it through the mirrored struct.
+void deliver_point(void (*fn)(const Point *point));
+
+// The bytes the other way: a Go slice and a callback in one signature. The
+// callee sums the buffer, delivers a record, and sums it again, so it reads the
+// bytes both before and after the callback ran. A binding that hands over the
+// caller's own memory would be reading whatever the callback did to it.
+std::int32_t checksum(const std::uint8_t *data, std::size_t n, void (*fn)(std::int32_t count));
+
+// A writable record the callee changes after the callback returned: the caller
+// sees the change, because the binding copies back.
+void bump(Point *point, void (*fn)(std::int32_t value));
+
 } // namespace analytic

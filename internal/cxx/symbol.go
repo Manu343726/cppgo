@@ -912,10 +912,22 @@ func (l *Libclang) declarationName(t CXType) string {
 // type is not one. It is what lets the type mapper collapse a (pointer, length)
 // pair into a Go slice without re-parsing a spelling.
 func (l *Libclang) pointee(surface CXType) *Param {
+	canonical := l.f.getCanonicalType(surface)
 	var inner CXType
-	switch l.f.getCanonicalType(surface).Kind {
+	switch canonical.Kind {
 	case typePointer, typeBlockPointer:
 		inner = l.f.getPointeeType(surface)
+		if inner.Kind == typeInvalid {
+			// A typedef of a function pointer ("using LogCallback = void
+			// (*)(int);") has no pointee of its own: libclang answers the
+			// surface type with the invalid type, and only the canonical type
+			// desugars to the function prototype a signature is read from. A
+			// typedef of void* ("af_array") keeps the invalid pointee: it names
+			// no type Go can carry, and the mapper reports it as a void pointer.
+			if canonicalInner := l.f.getPointeeType(canonical); canonicalInner.Kind == typeFunctionProto {
+				inner = canonicalInner
+			}
+		}
 	case typeLValueReference, typeRValueReference:
 		inner = l.f.getNonReferenceType(surface)
 	default:

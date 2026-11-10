@@ -73,3 +73,15 @@ func readFileString(t *testing.T, path string) string {
 	require.NoError(t, err)
 	return string(data)
 }
+
+// outputNamed returns one rendered output's text.
+func outputNamed(t *testing.T, result *Result, name string) string {
+	t.Helper()
+	for _, out := range result.Outputs {
+		if out.Name == name {
+			return string(out.Data)
+		}
+	}
+	require.FailNowf(t, "output not found", "%s is not one of the run's outputs", name)
+	return ""
+}

@@ -293,10 +293,27 @@ func copyTree(src, dst string) error {
 const e2eTestSource = `package analytic
 
 import (
+	"bytes"
+	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"testing"
 )
+
+// growStack pushes the goroutine's stack deep enough to be copied, which is
+// what moves everything that lives in a frame. It is the condition a call that
+// may run a callback has to survive.
+//
+//go:noinline
+func growStack(depth int) byte {
+	var block [4096]byte
+	block[0] = byte(depth)
+	if depth <= 0 {
+		return block[0]
+	}
+	return growStack(depth-1) + block[0]
+}
 
 func TestBindings(t *testing.T) {
 	// The programmatic override: the deployment shape that keeps the user's
@@ -437,6 +454,71 @@ func TestBindings(t *testing.T) {
 	fromCallback := CbBlend(func(t float64) float64 { return t }, 2)
 	if fromCallback != (Sample{A: 2, B: 4, C: 6}) {
 		t.Fatalf("CbBlend = %+v", fromCallback)
+	}
+
+	// A callback whose arguments are the callee's memory: the text arrives as a
+	// Go string copied at the boundary (a non-ASCII message with it), and the
+	// counted bytes arrive as a slice view of the library's own buffer.
+	var messages []string
+	if err := DeliverMessages(func(level int32, message string) {
+		messages = append(messages, fmt.Sprintf("%d:%s", level, message))
+	}); err != nil {
+		t.Fatalf("DeliverMessages: %v", err)
+	}
+	wantMessages := []string{"0:hello", "1:mundo", "2:h\xc3\xa9llo w\xc3\xb6rld"}
+	if fmt.Sprint(messages) != fmt.Sprint(wantMessages) {
+		t.Fatalf("DeliverMessages = %q, want %q", messages, wantMessages)
+	}
+	seen := []byte(nil)
+	if err := DeliverBytes(func(data []uint8) {
+		seen = append(seen, data...)
+	}); err != nil {
+		t.Fatalf("DeliverBytes: %v", err)
+	}
+	if !bytes.Equal(seen, []byte{0x00, 0x01, 0x7f, 0x80, 0xff}) {
+		t.Fatalf("DeliverBytes = %v", seen)
+	}
+	// A pointer argument: the record the callee held is read through the view.
+	if err := DeliverPoint(func(p *Point) {
+		if p == nil || *p != (Point{X: 3, Y: 4}) {
+			t.Errorf("DeliverPoint received %+v", p)
+		}
+	}); err != nil {
+		t.Fatalf("DeliverPoint: %v", err)
+	}
+
+	// A Go slice and a callback in one signature: the callee sums the buffer,
+	// delivers a record and sums it again. The bytes it sums are a pinned copy,
+	// so a callback that writes to the caller's slice cannot change them — and
+	// the callback grows the stack and collects, which is what would move the
+	// original if the binding had handed over the caller's own memory.
+	payload := []uint8{1, 2, 3, 4}
+	sum, err := Checksum(payload, func(count int32) {
+		if count != int32(len(payload)) {
+			t.Errorf("Checksum delivered count %d", count)
+		}
+		payload[0] = 100
+		growStack(64)
+		runtime.GC()
+	})
+	if err != nil || sum != 10 {
+		t.Fatalf("Checksum = %d, %v (want 1+2+3+4, read before and after the callback)", sum, err)
+	}
+
+	// A writable record: the callee changes it after the callback returned, and
+	// the caller sees the change because the binding copies the value back.
+	point := Point{X: 1, Y: 2}
+	if err := Bump(&point, func(value int32) {
+		if value != 1 {
+			t.Errorf("Bump delivered value %d", value)
+		}
+		growStack(64)
+		runtime.GC()
+	}); err != nil {
+		t.Fatalf("Bump: %v", err)
+	}
+	if point != (Point{X: 11, Y: 22}) {
+		t.Fatalf("Bump left %+v, want the callee's writes copied back", point)
 	}
 
 	// A panic inside a callback reaches the caller instead of the process.

@@ -394,24 +394,148 @@ and this is the Go function it became, from
 func Apply(fn func(float64) float64, value float64) (float64, error)
 ```
 
+A function pointer a typedef names — `using LogCallback = void (*)(int, const
+char *);` followed by a parameter of type `LogCallback` — is the same thing: the
+alias is read as the pointer it names.
+
 The call enters C++ through the **reentrant** carrier — the call path that marks
 the thread as being inside a foreign call, a call from Go into code that was not
 compiled by Go, which is the only state from which C++ may call back into Go. A
-binding that passes no Go function does not need it.
+binding that passes no Go function, in a package that registers no retained
+callback, does not need it.
 
-The limits:
+### What a callback receives
 
-- the call carries at most **six integer and eight floating-point arguments**,
+The callback reads the C argument registers, so its arguments are the values the
+C++ side put there. The bytes behind a pointer are the C++ side's: the callback
+may read them, and Go must copy anything it keeps.
+
+| C++ argument | Go | Lifetime |
+|---|---|---|
+| an integer, `bool`, `double`, an enum | the same Go type | a value |
+| `const char *`, and `const char *` + `std::size_t` | `string` | copied while the callback runs: the Go string owns its bytes |
+| `const T *` + `std::size_t` | `[]T` | a view of the C++ side's memory, valid only while the callback runs |
+| `T *` (a scalar, a mirrored record) | `*T` | the same: a view of the C++ side's memory |
+| `void *` | `unsafe.Pointer` | the same, and nothing says what it points at |
+
+`(const std::uint8_t *, std::size_t)` is therefore `[]uint8`: a byte buffer whose
+memory belongs to the caller of the callback, which is the reason it can be
+handed to Go at all. Keeping that slice past the callback's return keeps a
+pointer into memory the library may reuse; copy it with `append([]byte(nil), b...)`
+if it has to outlive the callback.
+
+The limits are the register file and the direction of the exception:
+
+- the callback takes at most **six integer and eight floating-point arguments**,
   and one result. A callback that needs more is left out with a warning naming
   the argument;
-- argument and result types are integers, `bool`, `double` and pointers to them;
-  a `float32` argument is not bound (use `double`), and a `std::string`, a
-  record, a slice or an array is left out with a warning;
+- a `float32` argument is not bound (take a `double`), and a record, a
+  `std::string` or an array *by value* is left out with a warning: there is no
+  register shape for one;
 - a panic inside the callback does not reach C++: the result is zeroed and the
   panic is re-raised in Go when the foreign call returns;
 - a callback that has to report a failure writes a status and the C++ side checks
   it. A C++ exception that unwinds through a Go frame terminates the process, so
   catch it on the C++ side before the callback returns.
+
+### Retained callbacks
+
+A function pointer says nothing about how long the callee keeps it. A parameter
+that C++ **stores** and calls again, during later calls of its own, is declared
+with `-retain`: the name of the declaration whose callback the callee keeps.
+
+This is the logging library of
+[`internal/gen/testdata/retained/include/retained/retained.hpp`](https://github.com/Manu343726/cppgo/blob/main/internal/gen/testdata/retained/include/retained/retained.hpp),
+where the setter stores the pointer and `log` calls it:
+
+```cpp
+using LogCallback = void (*)(std::int32_t level, const char *message);
+
+void set_log_callback(LogCallback fn) noexcept;
+void log(std::int32_t n) noexcept;
+```
+
+```console
+$ cppgo gen -header include/retained/retained.hpp -package retained \
+    -library build/libretained.so -out ./gen \
+    -retain 'retained::set_log_callback'
+```
+
+The registering call returns a **registration**, and the function stays
+registered until it is closed:
+
+```go
+func SetLogCallback(fn func(int32, string)) (*CallbackRegistration, error)
+
+func Log(n int32)
+
+// Close releases the registration, and reports cppgo.ErrClosed when it already
+// was released.
+func (r *CallbackRegistration) Close() error
+```
+
+```go
+// Registered once; the call returns and the records keep arriving.
+logs, err := retained.SetLogCallback(func(level int32, message string) {
+	fmt.Println(level, message)
+})
+if err != nil {
+	return err
+}
+defer logs.Close()
+
+retained.Log(3) // three calls into the callback, during this call from Go
+```
+
+The rules a registration lives by:
+
+- **any call may deliver.** A retained callback can be invoked from inside any
+  call into the library, so every binding in a package generated with `-retain`
+  enters C++ through the reentrant carrier. The report names that reason on every
+  line;
+- **a C++ thread Go did not start must not call it.** The callback runs on the
+  goroutine that made the call, and only while C++ is inside a call made from Go.
+  A C++ background thread that calls it reaches the runtime on a thread that
+  never entered a foreign call, and the process dies: no goroutine is there to
+  run the Go function on. A library that delivers from its own threads cannot be
+  bound this way;
+- **a nil function clears the sink.** `SetLogCallback(nil)` calls the setter with
+  a null pointer and returns no registration: nothing is registered, and the
+  library stops delivering. Tell the library to forget the callback before
+  `Close`, because a call that reaches a released slot panics in Go with the
+  slot's number instead of delivering a record;
+- **`Close` is once.** A second `Close`, or a `Close` on a nil registration,
+  reports `cppgo.ErrClosed`. `Close` waits for the calls already inside the Go
+  function, so none of it runs when it returns;
+- **the declaration returns nothing.** The registration is the call's outcome,
+  so a retained declaration whose C++ return type is a value is left out with a
+  warning; a status code (`-status`) is reported as the error beside the
+  registration;
+- a `-retain` entry that names no declaration, or one that takes no callback, is
+  an error: the flag is a statement about the C++ side, and the generator checks
+  it against the declaration.
+
+### Go memory on its way into a callback-capable call
+
+A callback runs Go code on the goroutine that made the call, and Go code may grow
+that goroutine's stack. A call that may run one therefore works on its own copy
+of every Go value it hands to C++, so the callee reads the same bytes whether or
+not the callback moved anything:
+
+- a `[]T` parameter is copied for the call, and the callee's writes reach the
+  caller's slice;
+- a `const char *` parameter is the NUL-terminated copy it always was;
+- a `*T` parameter is copied for the call, and the callee's writes reach the
+  caller's value;
+- a result the callee fills in is Go's own value, never a stale address.
+
+What is left is the shapes a copy cannot make safe, each with a warning: a
+`std::span` or a `std::string_view` parameter (a view whose whole purpose is to
+keep naming the caller's bytes), a `std::vector` the callee replaces (the value
+goes back into the caller's slice after the call), a `void *` (nothing says what
+it names, so nothing can copy it), and a standard-library result other than
+`std::string`. The mechanism is in
+[Carriers]({{< ref "explanation/carriers.md" >}}#reentrant).
 
 ## Templates
 

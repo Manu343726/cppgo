@@ -104,4 +104,66 @@ Sample cb_blend(double (*fn)(double), double t) noexcept {
     return Sample{value, value * 2, value * 3};
 }
 
+namespace {
+
+// The records the payload callbacks deliver. They live for the whole process,
+// which is what lets the Go side read them during the callback and compare
+// them with a copy afterwards.
+const char *const kMessages[] = {"hello", "mundo", "h\xc3\xa9llo w\xc3\xb6rld"};
+
+const std::uint8_t kBytes[] = {0x00, 0x01, 0x7f, 0x80, 0xff};
+
+} // namespace
+
+void deliver_messages(MessageCallback fn) {
+    if (fn == nullptr) {
+        return;
+    }
+    for (std::int32_t level = 0; level < 3; ++level) {
+        fn(level, kMessages[level]);
+    }
+}
+
+void deliver_bytes(void (*fn)(const std::uint8_t *data, std::size_t n)) {
+    if (fn != nullptr) {
+        fn(kBytes, sizeof kBytes);
+    }
+}
+
+void deliver_point(void (*fn)(const Point *point)) {
+    const Point held{3, 4};
+    if (fn != nullptr) {
+        fn(&held);
+    }
+}
+
+std::int32_t checksum(const std::uint8_t *data, std::size_t n, void (*fn)(std::int32_t count)) {
+    std::uint32_t before = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        before += data[i];
+    }
+    if (fn != nullptr) {
+        fn(static_cast<std::int32_t>(n));
+    }
+    std::uint32_t after = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        after += data[i];
+    }
+    if (before != after) {
+        return -1;
+    }
+    return static_cast<std::int32_t>(before);
+}
+
+void bump(Point *point, void (*fn)(std::int32_t value)) {
+    if (point == nullptr) {
+        return;
+    }
+    if (fn != nullptr) {
+        fn(static_cast<std::int32_t>(point->x));
+    }
+    point->x += 10;
+    point->y += 20;
+}
+
 } // namespace analytic

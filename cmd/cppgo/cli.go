@@ -193,6 +193,7 @@ func (c *cli) generate(args []string, m mode) int {
 		Instantiate:     v.instantiate,
 		Rename:          v.rename,
 		Status:          v.status,
+		Retain:          v.retain,
 		Proxy:           v.proxy,
 		Alias:           v.aliases,
 		Scan:            v.scan,
@@ -236,12 +237,11 @@ func wantsHelp(args []string) bool {
 
 // flagValues holds the values of the flag set that gen, check and build share.
 type flagValues struct {
-	headers, bind, exclude, instantiate, rename, status, scan, proxy stringList
-	aliases                                                          stringList
-	libraries                                                        stringList
-	packageName, cxx, out, compileCommands, scanDir                  string
-	coverage                                                         string
-	check, quiet                                                     bool
+	headers, bind, exclude, instantiate, rename, status, retain stringList
+	scan, proxy, aliases, libraries                             stringList
+	packageName, cxx, out, compileCommands, scanDir             string
+	coverage                                                    string
+	check, quiet                                                bool
 }
 
 // newFlagSet creates the flag set "cppgo <verb>" parses with. Every flag the
@@ -261,6 +261,7 @@ func newFlagSet(m mode) (*flag.FlagSet, *flagValues) {
 	fs.Var(&v.instantiate, "instantiate", "concrete template specialization to emit; repeatable")
 	fs.Var(&v.rename, "rename", "<qualified signature>=<GoName>; repeatable")
 	fs.Var(&v.status, "status", "declaration whose int32 return is a status code; repeatable")
+	fs.Var(&v.retain, "retain", "declaration whose callback parameter the callee stores; repeatable")
 	fs.Var(&v.aliases, "alias", "<C++ template>=<std template>; repeatable")
 	fs.Var(&v.proxy, "proxy", "<declaration>@<index>=<C++ container type>; repeatable")
 	fs.Var(&v.scan, "scan", "Go package whose template instantiations to collect; repeatable")
@@ -282,7 +283,7 @@ type flagDoc struct {
 // flagOrder is the order the shared flags are documented in.
 var flagOrder = []string{
 	"header", "package", "library", "out", "compile-commands",
-	"bind", "exclude", "instantiate", "rename", "status", "alias", "proxy",
+	"bind", "exclude", "instantiate", "rename", "status", "retain", "alias", "proxy",
 	"scan", "scan-dir", "coverage", "cxx", "check", "q",
 }
 
@@ -383,6 +384,17 @@ func flagDocs(m mode) map[string]flagDoc {
 				"a declaration whose 32-bit return is a status code: 0 is success",
 				"and any other value a failure, so the Go signature returns only",
 				"an error; repeatable",
+			},
+			def: "none",
+		},
+		"retain": {
+			meta: "qualified",
+			lines: []string{
+				"a declaration whose callback parameter the callee stores and",
+				"calls again during later calls made from Go. The Go binding keeps",
+				"the function registered and returns a registration the caller",
+				"closes; the generator cannot infer storage from the header, so it",
+				"has to be told; repeatable",
 			},
 			def: "none",
 		},
