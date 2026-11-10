@@ -8,7 +8,10 @@ name: CI
 # gate failed for a reason that had nothing to do with the code. The image pins
 # Go, g++ 14, clang/libclang 22, golangci-lint, hugo and cmake (see Dockerfile),
 # so the environment is a reviewed artefact rather than whatever the runner has
-# today.
+# today. It also carries the target libraries the suite binds against the real
+# thing — Eigen, OpenCV (core, imgproc, imgcodecs and the nine headless modules
+# #132 binds), ArrayFire — and Python 3 + Conan 2.28.1, which
+# `examples/fingerprint` needs to resolve its C++ dependency.
 #
 # A single Go version is tested on purpose: bumping Go is a Dockerfile ARG
 # change, reviewed like any other dependency. The second job keeps an eye on
@@ -29,6 +32,12 @@ name: CI
 # (`registry.docker.manu343726.com/homelab/cppgo-ci:recipe-…`): two registries, one
 # address, one recipe. When the gate is red in one forge it is red in the other for
 # a reason in the tree, not in the environment.
+#
+# There is deliberately no tag literal in this file: the address is derived from
+# the Dockerfile above, so the recipe the gate runs in and the recipe the tree
+# contains cannot drift apart — the same property `.forgejo/workflows/ci.yml`
+# keeps by naming the tag once, in `CI_IMAGE`. Changing the Dockerfile changes the
+# tag here and there at the same time.
 
 on:
   push:
