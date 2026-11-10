@@ -352,19 +352,21 @@ the Go slice and the C++ vector do not share storage.
 | a `T *` followed by its count | `[]T` | borrowed, and writes in the callee reach the caller's slice |
 | `std::string` | `string` | copied in and out |
 | `std::string_view` | `string` | borrowed for the call |
-| `std::vector<T>` | `[]T` | copied in and out |
+| `std::vector<T>` | `[]T` | copied in and out; the mapping is applied again to `T`, so `std::vector<std::vector<T>>` is `[][]T` and `std::vector<Opaque>` is `[]*Opaque` |
 | `std::span<T>` | `[]T` | borrowed |
 | `std::array<T,N>` | `[N]T` | by value |
 | `std::optional<T>` as a parameter | `*T` | nil is `nullopt` |
 | `std::optional<T>` as a result | `*T` | nil means absent, and absence is not an error |
+| `std::shared_ptr<T>` / `std::unique_ptr<T>` as a result | `*T` | the object the pointer owns; `Close` releases it. A smart-pointer *parameter* is not bound |
+| `std::span<T>` as a result | — | not bound: a view of storage Go does not own |
 | `T[N]` as a record field | `[N]T` | fixed-size array |
 | function pointer, `std::function<R(Args…)>` | `func(…) R` | see *Callbacks* |
 
 Some shapes are not bound rather than guessed — `long double`, `__int128`,
-`nullptr_t`, `void *`, the owning smart pointers
-`std::unique_ptr`/`std::shared_ptr`, a `non-const` reference to a
-standard-library value, and a standard-library type outside the table. Each is
-named in a warning with a workaround. The
+`nullptr_t`, `void *`, an owning smart pointer as a *parameter*, a `std::span`
+as a *result*, a `non-const` reference to a standard-library value, and a
+standard-library type outside the table. Each is named in a warning with a
+workaround. The
 [limits page]({{< ref "explanation/limits.md" >}}) has the messages.
 
 **A non-`const` `char *` parameter does not bind.** The callee would write into

@@ -85,7 +85,8 @@ general-purpose ones, and **SSE**, the eight floating-point ones beside them.
 | an operator of a class template | `<signature> is not part of the generic API: an operator of a class template is bound on each concrete specialization instead` | bind the specialization |
 | a member of a class template whose signature names a type declared inside it | `<signature> is not part of the generic API: its signature names a type declared inside <template>, and each instantiation has its own; the specialization carries it` | bind the specialization |
 | a `std::unique_ptr` or `std::shared_ptr` parameter | `"std::unique_ptr<T>" is a smart-pointer parameter; take the object by reference or by pointer at the C++ boundary` | a reference or a pointer |
-| a `std::unique_ptr` or `std::shared_ptr` result | `"std::unique_ptr<T>" is a smart-pointer result; return the object by value or through a reference at the C++ boundary` | a value or a reference |
+| a `std::span` result | `"std::span<int>" is a span result; take the span as a parameter, or return the container it views` | a container result, or the span as a parameter |
+| a `std::vector<std::string>` | `"std::string" is a standard-library element this build does not cross inside a container; use a scalar, a POD record, or a std::vector of those as the element` | a `std::vector` of scalars or records, or a wrapper |
 | a function pointer or `std::function` result | `"std::function<...>" is a function or std::function result; take it as a callback parameter, or expose a C++ wrapper that owns it` | an out-parameter, or a wrapper |
 | a C array | `"T [N]" is a C array; decay it to a pointer and a length at the C++ boundary` | a pointer and a length |
 | a non-`const` `char *` parameter | `"char *" is a non-const char pointer; take it as const char *: the Go string is immutable, so the callee's writes would not reach it` | `const char *` |
