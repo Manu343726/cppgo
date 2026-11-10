@@ -1,0 +1,3 @@
+# Conan writes a user preset beside the conanfile when CMakeToolchain generates
+# its own; it names absolute paths of this machine and is not committed.
+CMakeUserPresets.json
