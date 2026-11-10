@@ -34,7 +34,7 @@ constexpr int kOpenKernel = 5;
 
 cv::Mat segment(const cv::Mat &photo) {
     if (photo.empty()) {
-        throw std::invalid_argument("fingerprint::segment: the photo is empty");
+        throw std::invalid_argument("the photo is empty");
     }
     cv::Mat ycc;
     cv::cvtColor(photo, ycc, cv::COLOR_BGR2YCrCb);
@@ -101,7 +101,7 @@ cv::Mat normalize(const cv::Mat &gray, double mean, double sigma) {
 
 cv::Mat orientationField(const cv::Mat &gray, int block) {
     if (block < 1) {
-        throw std::invalid_argument("fingerprint::orientationField: the block size is not positive");
+        throw std::invalid_argument("the block size is not positive");
     }
     cv::Mat gray32;
     gray.convertTo(gray32, CV_32F);
@@ -138,7 +138,7 @@ cv::Mat orientationField(const cv::Mat &gray, int block) {
 
 cv::Mat gaborEnhance(const cv::Mat &gray, const cv::Mat &orientation, double frequency) {
     if (frequency <= 0.0) {
-        throw std::invalid_argument("fingerprint::gaborEnhance: the ridge frequency is not positive");
+        throw std::invalid_argument("the ridge frequency is not positive");
     }
     cv::Mat gray32;
     gray.convertTo(gray32, CV_32F);

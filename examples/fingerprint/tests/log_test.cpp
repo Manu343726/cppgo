@@ -31,8 +31,7 @@ void logTests() {
     SECTION("one record per level reaches the callback, with its spdlog level");
     deliveries.clear();
     drain_log(); // start from an empty buffer
-    set_log_callback(&record);
-    emit_log_samples();
+    emit_log_samples(&record);
     CHECK(deliveries.size() == 7);
     for (std::int32_t level = 0; level < 6; ++level) {
         CHECK(deliveries[static_cast<std::size_t>(level)].first == level);
@@ -52,33 +51,54 @@ void logTests() {
     // A drain empties the buffer.
     CHECK(drain_log().empty());
 
-    SECTION("clearing the callback stops the delivery, and the buffer keeps filling");
-    clear_log_callback();
+    SECTION("a call with no callback delivers nothing, and the buffer keeps filling");
     deliveries.clear();
-    emit_log_samples();
+    emit_log_samples(nullptr);
     CHECK(deliveries.empty());
     CHECK(!drain_log().empty());
-    // A null pointer is the same thing said differently.
-    set_log_callback(nullptr);
+    // The scope ends with the call: the next one that passes a callback
+    // delivers again, and a plain one does not.
     deliveries.clear();
-    emit_log_samples();
+    emit_log_samples(&record);
+    CHECK(deliveries.size() == 7);
+    deliveries.clear();
+    emit_log_samples(nullptr);
     CHECK(deliveries.empty());
     drain_log();
 
     SECTION("the pipeline's own records arrive through the same sink");
-    set_log_callback(&record);
     deliveries.clear();
+    drain_log();
     const std::vector<std::uint8_t> photo = readFile("print.png");
     const Enrollment enrollment = enroll(photo.data(), photo.size());
     CHECK(enrollment.minutiae > 0);
+    // Enrolling takes no callback: what it wrote is buffered, and nothing was
+    // delivered while it ran.
+    CHECK(deliveries.empty());
+    // Delivering is the second step, and it is the call that takes the
+    // callback: one call per buffered record, in order, with its level.
+    // Three records: the decoded size, the region, and the enrolment itself.
+    const std::size_t delivered = deliver_log(&record);
+    CHECK(delivered == 3);
+    CHECK(deliveries.size() == 3);
+    CHECK(deliveries[0].first == 1); // debug: the decoded size
+    CHECK(deliveries[1].first == 1); // debug: the region
+    CHECK(deliveries[2].first == 2); // info: the frame and the minutiae
     const std::string pipelineLog = drain_log();
     CHECK(pipelineLog.find("enroll: decoded 320x320") != std::string::npos);
     CHECK(pipelineLog.find("minutiae") != std::string::npos);
-    CHECK(!deliveries.empty());
-    bool sawInfo = false;
-    for (const auto &delivery : deliveries) {
-        sawInfo = sawInfo || delivery.first == 2;
-    }
-    CHECK(sawInfo);
-    clear_log_callback();
+    CHECK(pipelineLog.find("[info] enroll: 320x320 frame") != std::string::npos);
+    CHECK(pipelineLog.find("\n\n") == std::string::npos); // one line per record
+    // A null callback delivers nothing and reports nothing.
+    CHECK(deliver_log(nullptr) == 0);
+    // The trigger is the call that takes no callback: its records are buffered
+    // and drained, and no delivery is attempted (its call is not reentrant).
+    deliveries.clear();
+    Trigger trigger;
+    const TriggerState state = initial_trigger_state();
+    const std::vector<std::uint8_t> fingerprint = readFile("frame-background.png");
+    const TriggerOutcome outcome = trigger.evaluate(fingerprint.data(), fingerprint.size(), state);
+    CHECK(outcome.verdict.fire == false);
+    CHECK(deliveries.empty());
+    drain_log();
 }

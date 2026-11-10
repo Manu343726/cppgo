@@ -36,7 +36,7 @@ double micros(Clock::time_point from, Clock::time_point to) {
 Enrollment enroll(const std::uint8_t *encoded, std::size_t length) {
     const auto log = detail::logger();
     if (encoded == nullptr || length == 0) {
-        throw std::invalid_argument("fingerprint::enroll: there are no bytes to decode");
+        throw std::invalid_argument("there are no bytes to decode");
     }
 
     const Clock::time_point start = Clock::now();
@@ -46,7 +46,7 @@ Enrollment enroll(const std::uint8_t *encoded, std::size_t length) {
     const cv::Mat photo = cv::imdecode(view, cv::IMREAD_COLOR);
     const Clock::time_point decoded = Clock::now();
     if (photo.empty()) {
-        throw std::invalid_argument("fingerprint::enroll: the frame did not decode");
+        throw std::invalid_argument("the frame did not decode");
     }
     log->debug("enroll: decoded {}x{} ({} bytes)", photo.cols, photo.rows, length);
 
@@ -54,7 +54,7 @@ Enrollment enroll(const std::uint8_t *encoded, std::size_t length) {
     const Clock::time_point segmented = Clock::now();
     const Region roi = largestRegion(mask);
     if (roi.width <= 0 || roi.height <= 0) {
-        throw std::invalid_argument("fingerprint::enroll: no finger was found in the frame");
+        throw std::invalid_argument("no finger was found in the frame");
     }
     log->debug("enroll: roi {}x{} at ({}, {})", roi.width, roi.height, roi.x, roi.y);
 
@@ -108,7 +108,7 @@ Enrollment enroll(const std::uint8_t *encoded, std::size_t length) {
 
 std::string dump_ansi378(const std::uint8_t *bytes, std::size_t length) {
     if (bytes == nullptr || length == 0) {
-        throw std::invalid_argument("fingerprint::dump_ansi378: there are no bytes to read");
+        throw std::invalid_argument("there are no bytes to read");
     }
     const std::vector<std::uint8_t> record(bytes, bytes + length);
     return describeAnsi378(record);

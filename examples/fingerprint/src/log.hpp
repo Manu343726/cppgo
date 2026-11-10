@@ -8,6 +8,7 @@
 // fingerprint.hpp: a caller of the library gets the records through the three
 // functions that header declares, not through spdlog.
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -22,6 +23,23 @@ std::shared_ptr<spdlog::logger> logger();
 
 // The records buffered since the last call, one per line, as a joined string.
 std::string take_buffered_log();
+
+// RecordScope installs the callback the sink delivers to for as long as the
+// object lives — one call, on the thread that made it. A null callback means
+// "buffer only", which is what a call whose signature takes no callback gets.
+class RecordScope {
+public:
+    using Callback = void (*)(std::int32_t level, std::int32_t pending);
+
+    explicit RecordScope(Callback callback) noexcept;
+    ~RecordScope();
+
+    RecordScope(const RecordScope &) = delete;
+    RecordScope &operator=(const RecordScope &) = delete;
+
+private:
+    Callback previous_;
+};
 
 } // namespace detail
 } // namespace fingerprint

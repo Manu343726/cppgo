@@ -17,6 +17,11 @@
 //   * the buffers are members and are reused: the only allocation per frame is
 //     the decoder's own output, which the image-codec API does not let us
 //     supply.
+//
+// The trigger logs, but never delivers: its entry point takes no callback
+// parameter, so it is not a reentrant call, and the sink therefore buffers what
+// it writes and leaves it for drain_log(). A record delivered from here would
+// be a call into Go on a thread the runtime cannot account for.
 
 #include "fingerprint/fingerprint.hpp"
 
@@ -150,6 +155,10 @@ struct Trigger::Impl {
     std::vector<std::int32_t> labels;
     std::vector<std::int32_t> parent;
     std::vector<Blob> blobs;
+    // The labels the previous frame used, so this one resets those and nothing
+    // else: sizing a blob table by the pixel count and clearing it every frame
+    // is a megabyte of memset per frame, which is not a hot path.
+    std::vector<std::int32_t> touched;
 
     // The decision over the working image, and where the time inside C++ went.
     TriggerOutcome decide(const TriggerState &previous, double scaleX, double scaleY, double decodeMicros);
@@ -265,14 +274,23 @@ TriggerOutcome Trigger::Impl::decide(const TriggerState &previous, double scaleX
 
     // Two-pass connected components with a union-find: 8-connected, so a ridge
     // pattern with a one-pixel valley does not split the finger in two.
-    impl.labels.assign(static_cast<std::size_t>(pixels), 0);
-    impl.parent.assign(static_cast<std::size_t>(pixels) + 2, 0);
+    //
+    // The buffers are grown once and then written, never cleared: every label
+    // is assigned below (0 for a background pixel), and a union-find parent is
+    // set when its label is created.
+    if (impl.labels.size() != static_cast<std::size_t>(pixels)) {
+        impl.labels.resize(static_cast<std::size_t>(pixels));
+    }
+    if (impl.parent.size() < static_cast<std::size_t>(pixels) + 2) {
+        impl.parent.resize(static_cast<std::size_t>(pixels) + 2);
+    }
     std::int32_t next = 1;
     for (int y = 0; y < height; ++y) {
         const unsigned char *maskRow = impl.mask.ptr<unsigned char>(y);
         std::int32_t *labelRow = impl.labels.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
         for (int x = 0; x < width; ++x) {
             if (!maskRow[x]) {
+                labelRow[x] = 0;
                 continue;
             }
             std::int32_t label = 0;
@@ -311,7 +329,15 @@ TriggerOutcome Trigger::Impl::decide(const TriggerState &previous, double scaleX
         }
     }
 
-    impl.blobs.assign(static_cast<std::size_t>(next), Blob{0, 0, 0, 0, 0, 0.0, 0.0, 0.0});
+    // The blob table is grown once and reset only where the last frame wrote:
+    // an area of zero is what "untouched" means below.
+    if (impl.blobs.size() < static_cast<std::size_t>(next)) {
+        impl.blobs.resize(static_cast<std::size_t>(next));
+    }
+    for (const std::int32_t label : impl.touched) {
+        impl.blobs[static_cast<std::size_t>(label)] = Blob{0, 0, 0, 0, 0, 0.0, 0.0, 0.0};
+    }
+    impl.touched.clear();
     for (int y = 0; y < height; ++y) {
         const unsigned char *maskRow = impl.mask.ptr<unsigned char>(y);
         const unsigned char *grayRow = impl.gray.ptr<unsigned char>(y);
@@ -329,6 +355,7 @@ TriggerOutcome Trigger::Impl::decide(const TriggerState &previous, double scaleX
                 blob.x1 = x;
                 blob.y0 = y;
                 blob.y1 = y;
+                impl.touched.push_back(label);
             } else {
                 blob.x0 = std::min(blob.x0, x);
                 blob.x1 = std::max(blob.x1, x);

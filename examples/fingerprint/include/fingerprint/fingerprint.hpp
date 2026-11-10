@@ -195,6 +195,14 @@ struct Enrollment {
 // enhance, binarise, thin, extract, serialise. Throws std::invalid_argument
 // when the frame does not decode or holds no finger — the Go side gets an
 // error and the reason is in the log.
+//
+// `on_record` is where the call's log records go while it runs; see the sink's
+// section above for why it is a parameter. The records are buffered whether or
+// not a callback is passed.
+//
+// The encoder's bytes are borrowed for the duration of the call, as the
+// trigger's are. The call takes no callback (see the sink above): its records
+// are buffered, and deliver_log() hands them to a caller's function afterwards.
 Enrollment enroll(const std::uint8_t *encoded, std::size_t length);
 
 // A textual listing of a template: the header's fields, then one line per
@@ -203,27 +211,56 @@ std::string dump_ansi378(const std::uint8_t *bytes, std::size_t length);
 
 // --- the log sink -----------------------------------------------------------
 
-// Where the library's spdlog records go: a sink that formats the record, adds
-// it to the buffer `drain_log()` reads, and calls `fn` with the record's spdlog
-// level (trace 0, debug 1, info 2, warn 3, err 4, critical 5) and the number of
-// records the buffer holds.
+// The library's logger is spdlog, and its records reach the caller through a
+// function pointer passed to the call that produces them: `on_record` on
+// `enroll` and on `emit_log_samples`. It receives the record's spdlog level
+// (trace 0, debug 1, info 2, warn 3, err 4, critical 5) and the number of
+// records the buffer now holds; the text is read with drain_log().
 //
-// `fn` is called on the thread that made the outermost call — the library
-// creates no thread — so the callback is always a re-entry the Go runtime
-// accepts. Passing a null pointer, or calling clear_log_callback(), stops the
-// delivery; the buffer keeps filling either way.
-void set_log_callback(void (*fn)(std::int32_t level, std::int32_t pending)) noexcept;
-void clear_log_callback() noexcept;
+// The parameter is the mechanism and not a convenience, for three reasons that
+// are properties of this build and are stated here because they decide the
+// shape of the API:
+//
+//   * the Go runtime accepts a callback only inside a call it entered through
+//     cgocall, and a binding is routed that way when its signature takes a
+//     function pointer. A record delivered from a call that does not is a
+//     crash, measured: the runtime's re-entry runs on a thread it cannot
+//     account for;
+//   * the generated binding registers the Go function for the duration of the
+//     call that hands it over and releases it when that call returns, so a
+//     registered-and-kept sink cannot exist: the pointer kept beyond the call
+//     names a slot that no longer belongs to it;
+//   * a binding that takes a callback may take nothing but scalars beside it —
+//     "a pointer into Go memory would move when the callback grows the stack" —
+//     so the call that delivers records cannot also be the call that carries the
+//     frame's bytes.
+//
+// Hence two steps, and only two: the library *buffers* every record as it is
+// written, and a call that takes a callback *delivers* the buffered ones. The
+// text is read with drain_log().
+//
+// The callback runs on the thread that made the call and only while it is
+// inside it: the library starts no thread, and a record written from one would
+// be delivered on a thread the runtime has never seen.
 
 // The records buffered since the last drain, one per line, and clears the
-// buffer. This is how a Go program reads the text: the callback reports that a
-// record arrived, and this reads it, because the callback's arguments are
-// scalars (see the README for why).
+// buffer.
 std::string drain_log();
 
-// One record per spdlog level plus one record with several arguments, so a test
-// can assert the level, the text and the count against a single call.
-void emit_log_samples();
+// Delivers every buffered record to `on_record`, in order: the callback is
+// called once per record with the record's spdlog level and its position, one
+// based. The buffer is left alone — drain_log() still returns the same text —
+// so a caller can both be told that a record arrived and read it.
+//
+// A null pointer delivers nothing and returns zero.
+std::size_t deliver_log(void (*on_record)(std::int32_t level, std::int32_t pending));
+
+// One record per spdlog level plus one record with several arguments: the call
+// that writes records at every level, so a test can assert the levels, the text
+// and the count. Its own records go to `on_record` as they are written (the
+// call is reentrant, so it may deliver), and they are buffered either way; a
+// null pointer is legal and delivers nothing.
+void emit_log_samples(void (*on_record)(std::int32_t level, std::int32_t pending));
 
 // The library's own version line, with the OpenCV build it links against.
 std::string version();

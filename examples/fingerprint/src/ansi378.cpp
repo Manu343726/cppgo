@@ -142,7 +142,7 @@ double decodeAngle(std::uint8_t units) {
 
 std::vector<std::uint8_t> toAnsi378(const TemplateRecord &record) {
     if (record.minutiae.size() > 0xFFFF) {
-        throw std::invalid_argument("fingerprint::toAnsi378: more minutiae than the count field holds");
+        throw std::invalid_argument("more minutiae than the count field holds");
     }
     std::vector<Minutia> minutiae = record.minutiae;
     // One canonical order, so the same logical template serialises to the same
@@ -178,23 +178,23 @@ std::vector<std::uint8_t> toAnsi378(const TemplateRecord &record) {
 
 TemplateRecord fromAnsi378(const std::vector<std::uint8_t> &bytes) {
     if (bytes.size() < kHeaderSize) {
-        throw std::invalid_argument("fingerprint::fromAnsi378: the record is shorter than the 20-byte header");
+        throw std::invalid_argument("the record is shorter than the 20-byte header");
     }
     for (std::size_t i = 0; i < sizeof(kFormatIdentifier); ++i) {
         if (bytes[i] != kFormatIdentifier[i]) {
-            throw std::invalid_argument("fingerprint::fromAnsi378: the record does not start with FMR\\0");
+            throw std::invalid_argument("the record does not start with FMR\\0");
         }
         if (bytes[4 + i] != kVersion[i]) {
-            throw std::invalid_argument("fingerprint::fromAnsi378: the version field is not this subset's ' 20\\0'");
+            throw std::invalid_argument("the version field is not this subset's ' 20\\0'");
         }
     }
     const std::uint32_t length = getU32(bytes, 8);
     if (length != bytes.size()) {
-        throw std::invalid_argument("fingerprint::fromAnsi378: the record length field and the byte count disagree");
+        throw std::invalid_argument("the record length field and the byte count disagree");
     }
     const std::uint16_t count = getU16(bytes, 16);
     if (kHeaderSize + kMinutiaSize * count != bytes.size()) {
-        throw std::invalid_argument("fingerprint::fromAnsi378: the minutiae count and the record length disagree");
+        throw std::invalid_argument("the minutiae count and the record length disagree");
     }
 
     TemplateRecord record{};
