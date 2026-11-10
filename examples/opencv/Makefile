@@ -141,7 +141,10 @@ gen: $(CPPGO) $(DB)
 coverage: $(CPPGO) $(DB)
 	$(CPPGO) check $(GEN_ARGS)
 
-test: gen coverage
+# The staleness check runs before gen on purpose: gen rewrites the files, so a
+# check after it could never fail. The targets job runs this target on the
+# checked-out tree, which is where a declaration that stopped binding shows.
+test: coverage gen
 	CGO_ENABLED=0 $(TEST_ENV) $(GO) test -tags cppgo_opencv -count=1 -v .
 	CGO_ENABLED=1 $(TEST_ENV) $(GO) test -tags cppgo_opencv -race -count=1 .
 
