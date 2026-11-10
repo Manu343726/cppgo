@@ -1110,16 +1110,16 @@ func (m *mapper) callbackArg(spellings []string) (*callbackArg, error) {
 // whether one was there.
 func unqualified(spelling string) (string, bool) {
 	name := strings.TrimSpace(spelling)
-	const_ := false
+	isConst := false
 	for {
 		switch {
 		case strings.HasPrefix(name, "const "):
-			const_ = true
+			isConst = true
 			name = strings.TrimSpace(name[len("const "):])
 		case strings.HasPrefix(name, "volatile "):
 			name = strings.TrimSpace(name[len("volatile "):])
 		default:
-			return name, const_
+			return name, isConst
 		}
 	}
 }

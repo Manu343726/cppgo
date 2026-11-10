@@ -413,16 +413,6 @@ type packageModel struct {
 	// usesPin is true when a call copies a Go pointer into a pinned heap
 	// object, which makes the generated package import runtime.
 	usesPin bool
-	// retains are the -retain entries, retainMatched the ones a declaration
-	// matched, and forceReentrant is true as soon as one entry exists: a
-	// callback the callee stores may be delivered by any call made from Go, so
-	// every call has to be callback-capable.
-	retains        []string
-	retainMatched  []bool
-	forceReentrant bool
-	// retained are the bindings a retain entry named, kept for the check that
-	// selection did not drop them.
-	retained []*binding
 	// usesRetain is true when the package has a retained callback, which is
 	// what makes the generated package declare the registration type.
 	usesRetain bool
@@ -514,9 +504,6 @@ type builder struct {
 	retains        []string
 	retainMatched  []bool
 	forceReentrant bool
-	// retained are the bindings a retain entry named, kept for the check that
-	// selection did not drop them.
-	retained []*binding
 	// usesRetain is true when the package has a retained callback, which is
 	// what makes the generated package declare the registration type.
 	usesRetain bool
@@ -629,7 +616,7 @@ func build(cfg Config) (*packageModel, error) {
 		return nil, b.manifestErr
 	}
 	for i, entry := range b.cfg.Retain {
-		if b.retainMatched == nil || !b.retainMatched[i] {
+		if !b.retainMatched[i] {
 			return nil, fmt.Errorf("cppgo: -retain %s: it names nothing this header declares", entry)
 		}
 	}

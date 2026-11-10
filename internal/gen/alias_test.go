@@ -10,7 +10,7 @@ import (
 
 // TestCallbackAliasIsTheFunctionPointer proves `using CountCallback = void
 // (*)(int)` binds as the function pointer it names: the declaration is
-// recognised as a callback, and the Go function type comes from the pointee's
+// recognized as a callback, and the Go function type comes from the pointee's
 // own signature rather than from the alias's spelling.
 func TestCallbackAliasIsTheFunctionPointer(t *testing.T) {
 	rendered, err := RenderResult(Config{
