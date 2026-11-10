@@ -1115,7 +1115,13 @@ func TestCanny(t *testing.T) {
 		t.Fatalf("NewMatInt32Int32Int32: %v", err)
 	}
 	defer src.Close()
+	// cv::Mat's constructor allocates without zeroing, so the black field is
+	// written explicitly: a matrix left with whatever the allocator returned is
+	// a different image, and Canny finds edges in the noise.
 	pixels := bgr(t, src)
+	for i := range pixels {
+		pixels[i] = 0
+	}
 	for row := 2; row < 6; row++ {
 		for col := 2; col < 6; col++ {
 			pixels[row*8+col] = 255
