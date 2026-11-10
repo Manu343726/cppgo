@@ -71,7 +71,11 @@ func (m *packageModel) buildShim(dir string) (*shimBuild, error) {
 	// -x c++ above applies to every input after it; a library is a linker
 	// input, not a translation unit.
 	args = append(args, "-x", "none")
-	if dir, base, ok := linkableLibrary(m.cfg.Library); ok {
+	for _, library := range m.libraries() {
+		dir, base, ok := linkableLibrary(library)
+		if !ok {
+			continue
+		}
 		// The library is named, never pathed: the linker records its soname (or
 		// its file name) as the DT_NEEDED entry, so a build directory never
 		// reaches the shim and $ORIGIN finds the library beside it.

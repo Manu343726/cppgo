@@ -118,7 +118,9 @@ func (b *builder) basesOf(record *recordModel) []*baseModel {
 				continue
 			}
 			model, ok := b.records[base.QualifiedName]
-			if !ok {
+			if !ok || (b.selectedRecords != nil && !b.selectedRecords[base.QualifiedName]) {
+				// A base the manifest did not select has no Go type, so a view
+				// of it would name a type the package does not declare.
 				continue
 			}
 			seen[base.QualifiedName] = true

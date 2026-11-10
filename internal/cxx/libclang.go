@@ -360,6 +360,7 @@ type libclangFuncs struct {
 
 	// Methods and linkage.
 	getCursorStorageClass        func(CXCursor) int32
+	cursorIsInlineNamespace      func(CXCursor) int32
 	methodIsStatic               func(CXCursor) int32
 	methodIsVirtual              func(CXCursor) int32
 	methodIsConst                func(CXCursor) int32
@@ -469,6 +470,7 @@ func (f *libclangFuncs) bind(handle uintptr) error {
 		{"clang_PrintingPolicy_dispose", &f.printingPolicyDispose},
 		{"clang_Cursor_getStorageClass", &f.getCursorStorageClass},
 		{"clang_CXXMethod_isStatic", &f.methodIsStatic},
+		{"clang_Cursor_isInlineNamespace", &f.cursorIsInlineNamespace},
 		{"clang_CXXMethod_isVirtual", &f.methodIsVirtual},
 		{"clang_CXXMethod_isConst", &f.methodIsConst},
 		{"clang_CXXMethod_isDefaulted", &f.methodIsDefaulted},

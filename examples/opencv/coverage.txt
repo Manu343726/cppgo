@@ -5,14 +5,13 @@
 # header: /usr/include/opencv4/opencv2/imgcodecs.hpp
 #
 # module	selected	bound	refused	skipped	templates	not_selected	bound_ratio
-core	236	159	5	23	49	1990	0.7465
+core	236	161	3	23	49	1990	0.7559
 imgcodecs	4	4	0	0	0	25	1.0000
 imgproc	9	9	0	0	0	235	1.0000
 #
 # classification counts (refused declarations)
 #
 # class	count
-by-value-record	2
 gpu-only	1
 unowned-pointer	2
 #
@@ -2267,11 +2266,9 @@ cvIsNaN(float)	not-selected	core	not-selected	the manifest did not name this dec
 cvRound(double)	not-selected	core	not-selected	the manifest did not name this declaration
 cvRound(float)	not-selected	core	not-selected	the manifest did not name this declaration
 cvRound(int)	not-selected	core	not-selected	the manifest did not name this declaration
-cv::Mat::Mat(const Mat &, const std::vector<Range> &)	refused	core	by-value-record	parameter ranges: "cv::Range" is not a POD; use scalar elements, or bind a C++ wrapper that copies the objects
 cv::Mat::Mat(const cuda::GpuMat &)	refused	core	gpu-only	parameter m: "const cuda::GpuMat" is not part of the generated API; include its complete definition in the header
 cv::Mat::getDefaultAllocator()	refused	core	unowned-pointer	"MatAllocator *" is a pointer to an opaque record; return it through a reference at the C++ boundary
 cv::Mat::getStdAllocator()	refused	core	unowned-pointer	"MatAllocator *" is a pointer to an opaque record; return it through a reference at the C++ boundary
-cv::Mat::operator()(const std::vector<Range> &) const	refused	core	by-value-record	parameter ranges: "cv::Range" is not a POD; use scalar elements, or bind a C++ wrapper that copies the objects
 cv::Mat::Mat(Mat &&)	skipped	core	not-needed	Go has no rvalue overload
 cv::Point_<int>::Point_()	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct
 cv::Point_<int>::Point_(Point_<int> &&)	skipped	core	not-needed	a mirrored record is its Go value; its constructors and destructor are the Go struct

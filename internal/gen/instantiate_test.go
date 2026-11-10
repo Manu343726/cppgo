@@ -1,6 +1,8 @@
 package gen
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,7 +54,6 @@ func TestParseTemplateRequest(t *testing.T) {
 		"ns::thing<int>(int",
 		"ns::thing<int>)",
 		"ns::nothing",
-		"ns::thing<std::string>(int)",
 	} {
 		_, err := parseTemplateRequest(bad)
 		assert.Error(t, err, bad)
@@ -184,7 +185,7 @@ func TestStdVectorOutParameter(t *testing.T) {
 	assert.Contains(t, goFile, "func Fill(values *[]int32) error", "an out vector is a pointer to a slice")
 	assert.Contains(t, goFile, "cppgoFree(", "the copied block is released")
 	assert.Contains(t, shim, "std::vector<int32_t> cppgo_values;")
-	assert.Contains(t, shim, "cppgo_out_copy", "the vector is copied out element by element")
+	assert.Contains(t, shim, "cppgo_copy", "the vector is copied out element by element")
 	assert.Contains(t, goFile, "func Total(values []int32) (int32, error)", "a const vector stays an input slice")
 }
 
@@ -218,4 +219,63 @@ func TestSelectionHelpers(t *testing.T) {
 	withArgs := &binding{templateArgs: []string{"unsigned char", "double"}}
 	assert.Equal(t, "Uint8Float64", b.templateSuffix(withArgs))
 	assert.Equal(t, "", b.templateSuffix(&binding{}))
+}
+
+// TestInstantiateNestedContainerTemplate covers a function template whose
+// parameter is a container of containers: the substitution produces a
+// standard-library spelling, and the recursive mapping has to recognize it after
+// the substitution, not only at parse time.
+func TestInstantiateNestedContainerTemplate(t *testing.T) {
+	cfg := fixtureConfig("instantiate", "instantiate.hpp")
+	cfg.Bind = []string{"ins::Box"}
+	cfg.Instantiate = []string{"ins::totalNested<int>(const std::vector<std::vector<int>> &)"}
+	rendered, err := RenderResult(cfg)
+	require.NoError(t, err)
+	goFile := ""
+	for _, out := range rendered.Outputs {
+		if out.Name == GenFileName {
+			goFile = string(out.Data)
+		}
+	}
+	assert.Contains(t, goFile, "func TotalNestedInt32(arg0 [][]int32) (int32, error)")
+}
+
+// TestInstantiateRecordTypeArgument covers a record as a template argument: the
+// OpenCV proxies take containers of records, and the argument is the type the
+// header declares, not a scalar.
+func TestInstantiateRecordTypeArgument(t *testing.T) {
+	header := filepath.Join(t.TempDir(), "proxy.hpp")
+	require.NoError(t, os.WriteFile(header, []byte(`
+#include <vector>
+namespace proxy {
+struct Point {
+    int x;
+    int y;
+};
+class Proxy {
+public:
+    Proxy() noexcept;
+    template <typename T>
+    Proxy(const std::vector<T> &values) noexcept;
+};
+int count(const Proxy &values) noexcept;
+}
+`), 0o644))
+	cfg := Config{
+		Headers:     []string{header},
+		Package:     "proxy",
+		Library:     "libproxy",
+		Out:         ".",
+		Bind:        []string{"proxy::count"},
+		Instantiate: []string{"proxy::Proxy::Proxy<proxy::Point>(const std::vector<proxy::Point> &)"},
+	}
+	rendered, err := RenderResult(cfg)
+	require.NoError(t, err)
+	goFile := ""
+	for _, out := range rendered.Outputs {
+		if out.Name == GenFileName {
+			goFile = string(out.Data)
+		}
+	}
+	assert.Contains(t, goFile, "func NewProxyPoint(arg0 []Point)")
 }

@@ -254,6 +254,20 @@ TEXT ·cppgoCall_196accefa055(SB), NOSPLIT, $0-36
 	MOVL	AX, ret+32(FP)
 	RET
 
+// func cppgoCall_87304b07cf32(fn uintptr, this uintptr, a1 uintptr, a2 unsafe.Pointer, a3 uint64) int32
+TEXT ·cppgoCall_87304b07cf32(SB), NOSPLIT, $0-44
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	a1+16(FP), SI
+	MOVQ	a2+24(FP), DX
+	MOVQ	a3+32(FP), CX
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	MOVL	AX, ret+40(FP)
+	RET
+
 // func cppgoCall_41d1f1786e98(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 uint64, a3 int64) int32
 TEXT ·cppgoCall_41d1f1786e98(SB), NOSPLIT, $0-44
 	MOVQ	fn+0(FP), R12
@@ -486,8 +500,8 @@ TEXT ·cppgoCall_8403499cbed9(SB), NOSPLIT, $0-36
 	MOVL	AX, ret+32(FP)
 	RET
 
-// func cppgoCall_7fd2313ccf23(fn uintptr, this uintptr, a1 int64, a2 int64, out unsafe.Pointer) int32
-TEXT ·cppgoCall_7fd2313ccf23(SB), NOSPLIT, $0-44
+// func cppgoCall_5db47d63cb4f(fn uintptr, this uintptr, a1 int64, a2 int64, out unsafe.Pointer) int32
+TEXT ·cppgoCall_5db47d63cb4f(SB), NOSPLIT, $0-44
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	a1+16(FP), SI
@@ -500,8 +514,8 @@ TEXT ·cppgoCall_7fd2313ccf23(SB), NOSPLIT, $0-44
 	MOVL	AX, ret+40(FP)
 	RET
 
-// func cppgoCall_5db47d63cb4f(fn uintptr, this uintptr, a1 int64, a2 int64, out unsafe.Pointer) int32
-TEXT ·cppgoCall_5db47d63cb4f(SB), NOSPLIT, $0-44
+// func cppgoCall_7fd2313ccf23(fn uintptr, this uintptr, a1 int64, a2 int64, out unsafe.Pointer) int32
+TEXT ·cppgoCall_7fd2313ccf23(SB), NOSPLIT, $0-44
 	MOVQ	fn+0(FP), R12
 	MOVQ	this+8(FP), DI
 	MOVQ	a1+16(FP), SI
@@ -1228,6 +1242,20 @@ TEXT ·cppgoCall_55aef80ee1be(SB), NOSPLIT, $0-36
 	CALL	R12
 	MOVQ	R13, SP
 	MOVL	AX, ret+32(FP)
+	RET
+
+// func cppgoCall_847f25e59de9(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 uint64, out uintptr) int32
+TEXT ·cppgoCall_847f25e59de9(SB), NOSPLIT, $0-44
+	MOVQ	fn+0(FP), R12
+	MOVQ	this+8(FP), DI
+	MOVQ	a1+16(FP), SI
+	MOVQ	a2+24(FP), DX
+	MOVQ	out+32(FP), CX
+	MOVQ	SP, R13
+	ANDQ	$~15, SP
+	CALL	R12
+	MOVQ	R13, SP
+	MOVL	AX, ret+40(FP)
 	RET
 
 // func cppgoCall_46f9baf6dc64(fn uintptr, this uintptr, a1 uintptr, out unsafe.Pointer) int32

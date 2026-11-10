@@ -127,6 +127,9 @@ type mapper struct {
 	// usesSpan is true when std::span is part of the API, whose header needs
 	// C++20.
 	usesSpan bool
+	// aliases are the library templates that name standard-library ones:
+	// "cv::Ptr" -> "std::shared_ptr". The model reads the alias as the shape.
+	aliases map[string]string
 	// templateParams maps a class or function template's parameter names —
 	// and libclang's indexed "type-parameter-0-N" spelling — to the Go name
 	// the generic API declares. It is nil for a non-template declaration.
@@ -149,7 +152,7 @@ func (m *mapper) mapType(p cxx.Param) (*goType, error) {
 	if name, ok := m.templateParam(p.Spelling); ok {
 		return &goType{Kind: goTypeParam, Go: name, ParamName: name, Param: p}, nil
 	}
-	if name, ok := stdTypeName(p); ok {
+	if name, ok := stdTypeNameWith(p, m.aliases); ok {
 		return m.mapStd(p, name)
 	}
 	switch p.Kind {
@@ -176,6 +179,12 @@ func (m *mapper) mapType(p cxx.Param) (*goType, error) {
 // decided here; the generated thunk constructs, copies and destroys the C++
 // value, so no standard-library type is ever visible in Go or in the C ABI.
 func (m *mapper) mapStd(p cxx.Param, name string) (*goType, error) {
+	// libclang spells a template argument canonically, so a std::vector's
+	// element arrives as std::basic_string<char> or with an allocator argument:
+	// the table names the shapes, not the spellings.
+	if canonical, ok := canonicalStdName(name); ok {
+		name = canonical
+	}
 	if strings.HasSuffix(strings.TrimSpace(p.Spelling), "*") {
 		return nil, pending(fmt.Sprintf("%q is a pointer to a standard-library type", p.Spelling),
 			"take it by value or by reference at the C++ boundary")
@@ -188,6 +197,9 @@ func (m *mapper) mapStd(p cxx.Param, name string) (*goType, error) {
 	case strings.HasPrefix(name, "std::vector<"):
 		elem, err := m.mapTemplateElement(name, "std::vector")
 		if err != nil {
+			return nil, err
+		}
+		if err := containerElementOK(elem); err != nil {
 			return nil, err
 		}
 		return &goType{Kind: goSlice, Go: "[]" + elem.Go, Elem: elem, Std: stdVector, Param: p}, nil
@@ -289,7 +301,11 @@ func (m *mapper) mapSmartPointer(name, prefix string) (*goType, error) {
 	return &goType{Kind: goRecord, Go: record.GoName, Cxx: "::" + record.CxxName, Record: record, Std: stdNone}, nil
 }
 
-// mapElement maps one template argument: a scalar or a mirrored record.
+// mapElement maps one template argument. The mapping is recursive: an element
+// is a scalar, a mirrored record held by value, a standard-library container
+// (std::vector<std::vector<int>> is a slice of slices, and the element of that
+// is an element of that), or an opaque record the Go side owns and passes by
+// address.
 func (m *mapper) mapElement(spelling string) (*goType, error) {
 	name := strings.TrimSpace(spelling)
 	isConst := strings.HasPrefix(name, "const ")
@@ -310,13 +326,42 @@ trimmed:
 	if scalar, ok := elementScalars[name]; ok {
 		return &goType{Kind: scalar.kind, Go: scalar.goName, C: scalar.cName, Cxx: scalar.cName, Const: isConst}, nil
 	}
-	if record, ok := m.lookupRecord(name); ok {
-		if !record.Mirrored {
-			return nil, pending(fmt.Sprintf("%q is not a POD", name), "use scalar elements, or bind a C++ wrapper that copies the objects")
+	// A standard-library element recurses through the same table the parameter
+	// map reads, and only for the shapes a container can hold: a vector of
+	// vectors, a vector of strings (whose every element would need its own
+	// character pool) and a vector of smart pointers are not the same question
+	// and are reported as what they are.
+	if strings.HasPrefix(name, "std::") {
+		mapped, err := m.mapStd(cxx.Param{Kind: cxx.TypeOther, ClangKind: "Unexposed", Spelling: name}, name)
+		if err != nil {
+			return nil, err
 		}
-		return &goType{Kind: goRecord, Go: record.GoName, C: "void *", Cxx: "::" + record.CxxName, Record: record, Const: isConst}, nil
+		mapped.Const = mapped.Const || isConst
+		return mapped, nil
+	}
+	if record, ok := m.lookupRecord(name); ok {
+		if record.Mirrored {
+			return &goType{Kind: goRecord, Go: record.GoName, C: "void *", Cxx: "::" + record.CxxName, Record: record, Const: isConst}, nil
+		}
+		// An opaque record is a value Go owns: the element is the *T the
+		// generated API already hands out, and the container carries the
+		// element addresses rather than the objects.
+		return &goType{Kind: goPointer, Go: "*" + record.GoName, C: "void *", Cxx: "::" + record.CxxName, Record: record, Const: isConst}, nil
 	}
 	return nil, pending(fmt.Sprintf("%q is not a scalar or a known record", name), "use a scalar element type at the C++ boundary")
+}
+
+// containerElementOK reports whether a mapped element is one a std::vector can
+// hold: a value or a container of values. A string element would need a
+// character pool whose bounds the wire does not carry, and a smart pointer is
+// ownership, not an element.
+func containerElementOK(elem *goType) error {
+	switch elem.Std {
+	case stdNone, stdVector, stdArray, stdOptional, stdSpan:
+		return nil
+	}
+	return pending(fmt.Sprintf("%q is a standard-library element this build does not cross inside a container", elem.Param.Spelling),
+		"use a scalar, a POD record, or a std::vector of those as the element")
 }
 
 // recordFor finds the record a declared type names: the exact qualified name
@@ -425,6 +470,13 @@ func arrayCount(spelling string) (int64, error) {
 // a pointer to a library type (as opposed to a reference or a value) is left to
 // mapStd's error.
 func stdTypeName(p cxx.Param) (string, bool) {
+	return stdTypeNameWith(p, nil)
+}
+
+// stdTypeNameWith is stdTypeName with the manifest's aliases applied: a library
+// template that names a standard one (cv::Ptr<T> is std::shared_ptr<T>) is read
+// as the standard shape before anything else is asked.
+func stdTypeNameWith(p cxx.Param, aliases map[string]string) (string, bool) {
 	if p.Kind != cxx.TypeRecord && p.Kind != cxx.TypePointer {
 		return "", false
 	}
@@ -440,6 +492,7 @@ func stdTypeName(p cxx.Param) (string, bool) {
 		}
 	}
 trimmed:
+	s = expandAlias(s, aliases)
 	s = strings.TrimSuffix(s, "&&")
 	s = strings.TrimSuffix(s, "&")
 	s = strings.TrimSuffix(s, "*")
@@ -479,6 +532,22 @@ trimmed:
 	return "", false
 }
 
+// expandAlias rewrites a library template spelling into the standard-library
+// template it names, at the front of the spelling only: Ptr<ORB> becomes
+// std::shared_ptr<ORB>.
+func expandAlias(s string, aliases map[string]string) string {
+	for alias, target := range aliases {
+		// A declaration inside the alias's own namespace spells it unqualified
+		// ("Ptr<ORB>" for cv::Ptr<ORB>), so both spellings name it.
+		for _, key := range []string{alias, simpleName(alias)} {
+			if strings.HasPrefix(s, key+"<") {
+				return target + s[len(key):]
+			}
+		}
+	}
+	return s
+}
+
 // canonicalFamily reports whether a canonical standard-library name is one the
 // model reads from the canonical type rather than from the written spelling.
 // The string and vector spellings are the ones a library aliases; the rest are
@@ -502,7 +571,7 @@ func canonicalStdName(record string) (string, bool) {
 		return "std::string", true
 	case strings.HasPrefix(record, "std::basic_string_view<"):
 		return "std::string_view", true
-	case strings.HasPrefix(record, "std::vector<"):
+	case strings.HasPrefix(record, "std::vector<") && strings.HasSuffix(record, ">"):
 		args := splitTemplateArgs(record[len("std::vector<") : len(record)-1])
 		if len(args) == 2 {
 			return "std::vector<" + strings.TrimSpace(args[0]) + ">", true

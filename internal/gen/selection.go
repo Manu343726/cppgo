@@ -103,6 +103,10 @@ func (b *builder) applySelection() error {
 		}
 	}
 	b.order = keptRecords
+	b.selectedRecords = make(map[string]bool, len(keptRecords))
+	for _, name := range keptRecords {
+		b.selectedRecords[name] = true
+	}
 
 	kept := b.bindings[:0]
 	for _, binding := range b.bindings {
@@ -379,6 +383,12 @@ func (b *builder) templateSuffix(binding *binding) string {
 	}
 	var out strings.Builder
 	for _, spelling := range binding.templateArgs {
+		// A record argument is named after the Go type the record model has, so
+		// _InputArray<cv::Point_<int>> is named PointInt and not the spelling.
+		if record, ok := b.mapper.lookupRecord(spelling); ok {
+			out.WriteString(typeSuffix(record.GoName))
+			continue
+		}
 		param, ok := cxx.ScalarType(spelling)
 		if !ok {
 			out.WriteString(typeSuffix(exportName(spelling)))

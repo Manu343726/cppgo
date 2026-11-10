@@ -83,6 +83,9 @@ type slot struct {
 // its size.
 func (s *slot) align() int { return s.size }
 
+// maxSlotAlign is the alignment of the argument frame's result block, in bytes.
+const maxSlotAlign = 8
+
 // recordModel is one bound C++ record.
 type recordModel struct {
 	// GoName is the exported Go type name.
@@ -142,6 +145,15 @@ type goParam struct {
 	Group []*goParam
 }
 
+// refFreeSymbol is the shim symbol that deletes a smart-pointer result's holder.
+func (b *binding) refFreeSymbol() string { return "cppgo_free_ref_" + b.ID }
+
+// refSymVar is the generated package's variable for that symbol.
+func (b *binding) refSymVar() string { return "cppgoRefSym_" + b.ID }
+
+// isSmartResult reports whether the result crosses as a smart pointer.
+func (b *binding) isSmartResult() bool { return b.SmartResult }
+
 // allArgs is every wire word of a binding: the ones inside the argument block
 // and the ones beside it. An over-full call moves its value words into the
 // block, and a reader that looks only at Wire misses them.
@@ -182,6 +194,14 @@ type wireArg struct {
 	stdOutData string
 	stdOutSize string
 	stdGoName  string
+	// proxyType is the C++ proxy type the shim constructs around this
+	// parameter's container, empty when the parameter is not adapted.
+	proxyType string
+	// stdOffsets, stdOutOffsets name the words that carry a nested container's
+	// per-inner-vector bounds: the value the callee reads, and the block it
+	// writes.
+	stdOffsets    string
+	stdOutOffsets string
 	// isOut marks a standard-library result's out-parameter.
 	isOut bool
 	// callable is set for a function-pointer or std::function parameter: the
@@ -296,6 +316,10 @@ type binding struct {
 	// StdResult is true when the result is a standard-library value, which the
 	// thunk copies out through out-parameters.
 	StdResult bool
+	// SmartResult is true when the result is a std::shared_ptr or
+	// std::unique_ptr: the value is the object it owns, and the holder the shim
+	// allocates keeps the control block alive until the Go value is closed.
+	SmartResult bool
 	// ViewResult is true when the result is a borrowed pointer to a record:
 	// the Go value is a view of the receiver's object, one reference more, at
 	// the address C++ returned. It is how a method that returns `T&` (`T *`)
@@ -444,6 +468,15 @@ type builder struct {
 	// neededRecords are records a manifest request depends on (the receiver of
 	// an instantiated member), which are roots even without a -bind entry.
 	neededRecords map[string]bool
+	// selectedRecords is the set of record names the manifest kept. A base view
+	// and a base's members are only emitted for a type that is part of the API.
+	selectedRecords map[string]bool
+	// aliases are the -alias replacements, library template to standard one.
+	aliases map[string]string
+	// proxies are the -proxy adaptations, and proxyMatched tracks the ones a
+	// declaration used.
+	proxies      []*proxyAdaptation
+	proxyMatched []bool
 	// selectedSymbols are the declarations the manifest selected, by symbol
 	// identity. A selected declaration that produced no binding is a refusal,
 	// and that is what the coverage report counts.
@@ -483,6 +516,24 @@ func build(cfg Config) (*packageModel, error) {
 		bindMatched:        make([]bool, len(cfg.Bind)),
 		excludeMatched:     make([]bool, len(cfg.Exclude)),
 	}
+	for _, entry := range cfg.Alias {
+		alias, target, ok := strings.Cut(entry, "=")
+		if !ok || strings.TrimSpace(alias) == "" || strings.TrimSpace(target) == "" {
+			return nil, fmt.Errorf("cppgo: -alias %s: write it as <C++ template>=<std template>", entry)
+		}
+		if b.aliases == nil {
+			b.aliases = map[string]string{}
+		}
+		b.aliases[strings.TrimSpace(alias)] = strings.TrimSpace(target)
+	}
+	for _, entry := range cfg.Proxy {
+		adapted, err := parseProxy(entry)
+		if err != nil {
+			return nil, err
+		}
+		b.proxies = append(b.proxies, adapted)
+	}
+	b.proxyMatched = make([]bool, len(b.proxies))
 	if err := b.load(); err != nil {
 		return nil, err
 	}
@@ -498,7 +549,7 @@ func build(cfg Config) (*packageModel, error) {
 	// a field's Go type needs the enum model the name produces.
 	b.assignTypeNames()
 	b.buildEnums()
-	b.mapper = &mapper{records: b.records, enums: b.enums}
+	b.mapper = &mapper{records: b.records, enums: b.enums, aliases: b.aliases}
 	b.buildRecords()
 	b.buildTemplates()
 	if err := b.loadInstantiations(); err != nil {
@@ -528,6 +579,9 @@ func build(cfg Config) (*packageModel, error) {
 		return nil, err
 	}
 	if err := b.checkInstantiateRequests(); err != nil {
+		return nil, err
+	}
+	if err := b.checkProxy(); err != nil {
 		return nil, err
 	}
 	if err := b.crossCheck(); err != nil {
@@ -587,11 +641,12 @@ func (b *builder) closeProjects() {
 	b.projects = nil
 }
 
-// symbolKey is the identity of a symbol across headers.
+// symbolKey is the identity of a symbol across headers: its qualified name and
+// its signature, never the mangled name. A constructor and a destructor are
+// mangled twice (C1/C2, D1/D2), so two kinds of one declaration would otherwise
+// be two bindings that share a thunk name; the signature is what tells two
+// declarations apart, and it is the same in both manglings.
 func symbolKey(sym cxx.Symbol) string {
-	if sym.Mangled != "" {
-		return sym.Mangled
-	}
 	return sym.QualifiedName + "|" + sym.Signature()
 }
 
@@ -623,6 +678,14 @@ func (b *builder) buildRecords() {
 			DefaultConstructible: rec.IsDefaultConstructible,
 			CopyConstructible:    rec.IsCopyConstructible,
 			Comment:              rec.Comment,
+		}
+		if rec.Access == cxx.AccessPrivate || rec.Access == cxx.AccessProtected {
+			// A nested type of a class is nameable only inside it: no thunk can
+			// spell it, so neither the type nor its members are part of the API.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s is not part of the generated API: a %s nested type is not nameable from outside the class that declares it",
+				rec.QualifiedName, rec.Access))
+			continue
 		}
 		model.Mirrored = b.mirrorable(rec)
 		if existing, seen := b.records[rec.QualifiedName]; seen {
@@ -994,7 +1057,15 @@ func (b *builder) buildBindings() {
 		if b.rawRecord(owner.CxxName).IsAbstract {
 			continue
 		}
-		clone := b.syntheticClone(owner)
+		clone, err := b.syntheticClone(owner)
+		if err != nil {
+			// The evidence a record is copy-constructible is its fields; a copy
+			// this build cannot lower is reported, and the record keeps its
+			// other members.
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s has no Clone: its copy constructor is not carried: %v", owner.CxxName, err))
+			continue
+		}
 		owner.Clone = clone
 		b.bindings = append(b.bindings, clone)
 	}
@@ -1084,7 +1155,7 @@ func (b *builder) syntheticConstructor(owner *recordModel) *binding {
 // syntheticClone is the Clone() binding of a record that is copy-constructible
 // without declaring a copy constructor. The thunk placement-news the copy, which
 // is exactly what the implicit copy constructor does.
-func (b *builder) syntheticClone(owner *recordModel) *binding {
+func (b *builder) syntheticClone(owner *recordModel) (*binding, error) {
 	pointee := cxx.Param{
 		Kind:       cxx.TypeRecord,
 		Spelling:   "const " + owner.CxxName,
@@ -1110,11 +1181,14 @@ func (b *builder) syntheticClone(owner *recordModel) *binding {
 		Params:            []cxx.Param{reference},
 	}
 	sym.Result = cxx.Param{Kind: cxx.TypeVoid, ClangKind: "Void", Spelling: "void"}
-	clone, _ := b.newBinding(sym, owner)
+	clone, err := b.newBinding(sym, owner)
+	if err != nil {
+		return nil, err
+	}
 	clone.IsConstructor = false
 	clone.IsClone = true
 	clone.Params = nil
-	return clone
+	return clone, nil
 }
 
 // qualifyNestedParams rewrites a type name that libclang spelled against the
@@ -1197,7 +1271,10 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 					"take it as a callback parameter, or expose a C++ wrapper that owns it")
 			}
 			if result.Std == stdUniquePtr || result.Std == stdSharedPtr {
-				return nil, pending(fmt.Sprintf("%q is a smart-pointer result", sym.Result.Spelling), "return the object by value or through a reference at the C++ boundary")
+				// A smart pointer result is the object it owns, and the control
+				// block is one holder object the shim allocates: Go owns the
+				// holder, views the pointee, and releases the holder once.
+				binding.SmartResult = true
 			}
 			if result.Kind == goRecord {
 				// A mirrored record comes back through a pointer the Go side
@@ -1210,7 +1287,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				// there can throw whatever its copy constructor throws.
 				binding.hasByValue = true
 			}
-			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored && !result.ByValue {
+			if result.Kind == goPointer && result.Std == stdNone && result.Record != nil && !result.Record.Mirrored && !result.ByValue {
 				// A method's borrowed pointer is a view of the receiver: the
 				// object is Go's, and the returned address is inside it. A free
 				// function's is an address nobody owns, which Go cannot hold.
@@ -1253,7 +1330,9 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 	if binding.Carrier.shimCarried() && binding.Result != nil {
 		switch {
 		case binding.StdResult:
-			b.addStdResult(binding)
+			if err := b.addStdResult(binding); err != nil {
+				return nil, err
+			}
 		case binding.Result.ByValue && binding.Result.Record != nil && !binding.Result.Record.Mirrored:
 			// The shim constructs the result into the storage the Go side
 			// allocated; the pointer is the object's address, and the object
@@ -1352,7 +1431,17 @@ func (b *builder) lowerParams(binding *binding) error {
 	}
 	for i := 0; i < len(params); i++ {
 		p := params[i]
-		if _, isStd := stdTypeName(p); isStd {
+		// A parameter the manifest adapted is lowered as the container it names:
+		// the shim constructs the proxy around it, so one thunk holds both.
+		adapted, proxyCxx, err := b.adaptParam(binding, i, p)
+		if err != nil {
+			return err
+		}
+		if adapted != nil {
+			p = *adapted
+		}
+		if _, isStd := stdTypeNameWith(p, b.mapper.aliases); isStd {
+			wireStart := len(binding.Wire)
 			mapped, err := b.mapper.mapType(p)
 			if err != nil {
 				return fmt.Errorf("parameter %s: %w", p.Name, err)
@@ -1378,10 +1467,15 @@ func (b *builder) lowerParams(binding *binding) error {
 			}
 			if out {
 				b.stdOutParamWire(binding, p, mapped, name, addWire)
+				b.markProxy(binding, wireStart, proxyCxx)
 				continue
 			}
 			b.stdParamWire(binding, p, mapped, name, addWire)
+			b.markProxy(binding, wireStart, proxyCxx)
 			continue
+		}
+		if proxyCxx != "" {
+			return manifestError{fmt.Errorf("parameter %s: the -proxy adaptation names %q, which this build does not map as a container", p.Name, p.Spelling)}
 		}
 		if elem, ok := b.sliceElement(p); ok {
 			j := i
@@ -1566,53 +1660,10 @@ func isStdOutRef(p cxx.Param) bool {
 // two out-parameters the shim writes the new value through, and the C++ local
 // the call reads and writes.
 func (b *builder) stdOutParamWire(binding *binding, p cxx.Param, mapped *goType, goName string, add func(*wireArg)) {
-	base := cIdent(p.Name)
-	local := "cppgo_" + base
-	pointer := func(expr, keep, cType, cName string) *wireArg {
-		return &wireArg{
-			slotType: "unsafe.Pointer", class: classInt, size: 8,
-			expr: expr, keep: keep, cType: cType, cName: cName, param: p,
-		}
-	}
-	elem := mapped.Elem
-	// A std::vector's element is never const (the allocator rejects it), so
-	// the wire type is the element's own.
-	cType := elem.Cxx + " *"
-	data := base + "_data"
-	size := base + "_size"
-	primary := pointer("cppgo.Ptr(*"+goName+")", "*"+goName, cType, data)
-	primary.label = "a" + itoa(len(binding.Wire))
-	add(primary)
-	add(&wireArg{
-		slotType: "uint64", class: classInt, size: 8,
-		expr: "uint64(len(*" + goName + "))", cType: "size_t", cName: size, param: p,
-		stdRole: stdRoleExtra,
-	})
-	outData := base + "_out_data"
-	outSize := base + "_out_size"
-	outDataArg := pointer("unsafe.Pointer(&"+outData+")", "&"+outData, "void **", outData)
-	outDataArg.isOut = true
-	outDataArg.label = "a" + itoa(len(binding.Wire))
-	add(outDataArg)
-	outSizeArg := pointer("unsafe.Pointer(&"+outSize+")", "&"+outSize, "size_t *", outSize)
-	outSizeArg.isOut = true
-	outSizeArg.label = "a" + itoa(len(binding.Wire))
-	add(outSizeArg)
-	primary.stdRole = stdRolePrimary
-	primary.stdKind = mapped.Std
-	primary.stdLocal = local
-	primary.stdArgs = []string{data, size}
-	primary.stdElem = elem
-	primary.stdType = mapped
-	primary.stdOutCopy = true
-	primary.stdOutData = outData
-	primary.stdOutSize = outSize
-	primary.stdGoName = goName
-	binding.stdDecls = append(binding.stdDecls,
-		"var "+outData+" unsafe.Pointer",
-		"var "+outSize+" uint64")
-	binding.usesFree = true
-	b.usesFree = true
+	// A vector is the one standard-library value with a copy-back shape, and its
+	// element decides the shape: a value buffer, a nested one with bounds, or a
+	// block of objects the Go side adopts.
+	b.stdVectorOutParamWire(binding, p, mapped, goName)
 }
 
 // stdParamWire lowers one standard-library parameter. The Go value is the
@@ -1647,7 +1698,9 @@ func (b *builder) stdParamWire(binding *binding, p cxx.Param, mapped *goType, go
 		primary.stdLocal = local
 		primary.stdArgs = []string{data, size}
 		primary.stdType = mapped
-	case stdVector, stdSpan:
+	case stdVector:
+		b.stdVectorParamWire(binding, p, mapped, goName)
+	case stdSpan:
 		elem := mapped.Elem
 		data := base + "_data"
 		size := base + "_size"
@@ -1688,9 +1741,42 @@ func (b *builder) stdParamWire(binding *binding, p cxx.Param, mapped *goType, go
 	}
 }
 
+// adaptParam returns the parameter a declaration is lowered with when the
+// manifest adapted it with -proxy, and the C++ proxy type the shim constructs
+// around the container.
+func (b *builder) adaptParam(binding *binding, index int, declared cxx.Param) (*cxx.Param, string, error) {
+	adapted, matched, ok := b.proxyFor(binding.sym, index)
+	if !ok {
+		return nil, "", nil
+	}
+	// The entry was written for this declaration, so it is used: a parameter it
+	// cannot adapt is the invocation's mistake, and it says why.
+	b.proxyMatched[matched] = true
+	proxyCxx, err := proxyType(declared)
+	if err != nil {
+		return nil, "", manifestError{fmt.Errorf("parameter %s: %w", declared.Name, err)}
+	}
+	param := adaptedParam(declared, adapted)
+	return &param, proxyCxx, nil
+}
+
+// markProxy records the proxy type on the primary wire word the parameter added,
+// which is where the shim's call expression wraps it.
+func (b *builder) markProxy(binding *binding, from int, proxyCxx string) {
+	if proxyCxx == "" {
+		return
+	}
+	for _, arg := range binding.Wire[from:] {
+		if arg.stdRole == stdRolePrimary {
+			arg.proxyType = proxyCxx
+			return
+		}
+	}
+}
+
 // addStdResult appends the out-parameters a standard-library result crosses
 // through, and the Go locals they aim at.
-func (b *builder) addStdResult(binding *binding) {
+func (b *builder) addStdResult(binding *binding) error {
 	result := binding.Result
 	out := func(expr, keep, cType, cName string) *wireArg {
 		arg := &wireArg{
@@ -1714,20 +1800,29 @@ func (b *builder) addStdResult(binding *binding) {
 		out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
 		binding.usesFree = true
 		b.usesFree = true
-	case stdVector, stdSpan:
-		binding.stdDecls = []string{"var cppgoData unsafe.Pointer", "var cppgoSize uint64"}
-		out("unsafe.Pointer(&cppgoData)", "&cppgoData", "void **", "cppgo_out_data")
-		out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
-		binding.usesFree = true
-		b.usesFree = true
+	case stdVector:
+		b.stdVectorResultWire(binding, result)
+	case stdSpan:
+		// A span is a view: as a result it would name C++ storage whose owner
+		// the Go side does not hold. The declaration is reported instead of
+		// handing out an address that can dangle.
+		return pending(fmt.Sprintf("%q is a span result", result.Param.Spelling),
+			"take the span as a parameter, or return the container it views")
 	case stdArray:
 		binding.stdDecls = []string{"var cppgoResult " + result.Go}
 		out("unsafe.Pointer(&cppgoResult[0])", "&cppgoResult", "void *", "cppgo_out_data")
+	case stdSharedPtr, stdUniquePtr:
+		binding.stdDecls = []string{"var cppgoRef unsafe.Pointer", "var cppgoPointee unsafe.Pointer"}
+		out("unsafe.Pointer(&cppgoPointee)", "&cppgoPointee", "void **", "cppgo_out_pointee")
+		out("unsafe.Pointer(&cppgoRef)", "&cppgoRef", "void **", "cppgo_out_ref")
+		binding.usesFree = true
+		b.usesFree = true
 	case stdOptional:
 		binding.stdDecls = []string{"var cppgoResult " + result.Elem.Go, "var cppgoHas int32"}
 		out("unsafe.Pointer(&cppgoResult)", "&cppgoResult", "void *", "cppgo_out_value")
 		out("unsafe.Pointer(&cppgoHas)", "&cppgoHas", "int32_t *", "cppgo_out_has")
 	}
+	return nil
 }
 
 // paramWire builds the wire argument for one ordinary parameter.
@@ -2230,23 +2325,48 @@ func (m *packageModel) report() []string {
 // links against and what the generated Go records: a build path never reaches
 // either artifact.
 func (b *builder) loadExporteds() error {
-	info, err := os.Stat(b.cfg.Library)
-	if err != nil || info.IsDir() {
-		return nil
-	}
-	names, err := cxx.DefinedDynamicSymbols(b.cfg.Library)
-	if err != nil {
-		return fmt.Errorf("cppgo: %s: %w", b.cfg.Library, err)
-	}
-	b.exported = make(map[string]bool, len(names))
-	for _, name := range names {
-		b.exported[name] = true
-	}
-	if b.linkedName, err = cxx.Soname(b.cfg.Library); err != nil {
-		return fmt.Errorf("cppgo: %s: %w", b.cfg.Library, err)
+	for _, library := range b.cfg.libraries() {
+		info, err := os.Stat(library)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		names, err := cxx.DefinedDynamicSymbols(library)
+		if err != nil {
+			return fmt.Errorf("cppgo: %s: %w", library, err)
+		}
+		if b.exported == nil {
+			b.exported = make(map[string]bool, len(names))
+		}
+		for _, name := range names {
+			b.exported[name] = true
+		}
+		if b.linkedName == "" {
+			if b.linkedName, err = cxx.Soname(library); err != nil {
+				return fmt.Errorf("cppgo: %s: %w", library, err)
+			}
+		}
 	}
 	return nil
 }
+
+// libraries is every shared object the shim links against: -library and the
+// extra ones, in the order they were given.
+func (c Config) libraries() []string {
+	out := make([]string, 0, 1+len(c.Libraries))
+	if c.Library != "" {
+		out = append(out, c.Library)
+	}
+	for _, library := range c.Libraries {
+		if library == "" || library == c.Library {
+			continue
+		}
+		out = append(out, library)
+	}
+	return out
+}
+
+// libraries is every shared object the shim links against.
+func (m *packageModel) libraries() []string { return m.cfg.libraries() }
 
 // outOfLine reports whether a dynamic symbol exists for the declaration: the
 // header saw a definition, or the library exports the mangled name. Both halves
@@ -2281,7 +2401,11 @@ func (b *builder) crossCheck() error {
 			return fmt.Errorf("cppgo: %s: the direct binding's symbol %s is not exported by %s", displaySignature(binding.sym), binding.Symbol, b.cfg.Library)
 		}
 	}
-	b.verified = filepath.Base(b.cfg.Library)
+	names := make([]string, 0, len(b.cfg.libraries()))
+	for _, library := range b.cfg.libraries() {
+		names = append(names, filepath.Base(library))
+	}
+	b.verified = strings.Join(names, " ")
 	return nil
 }
 
@@ -2305,7 +2429,15 @@ func (b *builder) layout() {
 		}
 		off := 0
 		for _, slot := range slots {
-			off = alignUp(off, slot.align())
+			align := slot.align()
+			if slot.label == "ret" {
+				// The result block starts on the machine's maximum alignment,
+				// not on the result type's: go vet's asmdecl check computes the
+				// frame that way, and an assembler frame it disagrees with does
+				// not compile.
+				align = maxSlotAlign
+			}
+			off = alignUp(off, align)
 			slot.offset = off
 			off += slot.size
 		}

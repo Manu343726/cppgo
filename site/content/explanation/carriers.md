@@ -151,7 +151,8 @@ pointers in, and **SSE**, the eight floating-point registers beside them.
 | `std::vector<T>` | thunk | supported |
 | `std::array<T,N>` | thunk, by value (a fixed-size array) | supported |
 | `std::optional<T>` | thunk; Go value is `*T` (a C++ value that may be absent) | supported |
-| `std::unique_ptr`, `std::shared_ptr` | — | **refused**: they are owning pointers, which free their object |
+| `std::unique_ptr`, `std::shared_ptr` **result** | thunk: the shim moves the pointer into a holder it allocates, Go owns the holder and releases it once | supported: the Go value is the pointee, and `Close` drops Go's reference |
+| `std::unique_ptr`, `std::shared_ptr` **parameter** | — | **refused**: Go has no owning pointer to hand over |
 | POD ≤ 16 bytes by value | thunk | supported |
 | POD > 16 bytes / MEMORY class by value | thunk, through an sret pointer (a hidden first argument through which the callee writes a large result) | generated and compiled, not executed |
 | non-POD by value | thunk, copied into Go's storage (a *T the Go side owns) | measured, supported: `Close` runs the declared destructor once; a record that declares none releases the storage and runs nothing |

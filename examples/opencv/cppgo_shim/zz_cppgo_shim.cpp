@@ -279,6 +279,27 @@ extern "C" int32_t cppgo_thunk_196accefa055(void * self, const void * m_2, const
 	}
 }
 
+extern "C" int32_t cppgo_thunk_87304b07cf32(void * self, const void * m_2, void * const * ranges_elems, size_t ranges_size) {
+	cppgo_error_message.clear();
+	try {
+		std::vector<::cv::Range> cppgo_ranges;
+		if (ranges_size != 0) {
+			cppgo_ranges.reserve(ranges_size);
+			for (size_t cppgo_i = 0; cppgo_i < ranges_size; ++cppgo_i) {
+				cppgo_ranges.push_back(*static_cast<const ::cv::Range *>(static_cast<void * const *>(ranges_elems)[cppgo_i]));
+			}
+		}
+		new (self) ::cv::Mat(*static_cast<const ::cv::Mat *>(m_2), cppgo_ranges);
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
 extern "C" int32_t cppgo_thunk_41d1f1786e98(void * self, int32_t * sizes_data, size_t sizes_size, int32_t arg1) {
 	cppgo_error_message.clear();
 	try {
@@ -511,10 +532,10 @@ extern "C" int32_t cppgo_thunk_8403499cbed9(const void * self, void * m_2, int32
 	}
 }
 
-extern "C" int32_t cppgo_thunk_7fd2313ccf23(void * self, int32_t arg0, int32_t arg1, double ** cppgo_result) {
+extern "C" int32_t cppgo_thunk_5db47d63cb4f(void * self, int32_t arg0, int32_t arg1, uint8_t ** cppgo_result) {
 	cppgo_error_message.clear();
 	try {
-		*cppgo_result = reinterpret_cast<double *>(&(static_cast<::cv::Mat *>(self)->at<double>(arg0, arg1)));
+		*cppgo_result = reinterpret_cast<uint8_t *>(&(static_cast<::cv::Mat *>(self)->at<unsigned char>(arg0, arg1)));
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();
@@ -525,10 +546,10 @@ extern "C" int32_t cppgo_thunk_7fd2313ccf23(void * self, int32_t arg0, int32_t a
 	}
 }
 
-extern "C" int32_t cppgo_thunk_5db47d63cb4f(void * self, int32_t arg0, int32_t arg1, uint8_t ** cppgo_result) {
+extern "C" int32_t cppgo_thunk_7fd2313ccf23(void * self, int32_t arg0, int32_t arg1, double ** cppgo_result) {
 	cppgo_error_message.clear();
 	try {
-		*cppgo_result = reinterpret_cast<uint8_t *>(&(static_cast<::cv::Mat *>(self)->at<unsigned char>(arg0, arg1)));
+		*cppgo_result = reinterpret_cast<double *>(&(static_cast<::cv::Mat *>(self)->at<double>(arg0, arg1)));
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();
@@ -820,7 +841,7 @@ extern "C" uint8_t * cppgo_thunk_31c24550b64c(const void * self) {
 }
 
 extern "C" void cppgo_thunk_238021a3a248(void * self, uint8_t * data) {
-	static_cast<::cv::Mat *>(self)->data = data;
+	static_cast<::cv::Mat *>(self)->data = reinterpret_cast<uchar *>(data);
 }
 
 extern "C" const uint8_t * cppgo_thunk_1f65189ee6c3(const void * self) {
@@ -828,7 +849,7 @@ extern "C" const uint8_t * cppgo_thunk_1f65189ee6c3(const void * self) {
 }
 
 extern "C" void cppgo_thunk_0900c74b116a(void * self, const uint8_t * dataend) {
-	static_cast<::cv::Mat *>(self)->dataend = dataend;
+	static_cast<::cv::Mat *>(self)->dataend = reinterpret_cast<const uchar *>(dataend);
 }
 
 extern "C" const uint8_t * cppgo_thunk_c232af678945(const void * self) {
@@ -836,7 +857,7 @@ extern "C" const uint8_t * cppgo_thunk_c232af678945(const void * self) {
 }
 
 extern "C" void cppgo_thunk_82b3fe8fc47c(void * self, const uint8_t * datalimit) {
-	static_cast<::cv::Mat *>(self)->datalimit = datalimit;
+	static_cast<::cv::Mat *>(self)->datalimit = reinterpret_cast<const uchar *>(datalimit);
 }
 
 extern "C" const uint8_t * cppgo_thunk_096a765a591c(const void * self) {
@@ -844,7 +865,7 @@ extern "C" const uint8_t * cppgo_thunk_096a765a591c(const void * self) {
 }
 
 extern "C" void cppgo_thunk_6ee8626d51fb(void * self, const uint8_t * datastart) {
-	static_cast<::cv::Mat *>(self)->datastart = datastart;
+	static_cast<::cv::Mat *>(self)->datastart = reinterpret_cast<const uchar *>(datastart);
 }
 
 extern "C" int32_t cppgo_thunk_03fdcd713379(void * self) {
@@ -1189,6 +1210,27 @@ extern "C" int32_t cppgo_thunk_55aef80ee1be(const void * self, const void * roi,
 	cppgo_error_message.clear();
 	try {
 		new (cppgo_result) cv::Mat(static_cast<const ::cv::Mat *>(self)->operator()(*static_cast<const ::cv::Rect_<int> *>(roi)));
+		return 0;
+	} catch (const std::exception &error) {
+		cppgo_error_message = error.what();
+		return 1;
+	} catch (...) {
+		cppgo_error_message = "unknown C++ exception";
+		return 1;
+	}
+}
+
+extern "C" int32_t cppgo_thunk_847f25e59de9(const void * self, void * const * ranges_elems, size_t ranges_size, void * cppgo_result) {
+	cppgo_error_message.clear();
+	try {
+		std::vector<::cv::Range> cppgo_ranges;
+		if (ranges_size != 0) {
+			cppgo_ranges.reserve(ranges_size);
+			for (size_t cppgo_i = 0; cppgo_i < ranges_size; ++cppgo_i) {
+				cppgo_ranges.push_back(*static_cast<const ::cv::Range *>(static_cast<void * const *>(ranges_elems)[cppgo_i]));
+			}
+		}
+		new (cppgo_result) cv::Mat(static_cast<const ::cv::Mat *>(self)->operator()(cppgo_ranges));
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();
@@ -2954,11 +2996,11 @@ extern "C" int32_t cppgo_thunk_06d51c422f75(void * cppgo_block, void ** buf_out_
 		if (static_cast<size_t>(cppgo_args->buf_size) != 0) { cppgo_buf.assign(reinterpret_cast<uint8_t *>(cppgo_args->buf_data), reinterpret_cast<uint8_t *>(cppgo_args->buf_data) + static_cast<size_t>(cppgo_args->buf_size)); }
 		*cppgo_result = ::cv::imencode(cppgo_ext, *static_cast<const ::cv::_InputArray *>(reinterpret_cast<const void *>(cppgo_args->img)), cppgo_buf);
 		{
-		const size_t cppgo_out_n = cppgo_buf.size();
-		uint8_t *cppgo_out_copy = static_cast<uint8_t *>(::operator new[]((cppgo_out_n == 0 ? 1 : cppgo_out_n) * sizeof(uint8_t)));
-		for (size_t cppgo_out_i = 0; cppgo_out_i < cppgo_out_n; ++cppgo_out_i) { cppgo_out_copy[cppgo_out_i] = cppgo_buf[cppgo_out_i]; }
-		*buf_out_data = cppgo_out_copy;
-		*buf_out_size = cppgo_out_n;
+		const size_t cppgo_n = cppgo_buf.size();
+		uint8_t *cppgo_copy = static_cast<uint8_t *>(::operator new[]((cppgo_n == 0 ? 1 : cppgo_n) * sizeof(uint8_t)));
+		for (size_t cppgo_i = 0; cppgo_i < cppgo_n; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_buf[cppgo_i]; }
+		*buf_out_data = cppgo_copy;
+		*buf_out_size = cppgo_n;
 		}
 		return 0;
 	} catch (const std::exception &error) {
@@ -3001,11 +3043,11 @@ extern "C" int32_t cppgo_thunk_aa2fa15e30cb(void * cppgo_block, void ** buf_out_
 		if (static_cast<size_t>(cppgo_args->params_size) != 0) { cppgo_params.assign(reinterpret_cast<int32_t *>(cppgo_args->params_data), reinterpret_cast<int32_t *>(cppgo_args->params_data) + static_cast<size_t>(cppgo_args->params_size)); }
 		*cppgo_result = ::cv::imencode(cppgo_ext, *static_cast<const ::cv::_InputArray *>(reinterpret_cast<const void *>(cppgo_args->img)), cppgo_buf, cppgo_params);
 		{
-		const size_t cppgo_out_n = cppgo_buf.size();
-		uint8_t *cppgo_out_copy = static_cast<uint8_t *>(::operator new[]((cppgo_out_n == 0 ? 1 : cppgo_out_n) * sizeof(uint8_t)));
-		for (size_t cppgo_out_i = 0; cppgo_out_i < cppgo_out_n; ++cppgo_out_i) { cppgo_out_copy[cppgo_out_i] = cppgo_buf[cppgo_out_i]; }
-		*buf_out_data = cppgo_out_copy;
-		*buf_out_size = cppgo_out_n;
+		const size_t cppgo_n = cppgo_buf.size();
+		uint8_t *cppgo_copy = static_cast<uint8_t *>(::operator new[]((cppgo_n == 0 ? 1 : cppgo_n) * sizeof(uint8_t)));
+		for (size_t cppgo_i = 0; cppgo_i < cppgo_n; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_buf[cppgo_i]; }
+		*buf_out_data = cppgo_copy;
+		*buf_out_size = cppgo_n;
 		}
 		return 0;
 	} catch (const std::exception &error) {

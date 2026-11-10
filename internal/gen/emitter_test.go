@@ -18,12 +18,15 @@ import (
 // this build yet" answer rather than a silently empty thunk.
 func TestShimBodyStdResultError(t *testing.T) {
 	model := &packageModel{}
+	// A span result: a view of storage the Go side does not own, refused where
+	// the result is lowered as well as here, and the emitter's own last word
+	// when a synthetic model reaches it.
 	binding := &binding{
 		sym:       cxx.Symbol{Kind: cxx.FreeFunc, QualifiedName: "ns::f"},
 		Carrier:   thunk,
 		Status:    true,
 		StdResult: true,
-		Result:    &goType{Std: stdUniquePtr, Go: "*V"},
+		Result:    &goType{Std: stdSpan, Go: "[]V", Elem: &goType{Cxx: "V"}},
 	}
 	_, err := model.shimBody(binding)
 	require.Error(t, err)
@@ -32,6 +35,18 @@ func TestShimBodyStdResultError(t *testing.T) {
 	_, err = model.stdResult(binding, "call()")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not emitted by this build yet")
+}
+
+// TestStdResultSmartPointerNeedsItsPointee is the model that knows no record for
+// a smart pointer's pointee: the holder's type is the pointee's, so the emitter
+// names what is missing instead of writing a cast to nothing.
+func TestStdResultSmartPointerNeedsItsPointee(t *testing.T) {
+	model := &packageModel{}
+	for _, kind := range []stdKind{stdSharedPtr, stdUniquePtr} {
+		_, err := model.stdResult(&binding{Result: &goType{Std: kind, Go: "*V"}}, "call()")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not name a record the model knows")
+	}
 }
 
 // TestShimArgUnknownRecord is the model that knows no record for a parameter a

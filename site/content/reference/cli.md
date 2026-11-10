@@ -48,10 +48,12 @@ Reads the headers, writes the Go package and the C++ side, and builds the shim.
 
 ```console
 $ cppgo gen -header <path> [-header <path>]... -package <name>
-            [-library <file>] [-out <dir>] [-compile-commands <path>]
+            [-library <file>]... [-out <dir>] [-compile-commands <path>]
             [-bind <qualified>]... [-exclude <qualified>]...
             [-instantiate '<specialization>']...
             [-rename '<signature>=<GoName>']... [-status <qualified>]...
+            [-alias '<C++ template>=<std template>']...
+            [-proxy '<declaration>@<index>=<C++ type>']...
             [-cxx <compiler>]
             [-check] [-q]
 ```
@@ -60,7 +62,7 @@ $ cppgo gen -header <path> [-header <path>]... -package <name>
 |---|---|---|
 | `-header <path>` | *required* | a C++ header to read; repeatable. Every public declaration in the header is bound unless `-bind` or `-exclude` narrows the set |
 | `-package <name>` | none | the Go package name. There is no default: a missing or invalid name is an error |
-| `-library <file>` | none | your shared object. The shim is linked against it, and when it is a readable file cppgo checks that every function it binds directly is exported by it — that is, listed in its dynamic symbol table, the names the loader can resolve. Omit it for a header-only library |
+| `-library <file>` | none | your shared object. The shim is linked against it, and when it is a readable file cppgo checks that every function it binds directly is exported by it — that is, listed in its dynamic symbol table, the names the loader can resolve. Repeatable: a slice that crosses several modules of one library names each, the shim records them all as dependencies, and the first is the one the package loads. Omit it for a header-only library |
 | `-out <dir>` | `.` | the output directory |
 | `-compile-commands <path>` | discovered | `compile_commands.json`, or the directory that holds it, to take the header's flags from. That file is the **compilation database**: it records the compiler flags each source file of the project is built with |
 | `-bind <qualified>` | everything in the header | add a root: the namespace, class, member or function to start selecting from; repeatable. A root is one declaration and everything below it |
@@ -68,6 +70,8 @@ $ cppgo gen -header <path> [-header <path>]... -package <name>
 | `-instantiate '<specialization>'` | none | emit a concrete template specialization: a template with its type argument supplied, e.g. `metrics::Accumulator<double>`; repeatable. The header must make the specialization visible, e.g. `template class ::metrics::Accumulator<double>;` |
 | `-rename '<signature>=<GoName>'` | none | resolve a Go name collision; repeatable |
 | `-status <qualified>` | none | a declaration whose 32-bit return is a status code — `0` means success and any other value a failure: the Go signature returns only an error, and a non-zero value becomes it; repeatable |
+| `-alias '<C++ template>=<std template>'` | none | read a library's spelling of a standard type as that type: `cv::Ptr=std::shared_ptr` makes `cv::Ptr<T>` a smart pointer instead of an unknown record; repeatable |
+| `-proxy '<declaration>@<index>=<C++ type>'` | none | carry a parameter the library declares as an array proxy (`InputArray`, `OutputArray`) as the container the entry names: the shim builds the container, constructs the proxy around it, calls, and copies back. A trailing `&` makes it in-out; repeatable |
 | `-cxx <compiler>` | `g++`, then `clang++` | the C++ compiler for the generated side |
 | `-check` | off | report whether the generated files are up to date instead of writing them |
 | `-q` | off | suppress the per-binding report and the confirmation message |
@@ -138,6 +142,8 @@ $ cppgo build -header <path> [-header <path>]... -package <name>
               [-scan-dir <dir>] [-library <file>] [-out <dir>]
               [-compile-commands <path>] [-instantiate '<specialization>']...
               [-rename '<signature>=<GoName>']... [-status <qualified>]...
+              [-alias '<C++ template>=<std template>']...
+              [-proxy '<declaration>@<index>=<C++ type>']...
               [-cxx <compiler>] [-q]
 ```
 

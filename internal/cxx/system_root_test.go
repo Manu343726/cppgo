@@ -38,6 +38,13 @@ func TestIncludeRoots(t *testing.T) {
 			"-iquote", filepath.Join(dir, "lib", "eigen3"),
 			"-idirafter", filepath.Join(dir, "lib"),
 		}, want: filepath.Join(dir, "lib", "eigen3")},
+		{name: "a search flag whose value is another flag is ignored", args: []string{
+			"-I", "-DNDEBUG",
+			"-isystem", filepath.Join(dir, "lib", "eigen3"),
+		}, want: filepath.Join(dir, "lib", "eigen3")},
+		{name: "the empty search path -I- is ignored", args: []string{
+			"-I-",
+		}, want: filepath.Join(dir, "lib", "eigen3", "Eigen")},
 	}
 	for _, tc := range cases {
 		tc := tc

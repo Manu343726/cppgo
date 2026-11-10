@@ -25,6 +25,12 @@ func goldenFixtures() map[string]Config {
 		"nested":      nestedConfig(),
 		"inheritance": fixtureConfig("inheritance", "inheritance.hpp"),
 		"defaults":    fixtureConfig("defaults", "defaults.hpp"),
+		// The two fixtures the OpenCV probe found. "floatargs" puts an SSE
+		// argument last in a trampoline, which is where go vet's asmdecl check
+		// and the generator's frame arithmetic disagreed; "smartptr" is the
+		// factory shape every OpenCV detector returns.
+		"floatargs": fixtureConfig("floatargs", "floatargs.hpp"),
+		"smartptr":  smartptrConfig(),
 	}
 }
 

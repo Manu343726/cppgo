@@ -38,6 +38,16 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		h.WriteString("/* cppgo_free releases a result copy the Go side has read. */\n")
 		h.WriteString("void cppgo_free(void *block);\n")
 	}
+	for _, binding := range m.bindings {
+		if !binding.isSmartResult() {
+			continue
+		}
+		// The holder is the only object Go owns for a smart-pointer result: it
+		// owns the control block, and deleting it destroys the pointee when the
+		// last reference goes.
+		fmt.Fprintf(&h, "\n/* %s releases the holder of %s's result. */\n", binding.refFreeSymbol(), displaySignature(binding.sym))
+		fmt.Fprintf(&h, "void %s(void *ref);\n", binding.refFreeSymbol())
+	}
 
 	var s strings.Builder
 	s.WriteString(GeneratedBanner + "\n")
@@ -70,6 +80,19 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		s.WriteString("\n// cppgo_free releases a result copy the Go side has read.\n")
 		s.WriteString("extern \"C\" void cppgo_free(void *block) {\n")
 		s.WriteString("\t::operator delete[](block);\n")
+		s.WriteString("}\n")
+	}
+	for _, binding := range m.bindings {
+		if !binding.isSmartResult() {
+			continue
+		}
+		holder := "std::shared_ptr"
+		if binding.Result.Std == stdUniquePtr {
+			holder = "std::unique_ptr"
+		}
+		fmt.Fprintf(&s, "\n// %s releases the holder of a smart-pointer result.\n", binding.refFreeSymbol())
+		fmt.Fprintf(&s, "extern \"C\" void %s(void *ref) {\n", binding.refFreeSymbol())
+		fmt.Fprintf(&s, "\tdelete static_cast<%s<::%s> *>(ref);\n", holder, binding.Result.Record.CxxName)
 		s.WriteString("}\n")
 	}
 
@@ -266,12 +289,9 @@ func (m *packageModel) stdOutCopies(binding *binding) string {
 		if !arg.stdOutCopy {
 			continue
 		}
-		elem := arg.stdElem
-		fmt.Fprintf(&b, "\t\t{\n\t\tconst size_t cppgo_out_n = %s.size();\n", arg.stdLocal)
-		fmt.Fprintf(&b, "\t\t%s *cppgo_out_copy = static_cast<%s *>(::operator new[]((cppgo_out_n == 0 ? 1 : cppgo_out_n) * sizeof(%s)));\n",
-			elem.Cxx, elem.Cxx, elem.Cxx)
-		fmt.Fprintf(&b, "\t\tfor (size_t cppgo_out_i = 0; cppgo_out_i < cppgo_out_n; ++cppgo_out_i) { cppgo_out_copy[cppgo_out_i] = %s[cppgo_out_i]; }\n", arg.stdLocal)
-		fmt.Fprintf(&b, "\t\t*%s = cppgo_out_copy;\n\t\t*%s = cppgo_out_n;\n\t\t}\n", arg.stdOutData, arg.stdOutSize)
+		b.WriteString("\t\t{\n")
+		b.WriteString(containerOutCopy(arg.stdLocal, arg.stdElem, arg.stdOutData, arg.stdOutSize, arg.stdOutOffsets))
+		b.WriteString("\t\t}\n")
 	}
 	return b.String()
 }
@@ -290,6 +310,13 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 			continue
 		}
 		if arg.stdRole == stdRolePrimary {
+			if arg.proxyType != "" {
+				// The declaration takes a proxy, and the shim is the only place
+				// that can hold the container and the proxy together: the
+				// temporary lives until the call returns.
+				args = append(args, arg.proxyType+"("+arg.stdLocal+")")
+				continue
+			}
 			args = append(args, arg.stdLocal)
 			continue
 		}
@@ -388,6 +415,12 @@ func (m *packageModel) shimArg(p cxx.Param, name string) (string, error) {
 		}
 		return expr, nil
 	}
+	// A one-byte integer pointer is a char buffer: the wire names it with the
+	// fixed-width type the thunk prototype uses (int8_t), and the declaration
+	// says char, signed char or unsigned char. The cast is exact and says why.
+	if p.Ptr && p.Pointee != nil && p.Pointee.Kind == cxx.TypeInteger && p.Pointee.SizeBytes == 1 {
+		return "reinterpret_cast<" + p.Spelling + ">(" + name + ")", nil
+	}
 	if reference {
 		return "*" + name, nil
 	}
@@ -479,9 +512,7 @@ func (m *packageModel) stdLocals(binding *binding) string {
 		case stdStringView:
 			fmt.Fprintf(&b, "\t\tstd::string_view %s(%s, %s);\n", arg.stdLocal, arg.stdArgs[0], arg.stdArgs[1])
 		case stdVector:
-			fmt.Fprintf(&b, "\t\tstd::vector<%s> %s;\n", elem.Cxx, arg.stdLocal)
-			fmt.Fprintf(&b, "\t\tif (%s != 0) { %s.assign(%s, %s + %s); }\n",
-				arg.stdArgs[1], arg.stdLocal, arg.stdArgs[0], arg.stdArgs[0], arg.stdArgs[1])
+			b.WriteString(m.containerLocal(binding, arg))
 		case stdSpan:
 			qualifier := ""
 			if elem.Const {
@@ -517,18 +548,28 @@ func (m *packageModel) stdResult(binding *binding, call string) (string, error) 
 		b.WriteString("\t\tif (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }\n")
 		b.WriteString("\t\t*cppgo_out_data = cppgo_copy;\n")
 		b.WriteString("\t\t*cppgo_out_size = cppgo_size;\n")
-	case stdVector, stdSpan:
+	case stdVector:
 		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
-		b.WriteString("\t\tconst size_t cppgo_size = cppgo_value.size();\n")
-		fmt.Fprintf(&b, "\t\t%s *cppgo_copy = static_cast<%s *>(::operator new[]((cppgo_size == 0 ? 1 : cppgo_size) * sizeof(%s)));\n",
-			elem.Cxx, elem.Cxx, elem.Cxx)
-		b.WriteString("\t\tfor (size_t cppgo_i = 0; cppgo_i < cppgo_size; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }\n")
-		b.WriteString("\t\t*cppgo_out_data = cppgo_copy;\n")
-		b.WriteString("\t\t*cppgo_out_size = cppgo_size;\n")
+		b.WriteString(containerOutCopy("cppgo_value", elem, "cppgo_out_data", "cppgo_out_size", "cppgo_out_bounds"))
 	case stdArray:
 		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
 		fmt.Fprintf(&b, "\t\t%s *cppgo_copy = static_cast<%s *>(cppgo_out_data);\n", elem.Cxx, elem.Cxx)
 		fmt.Fprintf(&b, "\t\tfor (size_t cppgo_i = 0; cppgo_i < %d; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }\n", result.ArrayLen)
+	case stdSharedPtr, stdUniquePtr:
+		if elem == nil || elem.Record == nil {
+			// The holder's type is the pointee's: without the record the
+			// model cannot name what the pointer owns.
+			return "", pending(fmt.Sprintf("the smart-pointer result %q does not name a record the model knows", result.Go),
+				"include the pointee's complete definition")
+		}
+		holder := "std::shared_ptr"
+		if result.Std == stdUniquePtr {
+			holder = "std::unique_ptr"
+		}
+		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
+		fmt.Fprintf(&b, "\t\tauto *cppgo_holder = new %s<%s>(std::move(cppgo_value));\n", holder, elem.Cxx)
+		b.WriteString("\t\t*cppgo_out_pointee = cppgo_holder->get();\n")
+		b.WriteString("\t\t*cppgo_out_ref = cppgo_holder;\n")
 	case stdOptional:
 		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
 		fmt.Fprintf(&b, "\t\tif (cppgo_value) { *static_cast<%s *>(cppgo_out_value) = *cppgo_value; *static_cast<int32_t *>(cppgo_out_has) = 1; }\n", elem.Cxx)

@@ -441,12 +441,12 @@ func (h *Histogram) Bounds() ([]float64, error) {
 	if cppgoStatus != 0 {
 		return nil, cppgoCallError("metrics::Histogram::bounds")
 	}
-	var cppgoResult []float64
+	var cppgoValue []float64
 	if cppgoSize != 0 {
-		cppgoResult = append(cppgoResult, unsafe.Slice((*float64)(cppgoData), int(cppgoSize))...)
+		cppgoValue = append(cppgoValue, unsafe.Slice((*float64)(cppgoData), int(cppgoSize))...)
 	}
 	cppgoFree(cppgoFreeSym, cppgoData)
-	return cppgoResult, nil
+	return cppgoValue, nil
 }
 
 // Counts calls metrics::Histogram::counts.
@@ -467,12 +467,12 @@ func (h *Histogram) Counts() ([]uint64, error) {
 	if cppgoStatus != 0 {
 		return nil, cppgoCallError("metrics::Histogram::counts")
 	}
-	var cppgoResult []uint64
+	var cppgoValue []uint64
 	if cppgoSize != 0 {
-		cppgoResult = append(cppgoResult, unsafe.Slice((*uint64)(cppgoData), int(cppgoSize))...)
+		cppgoValue = append(cppgoValue, unsafe.Slice((*uint64)(cppgoData), int(cppgoSize))...)
 	}
 	cppgoFree(cppgoFreeSym, cppgoData)
-	return cppgoResult, nil
+	return cppgoValue, nil
 }
 
 // Point is metrics::Point: a POD, 16 bytes, X at offset 0, Y at offset 8.
@@ -1026,12 +1026,12 @@ func Scaled(values []float64, factor float64) ([]float64, error) {
 	if cppgoStatus != 0 {
 		return nil, cppgoCallError("metrics::scaled")
 	}
-	var cppgoResult []float64
+	var cppgoValue []float64
 	if cppgoSize != 0 {
-		cppgoResult = append(cppgoResult, unsafe.Slice((*float64)(cppgoData), int(cppgoSize))...)
+		cppgoValue = append(cppgoValue, unsafe.Slice((*float64)(cppgoData), int(cppgoSize))...)
 	}
 	cppgoFree(cppgoFreeSym, cppgoData)
-	return cppgoResult, nil
+	return cppgoValue, nil
 }
 
 // ValidateName calls metrics::validate_name.

@@ -339,7 +339,7 @@ func TestMapStd(t *testing.T) {
 		{"shared_ptr", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::shared_ptr<mathx::Vector>"}, "*Vector", stdSharedPtr, ""},
 		{"pointer to std", cxx.Param{Kind: cxx.TypePointer, Ptr: true, Spelling: "std::string *"}, "", stdNone, "pointer to a standard-library type"},
 		{"unknown std", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::deque<int>"}, "", stdNone, "outside the emitted table"},
-		{"vector two args", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<int, double>"}, "", stdNone, "one-argument"},
+		{"vector two args", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<int, double>"}, "[]int32", stdVector, ""},
 		{"vector unclosed", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<int"}, "", stdNone, "is not a std::vector"},
 		{"array one arg", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::array<int>"}, "", stdNone, "two-argument"},
 		{"array bad count", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::array<int, x>"}, "", stdNone, "is not an array size"},
@@ -349,7 +349,7 @@ func TestMapStd(t *testing.T) {
 		{"array unknown", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::array<ns::Missing, 2>"}, "", stdNone, "not a scalar or a known record"},
 		{"unique unclosed", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::unique_ptr<mathx::Vector"}, "", stdNone, "is not a std::unique_ptr"},
 		{"vector empty args", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<>"}, "", stdNone, "no template arguments"},
-		{"vector opaque", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<mathx::Vector>"}, "", stdNone, "not a POD"},
+		{"vector opaque", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::vector<mathx::Vector>"}, "[]*Vector", stdVector, ""},
 		{"unique unknown", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::unique_ptr<ns::Missing>"}, "", stdNone, "not part of the generated API"},
 		{"shared two args", cxx.Param{Kind: cxx.TypeRecord, Spelling: "std::shared_ptr<mathx::Vector, int>"}, "", stdNone, "one-argument"},
 	}
@@ -395,4 +395,29 @@ func TestLookupRecordAmbiguous(t *testing.T) {
 	record, ok := m.lookupRecord("a::V")
 	assert.True(t, ok)
 	assert.Equal(t, "AV", record.GoName)
+}
+
+// TestMapElementRefusesAnElementAContainerCannotHold covers the recursive
+// element map's two refusals: a standard-library element the wire cannot carry
+// (a string needs a character pool), and a type the model knows nothing about.
+func TestMapElementRefusesAnElementAContainerCannotHold(t *testing.T) {
+	m := &mapper{}
+	_, err := m.mapElement("std::vector<std::string>")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "standard-library element")
+	assert.Contains(t, err.Error(), "std::vector of those")
+
+	_, err = m.mapElement("ns::Unknown")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a scalar or a known record")
+}
+
+// TestCallbackElementReportsTheRefusal covers the callback argument map's
+// propagation: an element the model refuses is the callback's refusal, named
+// with the same reason.
+func TestCallbackElementReportsTheRefusal(t *testing.T) {
+	m := &mapper{}
+	_, err := m.callbackElement("std::vector<std::string>")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "standard-library element")
 }

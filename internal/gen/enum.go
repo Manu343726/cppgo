@@ -241,6 +241,16 @@ func (b *builder) selectEnums(bindMatched []bool) {
 
 // selectedEnums is the enums to emit, in Go name order.
 func (b *builder) selectedEnums() []*enumModel {
+	// A field accessor is built after the manifest's selection, and its result is
+	// an enum the manifest may not have named: a signature the package emits has
+	// to have its types, so every enum a kept binding names is kept too.
+	for _, binding := range b.bindings {
+		for _, t := range bindingTypes(binding) {
+			if t != nil && t.Enum != nil {
+				t.Enum.selected = true
+			}
+		}
+	}
 	out := make([]*enumModel, 0, len(b.enums))
 	for _, name := range b.enumOrder {
 		if b.enums[name].selected {
@@ -248,6 +258,18 @@ func (b *builder) selectedEnums() []*enumModel {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].GoName < out[j].GoName })
+	return out
+}
+
+// bindingTypes lists the Go types a binding's signature names.
+func bindingTypes(binding *binding) []*goType {
+	out := make([]*goType, 0, len(binding.Params)+1)
+	for _, param := range binding.Params {
+		out = append(out, param.Type)
+	}
+	if binding.Result != nil {
+		out = append(out, binding.Result)
+	}
 	return out
 }
 

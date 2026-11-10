@@ -63,11 +63,11 @@ extern "C" int32_t cppgo_thunk_5f1f87a69536(double * values_data, size_t values_
 		std::vector<double> cppgo_values;
 		if (values_size != 0) { cppgo_values.assign(values_data, values_data + values_size); }
 		auto cppgo_value = ::stdx::doubled(cppgo_values);
-		const size_t cppgo_size = cppgo_value.size();
-		double *cppgo_copy = static_cast<double *>(::operator new[]((cppgo_size == 0 ? 1 : cppgo_size) * sizeof(double)));
-		for (size_t cppgo_i = 0; cppgo_i < cppgo_size; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }
+		const size_t cppgo_n = cppgo_value.size();
+		double *cppgo_copy = static_cast<double *>(::operator new[]((cppgo_n == 0 ? 1 : cppgo_n) * sizeof(double)));
+		for (size_t cppgo_i = 0; cppgo_i < cppgo_n; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }
 		*cppgo_out_data = cppgo_copy;
-		*cppgo_out_size = cppgo_size;
+		*cppgo_out_size = cppgo_n;
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();
@@ -117,11 +117,11 @@ extern "C" int32_t cppgo_thunk_99c6adcf0650(void ** cppgo_out_data, size_t * cpp
 	cppgo_error_message.clear();
 	try {
 		auto cppgo_value = ::stdx::nothing();
-		const size_t cppgo_size = cppgo_value.size();
-		int32_t *cppgo_copy = static_cast<int32_t *>(::operator new[]((cppgo_size == 0 ? 1 : cppgo_size) * sizeof(int32_t)));
-		for (size_t cppgo_i = 0; cppgo_i < cppgo_size; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }
+		const size_t cppgo_n = cppgo_value.size();
+		int32_t *cppgo_copy = static_cast<int32_t *>(::operator new[]((cppgo_n == 0 ? 1 : cppgo_n) * sizeof(int32_t)));
+		for (size_t cppgo_i = 0; cppgo_i < cppgo_n; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }
 		*cppgo_out_data = cppgo_copy;
-		*cppgo_out_size = cppgo_size;
+		*cppgo_out_size = cppgo_n;
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();

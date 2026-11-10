@@ -128,6 +128,11 @@ type Record struct {
 	QualifiedName string
 	// Kind is the keyword it was declared with.
 	Kind RecordKind
+	// Access is the record's visibility inside the class that encloses it
+	// (AccessNone at namespace scope). A protected or private nested type is
+	// not nameable from outside its owner, so nothing the shim writes can reach
+	// it.
+	Access Access
 	// IsTemplate is true for a template pattern. Its layout and its members'
 	// symbols do not exist until an instantiation names them.
 	IsTemplate bool
@@ -444,6 +449,7 @@ func (e *recordExtractor) collectRecord(cursor CXCursor, isTemplate bool) Record
 	rec := Record{
 		QualifiedName: name,
 		Kind:          e.recordKind(cursor),
+		Access:        e.l.access(cursor),
 		IsTemplate:    isTemplate,
 		SizeBytes:     -1,
 		AlignBytes:    -1,
@@ -1202,6 +1208,7 @@ func (e *recordExtractor) synthesizeNestedRecord(outer *Record, cursor CXCursor,
 	nested := Record{
 		QualifiedName: outer.QualifiedName + "::" + simple,
 		Kind:          e.recordKind(cursor),
+		Access:        e.l.access(cursor),
 		SizeBytes:     -1,
 		AlignBytes:    -1,
 		// It is built from the pattern, not from a definition cursor of its
@@ -1408,7 +1415,16 @@ func (tu *TU) instantiateMemberPattern(record, member string, pattern memberTemp
 	// call the shim writes is right either way.
 	isConst := tu.l.f.isConstQualifiedType(tu.l.f.getCursorType(pattern.cursor)) != 0
 	sym.IsConst, sym.IsVirtual, sym.IsStatic = isConst, false, false
-	sym.Kind = Method
+	// A constructor is a member function template too — OpenCV's proxies are
+	// built from containers that way — and its cursor is the template kind, so
+	// the name is what says it is one. A destructor cannot be a template (the
+	// language forbids it), so "constructor or method" is exhaustive here.
+	if simpleMemberName(record) == member {
+		sym.Kind = Constructor
+		sym.IsConst = false
+	} else {
+		sym.Kind = Method
+	}
 	sym.IsTemplate = false
 	sym.QualifiedName = record + "::" + member
 	return sym
