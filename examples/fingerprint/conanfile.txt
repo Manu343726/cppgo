@@ -1,0 +1,22 @@
+# The C++ dependencies of the example, pinned.
+#
+# spdlog is the library's logger; it is consumed header-only (and so is its fmt
+# dependency), which is what keeps the build reproducible across machines: a
+# header-only package has no compiler-specific binary in it, so the lockfile
+# below pins revisions that any host can satisfy. `conan.lock` fixes the recipe
+# and package revisions the example was built and tested with.
+#
+# Conan's CMakeDeps generator writes the package's CMake files and
+# CMakeToolchain the toolchain file the Makefile points CMake at; both land in
+# build/conan, which is git-ignored.
+
+[requires]
+spdlog/1.14.1
+
+[options]
+spdlog/*:header_only=True
+fmt/*:header_only=True
+
+[generators]
+CMakeDeps
+CMakeToolchain
