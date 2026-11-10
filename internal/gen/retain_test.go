@@ -84,6 +84,30 @@ func TestRetainRefusesWhatItCannotMean(t *testing.T) {
 	assert.Contains(t, err.Error(), "returns a value")
 }
 
+// TestRetainedCallbackAsAStatus covers the one result a retained declaration may
+// have: a status code, which becomes the error beside the registration. Both the
+// clearing call and the registering call read it, and a failed registering call
+// releases the slot it just took.
+func TestRetainedCallbackAsAStatus(t *testing.T) {
+	rendered, err := RenderResult(Config{
+		Headers: []string{filepath.Join("testdata", "retained", "status.hpp")},
+		Package: "retained",
+		Library: "libretained",
+		Out:     ".",
+		Retain:  []string{"retained::set_status_callback"},
+		Status:  []string{"retained::set_status_callback"},
+	})
+	require.NoError(t, err)
+	goFile := outputNamed(t, rendered, GenFileName)
+	assert.Contains(t, goFile, "func SetStatusCallback(fn func(int32)) (*CallbackRegistration, error)")
+	assert.Contains(t, goFile, "cppgoFrame.I[0] = uintptr(0)",
+		"the clearing call passes a null callback")
+	assert.Contains(t, goFile, "if cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {",
+		"the status is read whether or not a callback was registered")
+	assert.Contains(t, goFile, "cppgo.ReleaseCallback(cppgoCallback0)\n\t\treturn nil, cppgoCallError",
+		"a failed registering call releases the slot it took")
+}
+
 // TestRetainedCallbackNameCollision proves the generated registration type is
 // part of the API's name space: a C++ record of the same name is reported
 // instead of silently colliding with it.

@@ -775,6 +775,12 @@ func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx c
 	fmt.Fprintf(b, "\t\treturn %scppgoCallError(%q)\n\t}\n", errorZeroPrefix(binding), binding.sym.QualifiedName)
 	// A status thunk with a value always carries it through the out-pointer the
 	// caller owns, so what is left is that pointer or no result at all.
+	if binding.StdResult {
+		// The words the thunk wrote are read out of the pinned cells by
+		// pinAfter, so the conversion sees the same names it always did.
+		m.emitStdReturn(b, binding)
+		return
+	}
 	if binding.Out != nil {
 		fmt.Fprintf(b, "\treturn %s, nil\n", convertResult(binding, "*cppgoResult"))
 		return
@@ -790,10 +796,7 @@ func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx c
 // with a null callback address, nothing is registered, and no registration is
 // returned.
 func (m *packageModel) emitRetained(b *strings.Builder, binding *binding, ctx callContext) {
-	arg := callbackArgOf(binding)
-	if arg == nil {
-		return
-	}
+	arg := binding.callbackArg
 	fn := arg.callbackParam
 	index := 0
 	for _, other := range binding.Wire {
@@ -882,17 +885,6 @@ func (m *packageModel) emitFrameAndCall(b *strings.Builder, binding *binding, ct
 		ints++
 	}
 	fmt.Fprintf(b, "\tcppgo.CallReentrant(%s, &cppgoFrame)\n", binding.SymbolVar)
-}
-
-// callbackArgOf returns the wire argument that carries the call's Go function,
-// nil when the signature has none.
-func callbackArgOf(binding *binding) *wireArg {
-	for _, arg := range binding.Wire {
-		if arg.callable != nil {
-			return arg
-		}
-	}
-	return nil
 }
 
 // emitCallbackRegistration writes one Go function into the callback table. The
@@ -1216,10 +1208,9 @@ func byValueNote(binding *binding) string {
 		notes = append(notes, "The C++ side stores the function and calls it again during later calls made from Go, until Close releases the registration; a C++ thread that Go did not start must not call it. Pass a nil function to clear the callee's callback, and close the registration after the callee has been told to forget it.")
 	}
 	for _, param := range binding.Params {
-		if param.Type.Kind != goFunc && param.Type.Callback == nil {
-			continue
+		if param.Type.Callback != nil {
+			notes = append(notes, callbackPayloadNote(param.Type.Callback))
 		}
-		notes = append(notes, callbackPayloadNote(param.Type))
 	}
 	return strings.Join(notes, " ")
 }
@@ -1228,12 +1219,9 @@ func byValueNote(binding *binding) string {
 // memory belongs to the callee, which is the only reason a pointer can cross to
 // Go at all: a string is a copy taken during the callback, and a slice is a view
 // of the callee's bytes that ends when the callback returns.
-func callbackPayloadNote(callable *goType) string {
-	if callable.Callback == nil {
-		return ""
-	}
+func callbackPayloadNote(callable *callbackType) string {
 	var copies, views bool
-	for _, param := range callable.Callback.Params {
+	for _, param := range callable.Params {
 		switch param.Shape {
 		case callbackCString, callbackBytes:
 			copies = true

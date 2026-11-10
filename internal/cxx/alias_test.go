@@ -38,6 +38,15 @@ func TestAliasedFunctionPointer(t *testing.T) {
 	require.NotNil(t, raw.Params[0].Pointee)
 	assert.Equal(t, "FunctionProto", raw.Params[0].Pointee.ClangKind)
 
+	// The other side of the same rule: a typedef of `void *` keeps the invalid
+	// pointee, because there is no canonical function prototype to resolve to
+	// and no type Go could carry.
+	handle := symbols["aliases::use_handle"]
+	require.Len(t, handle.Params, 1)
+	assert.Equal(t, "RawHandle", handle.Params[0].Spelling)
+	require.NotNil(t, handle.Params[0].Pointee)
+	assert.Equal(t, "Invalid", handle.Params[0].Pointee.ClangKind)
+
 	value := symbols["aliases::set_value"]
 	require.Len(t, value.Params, 1)
 	assert.Equal(t, cxx.TypeFloat, value.Params[0].Kind, "a scalar alias resolves to its canonical kind")

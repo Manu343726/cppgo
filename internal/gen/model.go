@@ -360,6 +360,9 @@ type binding struct {
 	// parameter: the registration lives until the caller closes it, and the
 	// binding returns that registration instead of releasing the slot.
 	retained bool
+	// callbackArg is the first wire word that carries a Go function, nil when
+	// the signature has none.
+	callbackArg *wireArg
 	// pinned is true when the call hands C a Go pointer, which it copies into
 	// a heap object and pins for the duration of the call.
 	pinned bool
@@ -1752,6 +1755,9 @@ func (b *builder) callbackWire(binding *binding, name string, mapped *goType, p 
 		}
 	}
 	add(arg)
+	if binding.callbackArg == nil {
+		binding.callbackArg = arg
+	}
 	binding.hasCallback = true
 }
 
@@ -1912,7 +1918,11 @@ func (b *builder) addStdResult(binding *binding) error {
 			// goroutine's stack: the storage is a heap cell the call pins, and
 			// the names the result conversion reads are assigned from it once
 			// the call returned.
-			binding.stdDecls = []string{"cppgoDataCell := cppgoHeapCell[unsafe.Pointer]()", "cppgoSizeCell := cppgoHeapCell[uint64]()"}
+			// Appended, not assigned: the same declaration may also be a
+			// `const char *` parameter's NUL-terminated copy.
+			binding.stdDecls = append(binding.stdDecls,
+				"cppgoDataCell := cppgoHeapCell[unsafe.Pointer]()",
+				"cppgoSizeCell := cppgoHeapCell[uint64]()")
 			out("unsafe.Pointer(cppgoDataCell)", "cppgoDataCell", "void **", "cppgo_out_data")
 			out("unsafe.Pointer(cppgoSizeCell)", "cppgoSizeCell", "size_t *", "cppgo_out_size")
 			binding.pins = append(binding.pins,
@@ -1922,7 +1932,9 @@ func (b *builder) addStdResult(binding *binding) error {
 			binding.pinned = true
 			b.usesPin = true
 		} else {
-			binding.stdDecls = []string{"var cppgoData unsafe.Pointer", "var cppgoSize uint64"}
+			binding.stdDecls = append(binding.stdDecls,
+				"var cppgoData unsafe.Pointer",
+				"var cppgoSize uint64")
 			out("unsafe.Pointer(&cppgoData)", "&cppgoData", "void **", "cppgo_out_data")
 			out("unsafe.Pointer(&cppgoSize)", "&cppgoSize", "size_t *", "cppgo_out_size")
 		}
@@ -1937,16 +1949,20 @@ func (b *builder) addStdResult(binding *binding) error {
 		return pending(fmt.Sprintf("%q is a span result", result.Param.Spelling),
 			"take the span as a parameter, or return the container it views")
 	case stdArray:
-		binding.stdDecls = []string{"var cppgoResult " + result.Go}
+		binding.stdDecls = append(binding.stdDecls, "var cppgoResult "+result.Go)
 		out("unsafe.Pointer(&cppgoResult[0])", "&cppgoResult", "void *", "cppgo_out_data")
 	case stdSharedPtr, stdUniquePtr:
-		binding.stdDecls = []string{"var cppgoRef unsafe.Pointer", "var cppgoPointee unsafe.Pointer"}
+		binding.stdDecls = append(binding.stdDecls,
+			"var cppgoRef unsafe.Pointer",
+			"var cppgoPointee unsafe.Pointer")
 		out("unsafe.Pointer(&cppgoPointee)", "&cppgoPointee", "void **", "cppgo_out_pointee")
 		out("unsafe.Pointer(&cppgoRef)", "&cppgoRef", "void **", "cppgo_out_ref")
 		binding.usesFree = true
 		b.usesFree = true
 	case stdOptional:
-		binding.stdDecls = []string{"var cppgoResult " + result.Elem.Go, "var cppgoHas int32"}
+		binding.stdDecls = append(binding.stdDecls,
+			"var cppgoResult "+result.Elem.Go,
+			"var cppgoHas int32")
 		out("unsafe.Pointer(&cppgoResult)", "&cppgoResult", "void *", "cppgo_out_value")
 		out("unsafe.Pointer(&cppgoHas)", "&cppgoHas", "int32_t *", "cppgo_out_has")
 	}

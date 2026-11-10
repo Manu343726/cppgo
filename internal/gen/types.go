@@ -1021,7 +1021,7 @@ func (m *mapper) callbackArg(spellings []string) (*callbackArg, error) {
 	// A leading const qualifies what the pointer points at, not the pointer:
 	// `const T *` is a pointer to const T, and the shim's cast has to say so.
 	base, pointeeConst := unqualified(spelling)
-	if !strings.HasSuffix(base, "*") {
+	if !strings.HasSuffix(base, "*") && !strings.HasSuffix(base, "&") {
 		element, err := m.mapElement(spelling)
 		if err != nil {
 			return nil, err
@@ -1143,13 +1143,11 @@ func isCallbackLength(spelling string) bool {
 }
 
 // lengthCType is the C++ type a length word is cast to: the mapped width of the
-// count, which is the declared type's own width on LP64.
+// count, which is the declared type's own width on LP64. It is only called for
+// a spelling isCallbackLength accepted, so the table always has it.
 func lengthCType(spelling string) string {
 	name, _ := unqualified(spelling)
-	if scalar, ok := elementScalars[name]; ok {
-		return scalar.cName
-	}
-	return "uint64_t"
+	return elementScalars[name].cName
 }
 
 // goFunctionType renders the Go func type of a callback.
