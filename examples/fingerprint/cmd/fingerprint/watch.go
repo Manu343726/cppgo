@@ -290,7 +290,7 @@ type watchStats struct {
 	Fired     int64
 	Processed int64
 	Gated     int64
-	Dropped int64
+	Dropped   int64
 	// Empty counts the frames the trigger selected but the pipeline found no
 	// finger in: a held frame is one the trigger kept for continuity, and the
 	// scene may already have moved on. It is not a failure.

@@ -75,8 +75,8 @@ const (
 
 	// The size the adapter asks for. A device that answers with another size
 	// is used as it answered: the trigger works at a fixed size of its own.
-	cameraWidth  = 640
-	cameraHeight = 480
+	cameraWidth   = 640
+	cameraHeight  = 480
 	cameraBuffers = 4
 )
 

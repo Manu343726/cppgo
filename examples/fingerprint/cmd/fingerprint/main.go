@@ -1,11 +1,11 @@
 // Command fingerprint is the Go program of the application example: the CLI
 // over a C++ library that does all of the image work.
 //
-//	 fingerprint enroll <photo> [-out template.ansi]   one frame, one template
-//	 fingerprint dump <template.ansi>                   the template, as text
-//	 fingerprint watch -source dir:<path> [-out <dir>]  a stream, gated
-//	 fingerprint watch -source camera:<index>           a camera, gated
-//	 fingerprint version                                what is loaded
+//	fingerprint enroll <photo> [-out template.ansi]   one frame, one template
+//	fingerprint dump <template.ansi>                   the template, as text
+//	fingerprint watch -source dir:<path> [-out <dir>]  a stream, gated
+//	fingerprint watch -source camera:<index>           a camera, gated
+//	fingerprint version                                what is loaded
 //
 // The Go side is the orchestration and nothing else: it reads frames, moves
 // them across the boundary, runs the trigger on every one and the pipeline on
