@@ -517,10 +517,12 @@ func (c *cli) printUsage(w io.Writer) {
 // printGenUsage documents "cppgo gen".
 func (c *cli) printGenUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: cppgo gen -header <path> [-header <path>]... -package <name>")
-	fmt.Fprintln(w, "                  [-library <file>] [-out <dir>] [-compile-commands <path>]")
+	fmt.Fprintln(w, "                  [-library <file>]... [-out <dir>] [-compile-commands <path>]")
 	fmt.Fprintln(w, "                  [-bind <qualified>]... [-exclude <qualified>]...")
 	fmt.Fprintln(w, "                  [-instantiate '<specialization>']...")
 	fmt.Fprintln(w, "                  [-rename '<signature>=<GoName>']... [-status <qualified>]...")
+	fmt.Fprintln(w, "                  [-alias '<C++ template>=<std template>']...")
+	fmt.Fprintln(w, "                  [-proxy '<declaration>@<index>=<C++ type>']...")
 	fmt.Fprintln(w, "                  [-cxx <compiler>]")
 	fmt.Fprintln(w, "                  [-check] [-q]")
 	fmt.Fprintln(w)
@@ -560,7 +562,7 @@ func (c *cli) printGenUsage(w io.Writer) {
 // printCheckUsage documents "cppgo check".
 func (c *cli) printCheckUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: cppgo check -header <path> [-header <path>]... -package <name>")
-	fmt.Fprintln(w, "                    [-library <file>] [-out <dir>]")
+	fmt.Fprintln(w, "                    [-library <file>]... [-out <dir>]")
 	fmt.Fprintln(w, "                    [-scan <go-package>]... [-scan-dir <dir>] [-q]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "check regenerates the sources in memory and compares them with the files on")
@@ -587,9 +589,11 @@ func (c *cli) printCheckUsage(w io.Writer) {
 func (c *cli) printBuildUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: cppgo build -header <path> [-header <path>]... -package <name>")
 	fmt.Fprintln(w, "                    -scan <go-package> [-scan <go-package>]...")
-	fmt.Fprintln(w, "                    [-scan-dir <dir>] [-library <file>] [-out <dir>]")
+	fmt.Fprintln(w, "                    [-scan-dir <dir>] [-library <file>]... [-out <dir>]")
 	fmt.Fprintln(w, "                    [-compile-commands <path>] [-instantiate '<specialization>']...")
 	fmt.Fprintln(w, "                    [-rename <signature=GoName>]... [-status <qualified>]...")
+	fmt.Fprintln(w, "                    [-alias '<C++ template>=<std template>']...")
+	fmt.Fprintln(w, "                    [-proxy '<declaration>@<index>=<C++ type>']...")
 	fmt.Fprintln(w, "                    [-cxx <compiler>] [-q]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "build is phase two of the two-phase generics flow:")

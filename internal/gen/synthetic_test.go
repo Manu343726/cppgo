@@ -534,9 +534,8 @@ func TestBuildRecordsKeepsTheCompleteSpecialization(t *testing.T) {
 
 // TestAliasReadsALibraryTemplateAsTheStandardOne covers -alias at the type
 // map: OpenCV's cv::Ptr<T> is std::shared_ptr<T>, and the model reads the
-// library's spelling as the standard shape. A smart-pointer parameter or result
-// is then refused with that shape's own reason instead of being an unknown
-// record — the next thing to carry, named honestly.
+// library's spelling as the standard shape. The declaration then takes the
+// result branch it belongs to — a carried result, not an unknown record.
 func TestAliasReadsALibraryTemplateAsTheStandardOne(t *testing.T) {
 	aliased := cxx.Param{Kind: cxx.TypeRecord, ClangKind: "Record", Spelling: "Ptr<ORB>", RecordName: "cv::Ptr<cv::ORB>"}
 	_, ok := stdTypeNameWith(aliased, nil)
@@ -661,4 +660,47 @@ void sink(const Proxy &p) noexcept;
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not map as a container")
+}
+
+// TestManifestTypeAdaptationsAreParsedDuringARun covers the two manifest flags
+// that adapt the type map, at the point a run reads them: -alias builds the
+// replacement table before the header is loaded, and a malformed -proxy entry
+// stops the run with its own message.
+func TestManifestTypeAdaptationsAreParsedDuringARun(t *testing.T) {
+	cfg := fixtureConfig("containers", "containers.hpp")
+	cfg.Alias = []string{" cv::Ptr = std::shared_ptr "}
+	rendered, err := RenderResult(cfg)
+	require.NoError(t, err, "a well-formed alias does not disturb a slice that does not use it")
+	assert.NotEmpty(t, rendered.Outputs)
+
+	cfg.Proxy = []string{"containers::total@0"}
+	_, err = Render(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-proxy")
+	assert.Contains(t, err.Error(), "write it as <declaration>@<index>=<C++ type>")
+}
+
+// TestTemplateSuffixNamesEveryArgumentShape covers the suffix a concrete
+// instantiation's Go name carries: a record's Go name, a scalar's Go type, and
+// the spelling itself for the two shapes that have neither — an argument the
+// model cannot map, and one that is not a scalar spelling at all.
+func TestTemplateSuffixNamesEveryArgumentShape(t *testing.T) {
+	point := &recordModel{GoName: "PointInt", CxxName: "cv::Point_<int>"}
+	b := &builder{mapper: &mapper{records: map[string]*recordModel{"cv::Point_<int>": point}}}
+
+	assert.Equal(t, "",
+		b.templateSuffix(&binding{}), "a declaration with no template arguments has no suffix")
+	assert.Equal(t, "PointInt",
+		b.templateSuffix(&binding{templateArgs: []string{"cv::Point_<int>"}}),
+		"a record argument is named after the Go type")
+	assert.Equal(t, "Float64",
+		b.templateSuffix(&binding{templateArgs: []string{"double"}}),
+		"a scalar argument is named after its Go type")
+	// long double is a scalar spelling the type map refuses, so the suffix is
+	// the spelling rather than a Go type the package does not have.
+	assert.Equal(t, "LongDouble",
+		b.templateSuffix(&binding{templateArgs: []string{"long double"}}))
+	assert.Equal(t, "SomeSpelling",
+		b.templateSuffix(&binding{templateArgs: []string{"some_spelling"}}),
+		"a spelling that is not a scalar type is exported as written")
 }

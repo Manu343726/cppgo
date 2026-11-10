@@ -1,0 +1,5 @@
+# std::span is C++20 and the rest of the fixtures are C++17; the harness's
+# assumed flags say -std=c++17, so this file is what makes the header parse.
+CompileFlags:
+  Remove: [-std=c++17]
+  Add: [-std=c++20]

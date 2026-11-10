@@ -199,6 +199,12 @@ var (
 	for _, binding := range m.bindings {
 		fmt.Fprintf(b, "\t// %s\n\t%s uintptr\n", binding.Symbol, binding.SymbolVar)
 	}
+	for _, binding := range m.bindings {
+		if !binding.isSmartResult() {
+			continue
+		}
+		fmt.Fprintf(b, "\t// %s\n\t%s uintptr\n", binding.refFreeSymbol(), binding.refSymVar())
+	}
 	if m.usesFree {
 		b.WriteString("\t// cppgo_free\n\tcppgoFreeSym uintptr\n")
 	}
@@ -283,6 +289,9 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 `)
 	for _, binding := range m.bindings {
 		fmt.Fprintf(b, "\t\t{name: %q, addr: &%s, shim: %t},\n", binding.Symbol, binding.SymbolVar, binding.Carrier.shimCarried())
+		if binding.isSmartResult() {
+			fmt.Fprintf(b, "\t\t{name: %q, addr: &%s, shim: true},\n", binding.refFreeSymbol(), binding.refSymVar())
+		}
 	}
 	if m.usesFree {
 		b.WriteString("\t\t{name: \"cppgo_free\", addr: &cppgoFreeSym, shim: true},\n")
@@ -1284,6 +1293,18 @@ func (m *packageModel) emitStdReturn(b *strings.Builder, binding *binding) {
 		b.WriteString("\treturn cppgoValue, nil\n")
 	case stdArray:
 		b.WriteString("\treturn cppgoResult, nil\n")
+	case stdSharedPtr, stdUniquePtr:
+		record := result.Record
+		// An empty smart pointer has no object: the holder is still allocated
+		// and still has to be released.
+		b.WriteString("\tif cppgoPointee == nil {\n")
+		fmt.Fprintf(b, "\t\tif cppgoRef != nil { cppgoFree(%s, cppgoRef) }\n", binding.refSymVar())
+		b.WriteString("\t\treturn nil, nil\n\t}\n")
+		b.WriteString("\tcppgoObject := cppgo.NewObject(1, 1, func() {\n")
+		b.WriteString("\t\tcppgo.ProbeStack()\n")
+		fmt.Fprintf(b, "\t\tcppgoFree(%s, cppgoRef)\n", binding.refSymVar())
+		b.WriteString("\t})\n")
+		fmt.Fprintf(b, "\treturn &%s{obj: cppgoObject, addr: uintptr(cppgoPointee)}, nil\n", record.GoName)
 	case stdOptional:
 		b.WriteString("\tif cppgoHas != 0 {\n\t\treturn &cppgoResult, nil\n\t}\n\treturn nil, nil\n")
 	}

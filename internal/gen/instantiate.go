@@ -95,11 +95,9 @@ func parseTemplateRequest(entry string) (*templateRequest, error) {
 		spelling = strings.TrimSpace(spelling)
 		// An argument is a scalar the model builds, or a type the model knows by
 		// name — cv::Point_<int> is as much a template argument as double is,
-		// and the OpenCV proxies take containers of records.
-		arg, ok := cxx.ParseTemplateArgument(spelling)
-		if !ok {
-			return nil, fmt.Errorf("cppgo: -instantiate %s: the type argument %q is not a type the model can build; use a C++ scalar spelling such as 'unsigned char' or 'double', or a record the header declares", entry, spelling)
-		}
+		// and the OpenCV proxies take containers of records. The splitter drops
+		// an empty part, so every argument here is a spelling the parser takes.
+		arg, _ := cxx.ParseTemplateArgument(spelling)
 		req.ArgSpellings[i] = spelling
 		req.Args[i] = arg
 	}

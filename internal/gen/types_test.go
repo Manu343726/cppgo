@@ -396,3 +396,28 @@ func TestLookupRecordAmbiguous(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "AV", record.GoName)
 }
+
+// TestMapElementRefusesAnElementAContainerCannotHold covers the recursive
+// element map's two refusals: a standard-library element the wire cannot carry
+// (a string needs a character pool), and a type the model knows nothing about.
+func TestMapElementRefusesAnElementAContainerCannotHold(t *testing.T) {
+	m := &mapper{}
+	_, err := m.mapElement("std::vector<std::string>")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "standard-library element")
+	assert.Contains(t, err.Error(), "std::vector of those")
+
+	_, err = m.mapElement("ns::Unknown")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a scalar or a known record")
+}
+
+// TestCallbackElementReportsTheRefusal covers the callback argument map's
+// propagation: an element the model refuses is the callback's refusal, named
+// with the same reason.
+func TestCallbackElementReportsTheRefusal(t *testing.T) {
+	m := &mapper{}
+	_, err := m.callbackElement("std::vector<std::string>")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "standard-library element")
+}

@@ -69,7 +69,6 @@ func TestDeclarationsTheBuildCannotCarryAreWarnings(t *testing.T) {
 		{"nullptrarg.hpp", "nullptr_t"},
 		{"pointerresult.hpp", "pointer to an opaque record"},
 		{"smartparam.hpp", "smart-pointer parameter"},
-		{"smartresult.hpp", "smart-pointer result"},
 		{"stdinout.hpp", "non-const standard-library reference"},
 		{"stddeque.hpp", "outside the emitted table"},
 		{"variadic.hpp", "variadic function"},

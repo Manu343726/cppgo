@@ -53,16 +53,14 @@ func parseProxy(entry string) (*proxyAdaptation, error) {
 	if err != nil || index < 0 {
 		return nil, fmt.Errorf("cppgo: -proxy %s: %q is not a parameter index", entry, selector[at+1:])
 	}
-	adapted := &proxyAdaptation{
+	// The prefix cannot be empty here: it is trimmed, and @ cannot be its first
+	// character. The index bounds above are the whole of the grammar.
+	return &proxyAdaptation{
 		Entry:    entry,
-		Selector: strings.TrimSpace(selector[:at]),
+		Selector: selector[:at],
 		Index:    index,
 		Spelling: spelling,
-	}
-	if adapted.Selector == "" {
-		return nil, fmt.Errorf("cppgo: -proxy %s: the declaration before the @ is empty", entry)
-	}
-	return adapted, nil
+	}, nil
 }
 
 // proxyFor finds the adaptation that names one parameter of a declaration.

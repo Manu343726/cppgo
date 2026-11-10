@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
 // containersConfig is the recursive-container fixture's canonical run.
@@ -154,4 +156,20 @@ func TestElementShapeAndCTypes(t *testing.T) {
 	assert.Equal(t, "void *", containerCTypes(mirrored), "a record crosses as a pointer to void")
 	assert.Equal(t, "int32_t *", containerCTypes(&goType{Kind: goInteger, Cxx: "int32_t"}))
 	assert.Equal(t, "const int32_t *", containerCTypes(&goType{Kind: goInteger, Cxx: "int32_t", Const: true}))
+}
+
+// TestNilElementCheck covers both answers a container of records gives to a nil
+// or closed element: an error in a binding that has an error channel, and a
+// panic in one that does not. C++ would dereference the address either way.
+func TestNilElementCheck(t *testing.T) {
+	b := &builder{}
+	errorForm := b.nilElementCheck(&binding{ErrorResult: true}, "counters")
+	assert.Contains(t, errorForm, "cppgo_item == nil || cppgo_item.obj == nil")
+	assert.Contains(t, errorForm, "return cppgo.ErrClosed")
+
+	panicForm := b.nilElementCheck(&binding{sym: cxx.Symbol{Kind: cxx.FreeFunc, QualifiedName: "ns::take"}}, "counters")
+	assert.Contains(t, panicForm, "panic(")
+	assert.Contains(t, panicForm, "ns::take")
+	assert.Contains(t, panicForm, "a nil element in counters")
+	assert.NotContains(t, panicForm, "return")
 }

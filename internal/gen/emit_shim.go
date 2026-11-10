@@ -38,6 +38,16 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		h.WriteString("/* cppgo_free releases a result copy the Go side has read. */\n")
 		h.WriteString("void cppgo_free(void *block);\n")
 	}
+	for _, binding := range m.bindings {
+		if !binding.isSmartResult() {
+			continue
+		}
+		// The holder is the only object Go owns for a smart-pointer result: it
+		// owns the control block, and deleting it destroys the pointee when the
+		// last reference goes.
+		fmt.Fprintf(&h, "\n/* %s releases the holder of %s's result. */\n", binding.refFreeSymbol(), displaySignature(binding.sym))
+		fmt.Fprintf(&h, "void %s(void *ref);\n", binding.refFreeSymbol())
+	}
 
 	var s strings.Builder
 	s.WriteString(GeneratedBanner + "\n")
@@ -70,6 +80,19 @@ func (m *packageModel) renderShim(only *binding) ([]byte, []byte, []thunkSpan, e
 		s.WriteString("\n// cppgo_free releases a result copy the Go side has read.\n")
 		s.WriteString("extern \"C\" void cppgo_free(void *block) {\n")
 		s.WriteString("\t::operator delete[](block);\n")
+		s.WriteString("}\n")
+	}
+	for _, binding := range m.bindings {
+		if !binding.isSmartResult() {
+			continue
+		}
+		holder := "std::shared_ptr"
+		if binding.Result.Std == stdUniquePtr {
+			holder = "std::unique_ptr"
+		}
+		fmt.Fprintf(&s, "\n// %s releases the holder of a smart-pointer result.\n", binding.refFreeSymbol())
+		fmt.Fprintf(&s, "extern \"C\" void %s(void *ref) {\n", binding.refFreeSymbol())
+		fmt.Fprintf(&s, "\tdelete static_cast<%s<::%s> *>(ref);\n", holder, binding.Result.Record.CxxName)
 		s.WriteString("}\n")
 	}
 
@@ -532,6 +555,21 @@ func (m *packageModel) stdResult(binding *binding, call string) (string, error) 
 		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
 		fmt.Fprintf(&b, "\t\t%s *cppgo_copy = static_cast<%s *>(cppgo_out_data);\n", elem.Cxx, elem.Cxx)
 		fmt.Fprintf(&b, "\t\tfor (size_t cppgo_i = 0; cppgo_i < %d; ++cppgo_i) { cppgo_copy[cppgo_i] = cppgo_value[cppgo_i]; }\n", result.ArrayLen)
+	case stdSharedPtr, stdUniquePtr:
+		if elem == nil || elem.Record == nil {
+			// The holder's type is the pointee's: without the record the
+			// model cannot name what the pointer owns.
+			return "", pending(fmt.Sprintf("the smart-pointer result %q does not name a record the model knows", result.Go),
+				"include the pointee's complete definition")
+		}
+		holder := "std::shared_ptr"
+		if result.Std == stdUniquePtr {
+			holder = "std::unique_ptr"
+		}
+		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
+		fmt.Fprintf(&b, "\t\tauto *cppgo_holder = new %s<%s>(std::move(cppgo_value));\n", holder, elem.Cxx)
+		b.WriteString("\t\t*cppgo_out_pointee = cppgo_holder->get();\n")
+		b.WriteString("\t\t*cppgo_out_ref = cppgo_holder;\n")
 	case stdOptional:
 		fmt.Fprintf(&b, "\t\tauto cppgo_value = %s;\n", call)
 		fmt.Fprintf(&b, "\t\tif (cppgo_value) { *static_cast<%s *>(cppgo_out_value) = *cppgo_value; *static_cast<int32_t *>(cppgo_out_has) = 1; }\n", elem.Cxx)

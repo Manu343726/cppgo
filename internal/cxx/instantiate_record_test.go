@@ -397,6 +397,8 @@ func TestABINamespaceName(t *testing.T) {
 		"dnn_v2024":        false,
 		"4_v20240521":      true,
 		"something_longer": false,
+		"value":            false,
+		"dnn_v2024052x":    false,
 	} {
 		assert.Equal(t, want, abiNamespaceName(name), name)
 	}

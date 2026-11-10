@@ -83,6 +83,9 @@ type slot struct {
 // its size.
 func (s *slot) align() int { return s.size }
 
+// maxSlotAlign is the alignment of the argument frame's result block, in bytes.
+const maxSlotAlign = 8
+
 // recordModel is one bound C++ record.
 type recordModel struct {
 	// GoName is the exported Go type name.
@@ -141,6 +144,15 @@ type goParam struct {
 	// Group is the slice group a slice shares a length with, or nil.
 	Group []*goParam
 }
+
+// refFreeSymbol is the shim symbol that deletes a smart-pointer result's holder.
+func (b *binding) refFreeSymbol() string { return "cppgo_free_ref_" + b.ID }
+
+// refSymVar is the generated package's variable for that symbol.
+func (b *binding) refSymVar() string { return "cppgoRefSym_" + b.ID }
+
+// isSmartResult reports whether the result crosses as a smart pointer.
+func (b *binding) isSmartResult() bool { return b.SmartResult }
 
 // allArgs is every wire word of a binding: the ones inside the argument block
 // and the ones beside it. An over-full call moves its value words into the
@@ -304,6 +316,10 @@ type binding struct {
 	// StdResult is true when the result is a standard-library value, which the
 	// thunk copies out through out-parameters.
 	StdResult bool
+	// SmartResult is true when the result is a std::shared_ptr or
+	// std::unique_ptr: the value is the object it owns, and the holder the shim
+	// allocates keeps the control block alive until the Go value is closed.
+	SmartResult bool
 	// ViewResult is true when the result is a borrowed pointer to a record:
 	// the Go value is a view of the receiver's object, one reference more, at
 	// the address C++ returned. It is how a method that returns `T&` (`T *`)
@@ -1255,7 +1271,10 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 					"take it as a callback parameter, or expose a C++ wrapper that owns it")
 			}
 			if result.Std == stdUniquePtr || result.Std == stdSharedPtr {
-				return nil, pending(fmt.Sprintf("%q is a smart-pointer result", sym.Result.Spelling), "return the object by value or through a reference at the C++ boundary")
+				// A smart pointer result is the object it owns, and the control
+				// block is one holder object the shim allocates: Go owns the
+				// holder, views the pointee, and releases the holder once.
+				binding.SmartResult = true
 			}
 			if result.Kind == goRecord {
 				// A mirrored record comes back through a pointer the Go side
@@ -1268,7 +1287,7 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				// there can throw whatever its copy constructor throws.
 				binding.hasByValue = true
 			}
-			if result.Kind == goPointer && result.Record != nil && !result.Record.Mirrored && !result.ByValue {
+			if result.Kind == goPointer && result.Std == stdNone && result.Record != nil && !result.Record.Mirrored && !result.ByValue {
 				// A method's borrowed pointer is a view of the receiver: the
 				// object is Go's, and the returned address is inside it. A free
 				// function's is an address nobody owns, which Go cannot hold.
@@ -1792,6 +1811,12 @@ func (b *builder) addStdResult(binding *binding) error {
 	case stdArray:
 		binding.stdDecls = []string{"var cppgoResult " + result.Go}
 		out("unsafe.Pointer(&cppgoResult[0])", "&cppgoResult", "void *", "cppgo_out_data")
+	case stdSharedPtr, stdUniquePtr:
+		binding.stdDecls = []string{"var cppgoRef unsafe.Pointer", "var cppgoPointee unsafe.Pointer"}
+		out("unsafe.Pointer(&cppgoPointee)", "&cppgoPointee", "void **", "cppgo_out_pointee")
+		out("unsafe.Pointer(&cppgoRef)", "&cppgoRef", "void **", "cppgo_out_ref")
+		binding.usesFree = true
+		b.usesFree = true
 	case stdOptional:
 		binding.stdDecls = []string{"var cppgoResult " + result.Elem.Go, "var cppgoHas int32"}
 		out("unsafe.Pointer(&cppgoResult)", "&cppgoResult", "void *", "cppgo_out_value")
@@ -2404,7 +2429,15 @@ func (b *builder) layout() {
 		}
 		off := 0
 		for _, slot := range slots {
-			off = alignUp(off, slot.align())
+			align := slot.align()
+			if slot.label == "ret" {
+				// The result block starts on the machine's maximum alignment,
+				// not on the result type's: go vet's asmdecl check computes the
+				// frame that way, and an assembler frame it disagrees with does
+				// not compile.
+				align = maxSlotAlign
+			}
+			off = alignUp(off, align)
 			slot.offset = off
 			off += slot.size
 		}

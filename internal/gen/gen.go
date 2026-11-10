@@ -244,11 +244,7 @@ func Generate(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("cppgo: creating the shim build directory: %w", err)
 	}
-	if os.Getenv("CPPGO_KEEP_SCRATCH") != "" {
-		fmt.Fprintf(os.Stderr, "cppgo: scratch %s\n", scratch)
-	} else {
-		defer func() { _ = os.RemoveAll(scratch) }()
-	}
+	defer func() { _ = os.RemoveAll(scratch) }()
 	if err := writeOutputs(scratch, result.Outputs); err != nil {
 		return err
 	}

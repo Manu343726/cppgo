@@ -1417,15 +1417,12 @@ func (tu *TU) instantiateMemberPattern(record, member string, pattern memberTemp
 	sym.IsConst, sym.IsVirtual, sym.IsStatic = isConst, false, false
 	// A constructor is a member function template too — OpenCV's proxies are
 	// built from containers that way — and its cursor is the template kind, so
-	// the name is what says it is one.
-	switch simpleMemberName(record) {
-	case member:
+	// the name is what says it is one. A destructor cannot be a template (the
+	// language forbids it), so "constructor or method" is exhaustive here.
+	if simpleMemberName(record) == member {
 		sym.Kind = Constructor
 		sym.IsConst = false
-	case "~" + simpleMemberName(record):
-		sym.Kind = Destructor
-		sym.IsConst = false
-	default:
+	} else {
 		sym.Kind = Method
 	}
 	sym.IsTemplate = false

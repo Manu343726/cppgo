@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Manu343726/cppgo/internal/cxx"
 )
 
 // proxyConfig is the proxy fixture's canonical run: the two declarations are
@@ -56,10 +58,28 @@ func TestParseProxy(t *testing.T) {
 		"cv::findContours@x=std::vector<int>",
 		"cv::findContours@1=",
 		"cv::findContours@-1=std::vector<int>",
+		"@0=std::vector<int> &",
 	} {
 		_, err := parseProxy(bad)
 		assert.Error(t, err, bad)
 	}
+}
+
+// TestProxyTypeNamesTheDeclaredRecord covers the two parameter shapes the shim
+// can construct a proxy around, and the one it cannot name at all.
+func TestProxyTypeNamesTheDeclaredRecord(t *testing.T) {
+	pointee := &cxx.Param{Kind: cxx.TypeRecord, RecordName: "ns::Sink"}
+	byReference, err := proxyType(cxx.Param{Kind: cxx.TypePointer, Ptr: true, Pointee: pointee, Spelling: "const ns::Sink &"})
+	require.NoError(t, err)
+	assert.Equal(t, "::ns::Sink", byReference)
+
+	byValue, err := proxyType(cxx.Param{Kind: cxx.TypeRecord, RecordName: "ns::Source", Spelling: "ns::Source"})
+	require.NoError(t, err)
+	assert.Equal(t, "::ns::Source", byValue)
+
+	_, err = proxyType(cxx.Param{Kind: cxx.TypeInteger, Spelling: "int"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a record parameter")
 }
 
 // TestProxyUnmatchedIsAManifestError reports an adaptation nothing used: a
