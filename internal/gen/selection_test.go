@@ -110,10 +110,10 @@ func selectionConfig() Config {
 }
 
 // TestUncarryableDeclarationsDoNotRefuseTheRecord is the fixture the contract
-// names: a class with one carryable constructor and one whose parameter is a
-// void *, and an overload set with one supported and one unsupported signature.
-// The carryable declarations bind, the others are warnings, and the class
-// exists.
+// names: a class with one carryable constructor and one whose parameter is an
+// incomplete record by value, and an overload set with one supported and one
+// unsupported signature. The carryable declarations bind, the others are
+// warnings, and the class exists.
 func TestUncarryableDeclarationsDoNotRefuseTheRecord(t *testing.T) {
 	rendered, err := RenderResult(selectionConfig())
 	require.NoError(t, err)
@@ -129,9 +129,9 @@ func TestUncarryableDeclarationsDoNotRefuseTheRecord(t *testing.T) {
 	assert.Contains(t, generated, "func Plain(value int32)", "the carryable overload binds")
 
 	joined := joinWarnings(rendered.Warnings)
-	assert.Contains(t, joined, "sel::Value::Value(void *)", "the uncarryable constructor is named")
-	assert.Contains(t, joined, "void pointer", "the reason is the same one the declaration-level error used")
-	assert.Contains(t, joined, "sel::plain(void *)", "the uncarryable overload is named")
+	assert.Contains(t, joined, "sel::Value::Value(Hidden)", "the uncarryable constructor is named")
+	assert.Contains(t, joined, "is not part of the generated API", "the reason is the model's own sentence")
+	assert.Contains(t, joined, "sel::plain(Hidden)", "the uncarryable overload is named")
 	assert.NotContains(t, generated, "Opaque", "nothing is emitted for the uncarryable declarations")
 }
 
@@ -139,11 +139,11 @@ func TestUncarryableDeclarationsDoNotRefuseTheRecord(t *testing.T) {
 // not the set: the signature is accepted and the rest of the class still binds.
 func TestExcludeNamesOneOverload(t *testing.T) {
 	cfg := selectionConfig()
-	cfg.Exclude = []string{"sel::Value::Value(void *)", "sel::plain(void *) noexcept"}
+	cfg.Exclude = []string{"sel::Value::Value(Hidden)", "sel::plain(Hidden) noexcept"}
 	rendered, err := RenderResult(cfg)
 	require.NoError(t, err)
 	joined := joinWarnings(rendered.Warnings)
-	assert.NotContains(t, joined, "void pointer", "an excluded declaration is not lowered, so it is not reported")
+	assert.NotContains(t, joined, "sel::Value::Value(Hidden)", "an excluded declaration is not lowered, so it is not reported")
 	generated := ""
 	for _, output := range rendered.Outputs {
 		if output.Name == GenFileName {

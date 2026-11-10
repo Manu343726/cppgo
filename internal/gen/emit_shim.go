@@ -212,6 +212,7 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 	b.WriteString("\tcppgo_error_message.clear();\n")
 	b.WriteString("\ttry {\n")
 	b.WriteString(m.stdLocals(binding))
+	copies := m.stdOutCopies(binding)
 	switch {
 	case binding.StdResult:
 		result, err := m.stdResult(binding, call)
@@ -219,19 +220,31 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 			return "", err
 		}
 		b.WriteString(result)
+		b.WriteString(copies)
 		b.WriteString("\t\treturn 0;\n")
 	case binding.statusResult:
 		// The callee's own return value is the status: 0 is success, anything
-		// else is the failure the Go side turns into an error.
-		fmt.Fprintf(&b, "\t\treturn %s;\n", call)
+		// else is the failure the Go side turns into an error. A copy-back has
+		// to run after the call, so the value is kept in a branch only when
+		// there is one.
+		if copies == "" {
+			fmt.Fprintf(&b, "\t\treturn %s;\n", call)
+			break
+		}
+		fmt.Fprintf(&b, "\t\tif (%s != 0) { return 1; }\n", call)
+		b.WriteString(copies)
+		b.WriteString("\t\treturn 0;\n")
 	case binding.OutObject != nil:
 		fmt.Fprintf(&b, "\t\t%s\n", store())
+		b.WriteString(copies)
 		b.WriteString("\t\treturn 0;\n")
 	case binding.Out != nil:
 		fmt.Fprintf(&b, "\t\t%s\n", store())
+		b.WriteString(copies)
 		b.WriteString("\t\treturn 0;\n")
 	default:
 		fmt.Fprintf(&b, "\t\t%s;\n", call)
+		b.WriteString(copies)
 		b.WriteString("\t\treturn 0;\n")
 	}
 	b.WriteString("\t} catch (const std::exception &error) {\n")
@@ -242,6 +255,25 @@ func (m *packageModel) shimBody(binding *binding) (string, error) {
 	b.WriteString("\t\treturn 1;\n")
 	b.WriteString("\t}\n")
 	return b.String(), nil
+}
+
+// stdOutCopies renders the copy-back of every standard-library parameter the
+// callee replaces. The C++ local is destroyed at the end of the thunk; what
+// crosses is a plain array the Go side reads and frees.
+func (m *packageModel) stdOutCopies(binding *binding) string {
+	var b strings.Builder
+	for _, arg := range binding.allArgs() {
+		if !arg.stdOutCopy {
+			continue
+		}
+		elem := arg.stdElem
+		fmt.Fprintf(&b, "\t\t{\n\t\tconst size_t cppgo_out_n = %s.size();\n", arg.stdLocal)
+		fmt.Fprintf(&b, "\t\t%s *cppgo_out_copy = static_cast<%s *>(::operator new[]((cppgo_out_n == 0 ? 1 : cppgo_out_n) * sizeof(%s)));\n",
+			elem.Cxx, elem.Cxx, elem.Cxx)
+		fmt.Fprintf(&b, "\t\tfor (size_t cppgo_out_i = 0; cppgo_out_i < cppgo_out_n; ++cppgo_out_i) { cppgo_out_copy[cppgo_out_i] = %s[cppgo_out_i]; }\n", arg.stdLocal)
+		fmt.Fprintf(&b, "\t\t*%s = cppgo_out_copy;\n\t\t*%s = cppgo_out_n;\n\t\t}\n", arg.stdOutData, arg.stdOutSize)
+	}
+	return b.String()
 }
 
 // targetCall renders the C++ expression that calls the bound declaration.
@@ -304,10 +336,19 @@ func (m *packageModel) targetCall(binding *binding) (string, error) {
 			// something a call site can write.
 			return "static_cast<" + conversionTarget(binding) + ">(*(" + cast + "))", nil
 		}
-		return cast + "->" + simpleName(binding.sym.QualifiedName) + "(" + list + ")", nil
+		return cast + "->" + simpleName(binding.sym.QualifiedName) + genericTemplateArgs(binding) + "(" + list + ")", nil
 	default:
-		return "::" + binding.sym.QualifiedName + "(" + list + ")", nil
+		return "::" + binding.sym.QualifiedName + genericTemplateArgs(binding) + "(" + list + ")", nil
 	}
+}
+
+// genericTemplateArgs renders the explicit template arguments a manifest
+// instantiation supplies. An ordinary binding has none.
+func genericTemplateArgs(binding *binding) string {
+	if len(binding.templateArgs) == 0 {
+		return ""
+	}
+	return "<" + strings.Join(binding.templateArgs, ", ") + ">"
 }
 
 // shimArg renders one C++ argument inside a thunk. The thunk's C parameter is a

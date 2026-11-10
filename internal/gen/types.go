@@ -444,13 +444,82 @@ trimmed:
 	s = strings.TrimSuffix(s, "&")
 	s = strings.TrimSuffix(s, "*")
 	s = strings.TrimSpace(s)
-	if s == "std::nullptr_t" || !strings.HasPrefix(s, "std::") {
+	if s == "std::nullptr_t" {
 		return "", false
 	}
-	if _, scalar := elementScalars[s]; scalar {
-		return "", false
+	// The canonical name is the reliable half for the three families whose
+	// written spelling carries a library's own aliases: OpenCV writes
+	// std::vector<uchar> and cv::String, and the canonical form is the one the
+	// emitted table names (std::vector<unsigned char>, std::string).
+	record := p.RecordName
+	if record == "" && p.Pointee != nil {
+		record = p.Pointee.RecordName
 	}
-	return s, true
+	if canonical, ok := canonicalStdName(record); ok && canonicalFamily(canonical) {
+		return canonical, true
+	}
+	if strings.HasPrefix(s, "std::") {
+		if _, scalar := elementScalars[s]; scalar {
+			return "", false
+		}
+		return s, true
+	}
+	// A typedef of a standard-library type spells its own name: cv::String is
+	// std::string, and the canonical record name is the only place that fact
+	// survives ("String" says nothing on its own). The pointee carries it for a
+	// reference or a pointer; the declaration itself carries it for a value.
+	if canonical, ok := canonicalStdName(p.RecordName); ok {
+		return canonical, true
+	}
+	if p.Pointee != nil {
+		if canonical, ok := canonicalStdName(p.Pointee.RecordName); ok {
+			return canonical, true
+		}
+	}
+	return "", false
+}
+
+// canonicalFamily reports whether a canonical standard-library name is one the
+// model reads from the canonical type rather than from the written spelling.
+// The string and vector spellings are the ones a library aliases; the rest are
+// written as the table expects and are read from the declaration.
+func canonicalFamily(name string) bool {
+	return name == "std::string" || name == "std::string_view" || strings.HasPrefix(name, "std::vector<")
+}
+
+// canonicalStdName turns the canonical spelling of a standard-library record
+// into the name the emitted table uses, and reports whether it is one. The
+// aliases are the ones a library declares for its own API: cv::String is
+// std::string, and the GNU standard library spells the instance
+// std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>.
+// An allocator argument is dropped, because the table maps the container, not
+// its storage policy.
+func canonicalStdName(record string) (string, bool) {
+	record = strings.TrimSpace(record)
+	switch {
+	case strings.HasPrefix(record, "std::__cxx11::basic_string<"),
+		strings.HasPrefix(record, "std::basic_string<"):
+		return "std::string", true
+	case strings.HasPrefix(record, "std::basic_string_view<"):
+		return "std::string_view", true
+	case strings.HasPrefix(record, "std::vector<"):
+		args := splitTemplateArgs(record[len("std::vector<") : len(record)-1])
+		if len(args) == 2 {
+			return "std::vector<" + strings.TrimSpace(args[0]) + ">", true
+		}
+		if len(args) == 1 {
+			return "std::vector<" + strings.TrimSpace(args[0]) + ">", true
+		}
+		return record, true
+	case strings.HasPrefix(record, "std::optional<"),
+		strings.HasPrefix(record, "std::array<"),
+		strings.HasPrefix(record, "std::span<"),
+		strings.HasPrefix(record, "std::function<"),
+		strings.HasPrefix(record, "std::unique_ptr<"),
+		strings.HasPrefix(record, "std::shared_ptr<"):
+		return record, true
+	}
+	return "", false
 }
 
 // mapEnum maps an enum to its named Go integer type. The wire width and the
@@ -585,7 +654,23 @@ func (m *mapper) mapPointer(p cxx.Param) (*goType, error) {
 		elem = mapped
 	}
 	if elem.Kind == goVoid {
-		return nil, pending(fmt.Sprintf("%q is a void pointer", p.Spelling), "expose a typed pointer at the C++ boundary")
+		// A void pointer is Go's untyped pointer. It is the C API's own shape:
+		// cv::Mat's raw-data constructor takes one, and the caller is the only
+		// one who knows what the bytes are. Nothing on the Go side owns the
+		// memory, so the caller keeps it alive for as long as C++ holds it —
+		// exactly the contract the C++ declaration already has.
+		qualifier := ""
+		if p.Pointee.IsConst {
+			qualifier = "const "
+		}
+		return &goType{
+			Kind:  goPointer,
+			Go:    "unsafe.Pointer",
+			C:     qualifier + "void *",
+			Cxx:   qualifier + "void *",
+			Const: p.Pointee.IsConst,
+			Param: p,
+		}, nil
 	}
 	if elem.Kind == goRecord {
 		// A record pointer crosses as void *: the shim header stays standalone

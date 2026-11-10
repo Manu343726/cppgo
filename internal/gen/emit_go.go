@@ -484,8 +484,8 @@ func (m *packageModel) emitConstructor(b *strings.Builder, record *recordModel, 
 func (m *packageModel) emitClone(b *strings.Builder, record *recordModel, clone *binding) {
 	recv := receiverName(record.GoName)
 	ctx := callContext{thisExpr: "obj.Addr()", keepThis: "obj", recvExpr: recv + ".cppgoAddr()", recvKeep: recv}
-	m.emitBindingDoc(b, clone, "Clone copies the object through its copy constructor.")
-	fmt.Fprintf(b, "func (%s *%s) Clone() (*%s, error) {\n", recv, record.GoName, record.GoName)
+	m.emitBindingDoc(b, clone, clone.GoName+" copies the object through its copy constructor.")
+	fmt.Fprintf(b, "func (%s *%s) %s() (*%s, error) {\n", recv, record.GoName, clone.GoName, record.GoName)
 	fmt.Fprintf(b, "\tif %s == nil || %s.obj == nil {\n\t\treturn nil, cppgo.ErrClosed\n\t}\n", recv, recv)
 	b.WriteString("\tif err := cppgoOpen(\"\"); err != nil {\n\t\treturn nil, err\n\t}\n")
 	b.WriteString("\tcppgo.ProbeStack()\n")
@@ -791,6 +791,7 @@ func (m *packageModel) emitCall(b *strings.Builder, record *recordModel, binding
 		m.emitKeepAlive(b, binding, ctx)
 		fmt.Fprintf(b, "\tif cppgoStatus != 0 {\n\t\treturn %scppgoCallError(%q)\n\t}\n",
 			errorZeroPrefix(binding), binding.sym.QualifiedName)
+		m.emitStdOutCopies(b, binding)
 		switch {
 		case binding.StdResult:
 			m.emitStdReturn(b, binding)
@@ -1145,6 +1146,9 @@ func goParams(params []*goParam) string {
 	parts := make([]string, len(params))
 	for i, param := range params {
 		parts[i] = param.Name + " " + param.Type.Go
+		if param.StdOut {
+			parts[i] = param.Name + " *" + param.Type.Go
+		}
 	}
 	return strings.Join(parts, ", ")
 }
@@ -1195,6 +1199,22 @@ func zeroValue(t *goType) string {
 	}
 }
 
+// emitStdOutCopies copies a standard-library parameter the callee replaced back
+// into the caller's slice and releases the block the thunk allocated. The
+// caller's slice keeps its capacity, so the copy is one append over its own
+// storage when it fits.
+func (m *packageModel) emitStdOutCopies(b *strings.Builder, binding *binding) {
+	for _, arg := range binding.allArgs() {
+		if !arg.stdOutCopy {
+			continue
+		}
+		name := arg.stdGoName
+		fmt.Fprintf(b, "\tif %s != 0 {\n\t\t*%s = append((*%s)[:0], unsafe.Slice((*%s)(%s), int(%s))...)\n\t} else {\n\t\t*%s = (*%s)[:0]\n\t}\n",
+			arg.stdOutSize, name, name, arg.stdElem.Go, arg.stdOutData, arg.stdOutSize, name, name)
+		fmt.Fprintf(b, "\tcppgoFree(cppgoFreeSym, %s)\n", arg.stdOutData)
+	}
+}
+
 // emitStdReturn copies a standard-library result out of the C++ copy and
 // releases it. The bytes are copied before cppgo_free runs, so no C++ memory
 // escapes the thunk.
@@ -1233,6 +1253,11 @@ func convertResult(binding *binding, local string) string {
 	case goBool:
 		return local + "&0xff != 0"
 	case goPointer:
+		if result.Go == "unsafe.Pointer" {
+			// An untyped C pointer is already Go's untyped pointer; there is no
+			// type to cast it to.
+			return "unsafe.Pointer(" + local + ")"
+		}
 		return "(*" + strings.TrimPrefix(result.Go, "*") + ")(" + local + ")"
 	case goInteger, goEnum:
 		if result.Go == "int64" || result.Go == "uint64" {
@@ -1251,6 +1276,9 @@ func convertFromLocal(result *goType, local string) string {
 	case goBool:
 		return local + " != 0"
 	case goPointer:
+		if result.Go == "unsafe.Pointer" {
+			return "unsafe.Pointer(" + local + ")"
+		}
 		return "(*" + strings.TrimPrefix(result.Go, "*") + ")(" + local + ")"
 	default:
 		return local

@@ -193,7 +193,11 @@ func (b *builder) buildTemplates() error {
 		}
 		tmpl, err := b.newTemplate(rec)
 		if err != nil {
-			return err
+			// A class template the generic API cannot model is one declaration,
+			// not the header: it is reported and the rest of the API binds, the
+			// same rule every other uncarryable declaration follows.
+			b.warnings = append(b.warnings, fmt.Sprintf("%s is not part of the generic API: %v", rec.QualifiedName, err))
+			continue
 		}
 		b.templates = append(b.templates, tmpl)
 		b.templateByName[rec.QualifiedName] = tmpl
@@ -210,19 +214,30 @@ func (b *builder) buildTemplates() error {
 		}
 		tmpl, err := b.newTemplateFunction(sym)
 		if err != nil {
-			return err
+			b.warnings = append(b.warnings, fmt.Sprintf("%s is not part of the generic API: %v", displaySignature(sym), err))
+			continue
 		}
 		b.templates = append(b.templates, tmpl)
 		b.templateByName[tmpl.CxxName] = tmpl
 	}
 	sort.Slice(b.templates, func(i, j int) bool { return b.templates[i].CxxName < b.templates[j].CxxName })
+	// One Go name per template pattern. Overloads of one template function share
+	// their name by construction, and a pattern that cannot be told apart in Go
+	// is reported and skipped rather than refusing the header; -instantiate
+	// names the concrete specialization a caller needs.
+	kept := b.templates[:0]
 	seen := make(map[string]string, len(b.templates))
 	for _, tmpl := range b.templates {
 		if other, taken := seen[tmpl.GoName]; taken {
-			return fmt.Errorf("cppgo: %s and %s both map to the Go name %s; rename one with -rename", other, tmpl.CxxName, tmpl.GoName)
+			b.warnings = append(b.warnings, fmt.Sprintf(
+				"%s and %s both map to the Go name %s; the second is not part of the generic API, name its concrete specialization with -instantiate",
+				other, tmpl.CxxName, tmpl.GoName))
+			continue
 		}
 		seen[tmpl.GoName] = tmpl.CxxName
+		kept = append(kept, tmpl)
 	}
+	b.templates = kept
 	return nil
 }
 

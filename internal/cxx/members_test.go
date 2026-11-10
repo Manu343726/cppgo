@@ -102,7 +102,7 @@ func TestMemberTemplateInstantiation(t *testing.T) {
 
 	double := TemplateArgument{Kind: TemplateArgumentType, Spelling: "double",
 		Type: Param{Kind: TypeFloat, Spelling: "double", SizeBytes: 8}}
-	member, ok := tu.InstantiateMember("mathx::Box<int>", "convert", []TemplateArgument{double})
+	member, ok := tu.InstantiateMember("mathx::Box<int>", "convert", []TemplateArgument{double}, -1, false)
 	require.True(t, ok)
 	assert.Equal(t, "mathx::Box<int>::convert", member.QualifiedName)
 	assert.False(t, member.IsTemplate, "the instantiation is a concrete member")
@@ -112,9 +112,9 @@ func TestMemberTemplateInstantiation(t *testing.T) {
 	assert.Equal(t, int64(8), member.Params[0].SizeBytes)
 	assert.Equal(t, "double", member.Result.Spelling)
 
-	_, ok = tu.InstantiateMember("mathx::Box<int>", "convert", nil)
+	_, ok = tu.InstantiateMember("mathx::Box<int>", "convert", nil, -1, false)
 	assert.False(t, ok, "the argument count must match the template parameters")
-	_, ok = tu.InstantiateMember("mathx::Box<int>", "does_not_exist", []TemplateArgument{double})
+	_, ok = tu.InstantiateMember("mathx::Box<int>", "does_not_exist", []TemplateArgument{double}, -1, false)
 	assert.False(t, ok)
 }
 
@@ -188,11 +188,11 @@ func TestProjectInstantiateMember(t *testing.T) {
 	project := openFixture(t)
 	member, ok := project.InstantiateMember("mathx::Box<int>", "convert", []TemplateArgument{
 		{Kind: TemplateArgumentType, Spelling: "double", Type: Param{Kind: TypeFloat, Spelling: "double", SizeBytes: 8}},
-	})
+	}, -1, false)
 	require.True(t, ok)
 	assert.Equal(t, "double", member.Result.Spelling)
 
-	_, ok = project.InstantiateMember("mathx::DoesNotExist", "convert", nil)
+	_, ok = project.InstantiateMember("mathx::DoesNotExist", "convert", nil, -1, false)
 	assert.False(t, ok)
 }
 

@@ -72,10 +72,10 @@ func TestInstantiateOutput(t *testing.T) {
 // emit nothing.
 func TestInstantiateUnmatched(t *testing.T) {
 	cfg := fixtureConfig("tmpl", "cell.hpp")
-	cfg.Instantiate = []string{"tmpl::Cell<float>"}
+	cfg.Instantiate = []string{"tmpl::Nope<float>"}
 	_, err := build(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "-instantiate tmpl::Cell<float>")
+	assert.Contains(t, err.Error(), "-instantiate tmpl::Nope<float>")
 	assert.Contains(t, err.Error(), "names no instantiation")
 }
 

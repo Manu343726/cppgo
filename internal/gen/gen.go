@@ -121,6 +121,9 @@ type Config struct {
 	Report io.Writer
 	// Warnings receives package-level warnings. Nil discards them.
 	Warnings io.Writer
+	// Coverage, when set, names the file the per-declaration coverage report is
+	// written to. It is one of the generated outputs, so check compares it.
+	Coverage string
 }
 
 // Output is one generated file. Subdir is the directory under the output
@@ -180,6 +183,12 @@ func renderModel(model *packageModel) (*Result, error) {
 		{Name: AsmFileName, Data: asmFile},
 		{Name: ShimHeaderFileName, Subdir: ShimDirName, Data: shimHeader},
 		{Name: ShimSourceFileName, Subdir: ShimDirName, Data: shimSource},
+	}
+	if model.cfg.Coverage != "" {
+		outs = append(outs, Output{
+			Name: filepath.Base(model.cfg.Coverage),
+			Data: model.coverage,
+		})
 	}
 	sort.Slice(outs, func(i, j int) bool { return outs[i].Name < outs[j].Name })
 	return &Result{

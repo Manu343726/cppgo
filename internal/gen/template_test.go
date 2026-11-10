@@ -369,9 +369,13 @@ func TestBuildInstantiations(t *testing.T) {
 // identifier: the error names both, never one silently replacing the other.
 func TestTemplateDuplicateGoName(t *testing.T) {
 	cfg := fixtureConfig("errors", "tempduplicate.hpp")
-	_, err := build(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "both map to the Go name")
+	// Two patterns that would be one Go identifier are reported: the first
+	// keeps the name, the second is left out of the generic API with the
+	// reason, and the header still binds (the per-declaration rule).
+	model, err := build(cfg)
+	require.NoError(t, err)
+	joined := strings.Join(model.warn, "\n")
+	assert.Contains(t, joined, "both map to the Go name")
 }
 
 // TestTemplateParamSuffix checks the overload naming rule the constructors

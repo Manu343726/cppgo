@@ -151,9 +151,11 @@ func TestMapPointer(t *testing.T) {
 			wantKind: goPointer,
 		},
 		{
-			name:    "void pointer",
-			param:   pointerParam(cxx.Param{Kind: cxx.TypeVoid, Spelling: "void", ClangKind: "Void"}, "void *", "Pointer"),
-			wantErr: "void pointer",
+			name:     "void pointer",
+			param:    pointerParam(cxx.Param{Kind: cxx.TypeVoid, Spelling: "void", ClangKind: "Void"}, "void *", "Pointer"),
+			wantGo:   "unsafe.Pointer",
+			wantC:    "void *",
+			wantKind: goPointer,
 		},
 		{
 			// The canonical form of a `typedef void *` (`af_array`): the

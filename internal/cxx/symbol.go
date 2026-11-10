@@ -449,6 +449,21 @@ func (e *extractor) collect(cursor, parent CXCursor) {
 	if !ok {
 		return
 	}
+	if e.l.f.getCursorKind(cursor) == cursorFunctionTemplate && e.tu != nil {
+		if e.tu.functionTemplates == nil {
+			e.tu.functionTemplates = make(map[string][]funcTemplate)
+		}
+		seen := false
+		for _, existing := range e.tu.functionTemplates[name] {
+			if existing.cursor == cursor {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			e.tu.functionTemplates[name] = append(e.tu.functionTemplates[name], funcTemplate{cursor: cursor, name: name})
+		}
+	}
 	spec := e.l.exceptionSpec(cursor)
 	symKind := e.l.kind(cursor)
 	sym := Symbol{

@@ -12,7 +12,7 @@ import (
 // TestOperatorGoNameOutsideTheTable names the operator and the rename.
 func TestOperatorGoNameOutsideTheTable(t *testing.T) {
 	b := &builder{}
-	_, err := b.operatorGoName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator new", IsOperator: true, Operator: "new"}})
+	_, err := b.operatorGoName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator->*", IsOperator: true, Operator: "->*"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "outside the naming table")
 	assert.Contains(t, err.Error(), "-rename")
@@ -544,7 +544,7 @@ func TestCheckCollisionsSkipsAnUnselectedEnum(t *testing.T) {
 func TestBaseNamePropagatesTheOperatorFailure(t *testing.T) {
 	b := &builder{records: map[string]*recordModel{}, enums: map[string]*enumModel{}}
 	b.mapper = &mapper{records: b.records, enums: b.enums}
-	_, err := b.baseName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator new", IsOperator: true, Operator: "new"}})
+	_, err := b.baseName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator->*", IsOperator: true, Operator: "->*"}})
 	require.Error(t, err)
 
 	_, err = b.baseName(&binding{sym: cxx.Symbol{QualifiedName: "ns::T::operator void", IsConversion: true, IsOperator: true,
