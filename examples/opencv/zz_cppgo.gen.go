@@ -99,6 +99,8 @@ var (
 	cppgoSym_6d74de08de20 uintptr
 	// cppgo_thunk_196accefa055
 	cppgoSym_196accefa055 uintptr
+	// cppgo_thunk_87304b07cf32
+	cppgoSym_87304b07cf32 uintptr
 	// cppgo_thunk_41d1f1786e98
 	cppgoSym_41d1f1786e98 uintptr
 	// cppgo_thunk_ea70a8297d21
@@ -131,10 +133,10 @@ var (
 	cppgoSym_55df85fd27a3 uintptr
 	// cppgo_thunk_8403499cbed9
 	cppgoSym_8403499cbed9 uintptr
-	// cppgo_thunk_7fd2313ccf23
-	cppgoSym_7fd2313ccf23 uintptr
 	// cppgo_thunk_5db47d63cb4f
 	cppgoSym_5db47d63cb4f uintptr
+	// cppgo_thunk_7fd2313ccf23
+	cppgoSym_7fd2313ccf23 uintptr
 	// cppgo_thunk_c56d5846d41e
 	cppgoSym_c56d5846d41e uintptr
 	// cppgo_thunk_068786f0c2f5
@@ -249,6 +251,8 @@ var (
 	cppgoSym_e3554d93e54f uintptr
 	// cppgo_thunk_55aef80ee1be
 	cppgoSym_55aef80ee1be uintptr
+	// cppgo_thunk_847f25e59de9
+	cppgoSym_847f25e59de9 uintptr
 	// cppgo_thunk_46f9baf6dc64
 	cppgoSym_46f9baf6dc64 uintptr
 	// cppgo_thunk_468839c36839
@@ -710,6 +714,7 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_b1816b1f803e", addr: &cppgoSym_b1816b1f803e, shim: true},
 		{name: "cppgo_thunk_6d74de08de20", addr: &cppgoSym_6d74de08de20, shim: true},
 		{name: "cppgo_thunk_196accefa055", addr: &cppgoSym_196accefa055, shim: true},
+		{name: "cppgo_thunk_87304b07cf32", addr: &cppgoSym_87304b07cf32, shim: true},
 		{name: "cppgo_thunk_41d1f1786e98", addr: &cppgoSym_41d1f1786e98, shim: true},
 		{name: "cppgo_thunk_ea70a8297d21", addr: &cppgoSym_ea70a8297d21, shim: true},
 		{name: "cppgo_thunk_c8c900fad1eb", addr: &cppgoSym_c8c900fad1eb, shim: true},
@@ -726,8 +731,8 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_a7abbd4a3daa", addr: &cppgoSym_a7abbd4a3daa, shim: true},
 		{name: "cppgo_thunk_55df85fd27a3", addr: &cppgoSym_55df85fd27a3, shim: true},
 		{name: "cppgo_thunk_8403499cbed9", addr: &cppgoSym_8403499cbed9, shim: true},
-		{name: "cppgo_thunk_7fd2313ccf23", addr: &cppgoSym_7fd2313ccf23, shim: true},
 		{name: "cppgo_thunk_5db47d63cb4f", addr: &cppgoSym_5db47d63cb4f, shim: true},
+		{name: "cppgo_thunk_7fd2313ccf23", addr: &cppgoSym_7fd2313ccf23, shim: true},
 		{name: "cppgo_thunk_c56d5846d41e", addr: &cppgoSym_c56d5846d41e, shim: true},
 		{name: "cppgo_thunk_068786f0c2f5", addr: &cppgoSym_068786f0c2f5, shim: true},
 		{name: "cppgo_thunk_a5c209047a27", addr: &cppgoSym_a5c209047a27, shim: true},
@@ -785,6 +790,7 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_0833229dcb7b", addr: &cppgoSym_0833229dcb7b, shim: true},
 		{name: "cppgo_thunk_e3554d93e54f", addr: &cppgoSym_e3554d93e54f, shim: true},
 		{name: "cppgo_thunk_55aef80ee1be", addr: &cppgoSym_55aef80ee1be, shim: true},
+		{name: "cppgo_thunk_847f25e59de9", addr: &cppgoSym_847f25e59de9, shim: true},
 		{name: "cppgo_thunk_46f9baf6dc64", addr: &cppgoSym_46f9baf6dc64, shim: true},
 		{name: "cppgo_thunk_468839c36839", addr: &cppgoSym_468839c36839, shim: true},
 		{name: "cppgo_thunk_a88e48131758", addr: &cppgoSym_a88e48131758, shim: true},
@@ -2129,6 +2135,49 @@ func NewMatMatPtrRefRangePtr(m_2 *Mat, ranges *Range) (*Mat, error) {
 		cppgoCall_9004c0608135(cppgoSym_9004c0608135, obj.Addr())
 	})
 	if cppgoStatus := cppgoCall_6d74de08de20(cppgoSym_6d74de08de20, obj.Addr(), m_2.cppgoAddr(), ranges.cppgoAddr()); cppgoStatus != 0 {
+		obj.Release()
+		return nil, cppgoCallError("cv::Mat::Mat")
+	}
+	constructed = true
+	return &Mat{obj: obj}, nil
+}
+
+// NewMatMatPtrRefRangePtrSlice constructs a cv::Mat.
+//
+// @overload
+// m Array that (as a whole or partly) is assigned to the constructed matrix. No data is copied
+// by these constructors. Instead, the header pointing to m data or its sub-array is constructed and
+// associated with it. The reference counter, if any, is incremented. So, when you modify the matrix
+// formed using such a constructor, you also modify the corresponding elements of m . If you want to
+// have an independent copy of the sub-array, use Mat::clone() .
+// ranges Array of selected ranges of m along each dimensionality.
+//
+// C++: cv::Mat::Mat(const Mat &, const std::vector<Range> &), _ZN2cv3MatC1ERKS0_RKSt6vectorINS_5RangeESaIS4_EE (thunk cppgo_thunk_87304b07cf32, standard-library type: the thunk constructs, copies and destroys it), verified against libopencv_imgcodecs.so
+func NewMatMatPtrRefRangePtrSlice(m_2 *Mat, ranges []*Range) (*Mat, error) {
+	var ranges_elems []unsafe.Pointer
+	{
+		ranges_elems = make([]unsafe.Pointer, len(ranges))
+		for cppgo_i, cppgo_item := range ranges {
+			if cppgo_item == nil || cppgo_item.obj == nil {
+				panic("cppgo: cv::Mat::Mat(const Mat &, const std::vector<Range> &): a nil element in ranges")
+			}
+			ranges_elems[cppgo_i] = unsafe.Pointer(cppgo_item.cppgoAddr())
+		}
+	}
+	if err := cppgoOpen(""); err != nil {
+		return nil, err
+	}
+	cppgo.ProbeStack()
+	constructed := false
+	var obj *cppgo.Object
+	obj = cppgo.NewObject(96, 8, func() {
+		if !constructed {
+			return
+		}
+		cppgo.ProbeStack()
+		cppgoCall_9004c0608135(cppgoSym_9004c0608135, obj.Addr())
+	})
+	if cppgoStatus := cppgoCall_87304b07cf32(cppgoSym_87304b07cf32, obj.Addr(), m_2.cppgoAddr(), cppgo.Ptr(ranges_elems), uint64(len(ranges))); cppgoStatus != 0 {
 		obj.Release()
 		return nil, cppgoCallError("cv::Mat::Mat")
 	}
@@ -3914,6 +3963,49 @@ func (m *Mat) CallRangePtr(ranges *Range) (*Mat, error) {
 	})
 	cppgoStatus := cppgoCall_e3554d93e54f(cppgoSym_e3554d93e54f, m.cppgoAddr(), ranges.cppgoAddr(), cppgoObject.Addr())
 	cppgo.KeepAlive(m, ranges, cppgoObject)
+	if cppgoStatus != 0 {
+		cppgoObject.Release()
+		return nil, cppgoCallError("cv::Mat::operator()")
+	}
+	constructed = true
+	return &Mat{obj: cppgoObject}, nil
+}
+
+// CallRangePtrSlice calls cv::Mat::operator(). The returned Mat is Go-owned: the shim constructs it from the callee's result, Close runs the C++ destructor once, and the type's own copy semantics decide what the copy shares with its source.
+//
+// @overload
+// ranges Array of selected ranges along each array dimension.
+//
+// C++: cv::Mat::operator()(const std::vector<Range> &) const, _ZNK2cv3MatclERKSt6vectorINS_5RangeESaIS2_EE (thunk cppgo_thunk_847f25e59de9, standard-library type: the thunk constructs, copies and destroys it; the by-value copy runs in the shim, which catches a throwing copy), verified against libopencv_imgcodecs.so
+func (m *Mat) CallRangePtrSlice(ranges []*Range) (*Mat, error) {
+	if m == nil || m.obj == nil {
+		return nil, cppgo.ErrClosed
+	}
+	var ranges_elems []unsafe.Pointer
+	{
+		ranges_elems = make([]unsafe.Pointer, len(ranges))
+		for cppgo_i, cppgo_item := range ranges {
+			if cppgo_item == nil || cppgo_item.obj == nil {
+				panic("cppgo: cv::Mat::operator()(const std::vector<Range> &) const: a nil element in ranges")
+			}
+			ranges_elems[cppgo_i] = unsafe.Pointer(cppgo_item.cppgoAddr())
+		}
+	}
+	if err := cppgoOpen(""); err != nil {
+		return nil, err
+	}
+	cppgo.ProbeStack()
+	var cppgoObject *cppgo.Object
+	constructed := false
+	cppgoObject = cppgo.NewObject(96, 8, func() {
+		if !constructed {
+			return
+		}
+		cppgo.ProbeStack()
+		cppgoCall_9004c0608135(cppgoSym_9004c0608135, cppgoObject.Addr())
+	})
+	cppgoStatus := cppgoCall_847f25e59de9(cppgoSym_847f25e59de9, m.cppgoAddr(), cppgo.Ptr(ranges_elems), uint64(len(ranges)), cppgoObject.Addr())
+	cppgo.KeepAlive(m, ranges_elems, cppgoObject)
 	if cppgoStatus != 0 {
 		cppgoObject.Release()
 		return nil, cppgoCallError("cv::Mat::operator()")
@@ -9263,12 +9355,12 @@ func Imencode(ext string, img *InputArray, buf *[]uint8, params []int32) (bool, 
 	if cppgoStatus != 0 {
 		return false, cppgoCallError("cv::imencode")
 	}
+	var cppgoValueBuf []uint8
 	if buf_out_size != 0 {
-		*buf = append((*buf)[:0], unsafe.Slice((*uint8)(buf_out_data), int(buf_out_size))...)
-	} else {
-		*buf = (*buf)[:0]
+		cppgoValueBuf = append(cppgoValueBuf, unsafe.Slice((*uint8)(buf_out_data), int(buf_out_size))...)
 	}
 	cppgoFree(cppgoFreeSym, buf_out_data)
+	*buf = cppgoValueBuf
 	return cppgoResult != 0, nil
 }
 
@@ -9304,12 +9396,12 @@ func ImencodeStringInputArrayPtrRefUint8Slice(ext string, img *InputArray, buf *
 	if cppgoStatus != 0 {
 		return false, cppgoCallError("cv::imencode")
 	}
+	var cppgoValueBuf []uint8
 	if buf_out_size != 0 {
-		*buf = append((*buf)[:0], unsafe.Slice((*uint8)(buf_out_data), int(buf_out_size))...)
-	} else {
-		*buf = (*buf)[:0]
+		cppgoValueBuf = append(cppgoValueBuf, unsafe.Slice((*uint8)(buf_out_data), int(buf_out_size))...)
 	}
 	cppgoFree(cppgoFreeSym, buf_out_data)
+	*buf = cppgoValueBuf
 	return cppgoResult != 0, nil
 }
 
@@ -10978,6 +11070,9 @@ func cppgoCall_6d74de08de20(fn uintptr, this uintptr, a1 uintptr, a2 uintptr) in
 // cppgoCall_196accefa055 is the NOSPLIT trampoline for cppgo_thunk_196accefa055.
 func cppgoCall_196accefa055(fn uintptr, this uintptr, a1 uintptr, a2 unsafe.Pointer) int32
 
+// cppgoCall_87304b07cf32 is the NOSPLIT trampoline for cppgo_thunk_87304b07cf32.
+func cppgoCall_87304b07cf32(fn uintptr, this uintptr, a1 uintptr, a2 unsafe.Pointer, a3 uint64) int32
+
 // cppgoCall_41d1f1786e98 is the NOSPLIT trampoline for cppgo_thunk_41d1f1786e98.
 func cppgoCall_41d1f1786e98(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 uint64, a3 int64) int32
 
@@ -11026,11 +11121,11 @@ func cppgoCall_55df85fd27a3(fn uintptr, this uintptr, a1 uintptr) int32
 // cppgoCall_8403499cbed9 is the NOSPLIT trampoline for cppgo_thunk_8403499cbed9.
 func cppgoCall_8403499cbed9(fn uintptr, this uintptr, a1 uintptr, a2 int64) int32
 
-// cppgoCall_7fd2313ccf23 is the NOSPLIT trampoline for cppgo_thunk_7fd2313ccf23.
-func cppgoCall_7fd2313ccf23(fn uintptr, this uintptr, a1 int64, a2 int64, out unsafe.Pointer) int32
-
 // cppgoCall_5db47d63cb4f is the NOSPLIT trampoline for cppgo_thunk_5db47d63cb4f.
 func cppgoCall_5db47d63cb4f(fn uintptr, this uintptr, a1 int64, a2 int64, out unsafe.Pointer) int32
+
+// cppgoCall_7fd2313ccf23 is the NOSPLIT trampoline for cppgo_thunk_7fd2313ccf23.
+func cppgoCall_7fd2313ccf23(fn uintptr, this uintptr, a1 int64, a2 int64, out unsafe.Pointer) int32
 
 // cppgoCall_c56d5846d41e is the NOSPLIT trampoline for cppgo_thunk_c56d5846d41e.
 func cppgoCall_c56d5846d41e(fn uintptr, this uintptr, out unsafe.Pointer) int32
@@ -11202,6 +11297,9 @@ func cppgoCall_e3554d93e54f(fn uintptr, this uintptr, a1 uintptr, out uintptr) i
 
 // cppgoCall_55aef80ee1be is the NOSPLIT trampoline for cppgo_thunk_55aef80ee1be.
 func cppgoCall_55aef80ee1be(fn uintptr, this uintptr, a1 unsafe.Pointer, out uintptr) int32
+
+// cppgoCall_847f25e59de9 is the NOSPLIT trampoline for cppgo_thunk_847f25e59de9.
+func cppgoCall_847f25e59de9(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 uint64, out uintptr) int32
 
 // cppgoCall_46f9baf6dc64 is the NOSPLIT trampoline for cppgo_thunk_46f9baf6dc64.
 func cppgoCall_46f9baf6dc64(fn uintptr, this uintptr, a1 uintptr, out unsafe.Pointer) int32

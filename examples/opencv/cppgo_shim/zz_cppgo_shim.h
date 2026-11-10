@@ -73,6 +73,9 @@ int32_t cppgo_thunk_6d74de08de20(void * self, const void * m_2, const void * ran
 /* cppgo_thunk_196accefa055: cv::Mat::Mat(const Mat &, const Rect &) */
 int32_t cppgo_thunk_196accefa055(void * self, const void * m_2, const void * roi);
 
+/* cppgo_thunk_87304b07cf32: cv::Mat::Mat(const Mat &, const std::vector<Range> &) */
+int32_t cppgo_thunk_87304b07cf32(void * self, const void * m_2, void * const * ranges_elems, size_t ranges_size);
+
 /* cppgo_thunk_41d1f1786e98: cv::Mat::Mat(const std::vector<int> &, int) */
 int32_t cppgo_thunk_41d1f1786e98(void * self, int32_t * sizes_data, size_t sizes_size, int32_t arg1);
 
@@ -121,11 +124,11 @@ int32_t cppgo_thunk_55df85fd27a3(const void * self, void * m_2);
 /* cppgo_thunk_8403499cbed9: cv::Mat::assignTo(Mat &, int) const */
 int32_t cppgo_thunk_8403499cbed9(const void * self, void * m_2, int32_t arg1);
 
-/* cppgo_thunk_7fd2313ccf23: cv::Mat::at(int, int) */
-int32_t cppgo_thunk_7fd2313ccf23(void * self, int32_t arg0, int32_t arg1, double ** cppgo_result);
-
 /* cppgo_thunk_5db47d63cb4f: cv::Mat::at(int, int) */
 int32_t cppgo_thunk_5db47d63cb4f(void * self, int32_t arg0, int32_t arg1, uint8_t ** cppgo_result);
+
+/* cppgo_thunk_7fd2313ccf23: cv::Mat::at(int, int) */
+int32_t cppgo_thunk_7fd2313ccf23(void * self, int32_t arg0, int32_t arg1, double ** cppgo_result);
 
 /* cppgo_thunk_c56d5846d41e: cv::Mat::channels() const */
 int32_t cppgo_thunk_c56d5846d41e(const void * self, int32_t * cppgo_result);
@@ -297,6 +300,9 @@ int32_t cppgo_thunk_e3554d93e54f(const void * self, const void * ranges, void * 
 
 /* cppgo_thunk_55aef80ee1be: cv::Mat::operator()(const Rect &) const */
 int32_t cppgo_thunk_55aef80ee1be(const void * self, const void * roi, void * cppgo_result);
+
+/* cppgo_thunk_847f25e59de9: cv::Mat::operator()(const std::vector<Range> &) const */
+int32_t cppgo_thunk_847f25e59de9(const void * self, void * const * ranges_elems, size_t ranges_size, void * cppgo_result);
 
 /* cppgo_thunk_46f9baf6dc64: cv::Mat::operator=(Mat &&) */
 int32_t cppgo_thunk_46f9baf6dc64(void * self, void * m_2, void ** cppgo_result);
