@@ -2154,14 +2154,14 @@ func NewMatMatPtrRefRangePtr(m_2 *Mat, ranges *Range) (*Mat, error) {
 //
 // C++: cv::Mat::Mat(const Mat &, const std::vector<Range> &), _ZN2cv3MatC1ERKS0_RKSt6vectorINS_5RangeESaIS4_EE (thunk cppgo_thunk_87304b07cf32, standard-library type: the thunk constructs, copies and destroys it), verified against libopencv_imgcodecs.so
 func NewMatMatPtrRefRangePtrSlice(m_2 *Mat, ranges []*Range) (*Mat, error) {
-	var ranges_elems []unsafe.Pointer
+	var ranges_elems []uintptr
 	{
-		ranges_elems = make([]unsafe.Pointer, len(ranges))
+		ranges_elems = make([]uintptr, len(ranges))
 		for cppgo_i, cppgo_item := range ranges {
 			if cppgo_item == nil || cppgo_item.obj == nil {
 				panic("cppgo: cv::Mat::Mat(const Mat &, const std::vector<Range> &): a nil element in ranges")
 			}
-			ranges_elems[cppgo_i] = unsafe.Pointer(cppgo_item.cppgoAddr())
+			ranges_elems[cppgo_i] = cppgo_item.cppgoAddr()
 		}
 	}
 	if err := cppgoOpen(""); err != nil {
@@ -3981,14 +3981,14 @@ func (m *Mat) CallRangePtrSlice(ranges []*Range) (*Mat, error) {
 	if m == nil || m.obj == nil {
 		return nil, cppgo.ErrClosed
 	}
-	var ranges_elems []unsafe.Pointer
+	var ranges_elems []uintptr
 	{
-		ranges_elems = make([]unsafe.Pointer, len(ranges))
+		ranges_elems = make([]uintptr, len(ranges))
 		for cppgo_i, cppgo_item := range ranges {
 			if cppgo_item == nil || cppgo_item.obj == nil {
 				panic("cppgo: cv::Mat::operator()(const std::vector<Range> &) const: a nil element in ranges")
 			}
-			ranges_elems[cppgo_i] = unsafe.Pointer(cppgo_item.cppgoAddr())
+			ranges_elems[cppgo_i] = cppgo_item.cppgoAddr()
 		}
 	}
 	if err := cppgoOpen(""); err != nil {

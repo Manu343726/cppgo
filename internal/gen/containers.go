@@ -226,13 +226,16 @@ func (b *builder) marshalContainer(binding *binding, p cxx.Param, mapped *goType
 		return primary("cppgo.Ptr("+data+")", data+", "+bounds, containerCTypes(inner), data)
 	case containerOpaque:
 		elems := base + "_elems"
+		// The elements cross as their addresses, and the slots stay uintptr:
+		// converting a uintptr back to unsafe.Pointer is exactly what go vet's
+		// unsafeptr check forbids, and the trampoline passes the word unchanged.
 		binding.stdDecls = append(binding.stdDecls,
-			"var "+elems+" []unsafe.Pointer",
+			"var "+elems+" []uintptr",
 			"{",
-			"\t"+elems+" = make([]unsafe.Pointer, len("+value+"))",
+			"\t"+elems+" = make([]uintptr, len("+value+"))",
 			"\tfor cppgo_i, cppgo_item := range "+value+" {",
 			"\t\t"+b.nilElementCheck(binding, p.Name),
-			"\t\t"+elems+"[cppgo_i] = unsafe.Pointer(cppgo_item.cppgoAddr())",
+			"\t\t"+elems+"[cppgo_i] = cppgo_item.cppgoAddr()",
 			"\t}",
 			"}",
 		)

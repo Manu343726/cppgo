@@ -239,7 +239,7 @@ type flagValues struct {
 	headers, bind, exclude, instantiate, rename, status, scan, proxy stringList
 	aliases                                                          stringList
 	libraries                                                        stringList
-	packageName, library, cxx, out, compileCommands, scanDir         string
+	packageName, cxx, out, compileCommands, scanDir                  string
 	coverage                                                         string
 	check, quiet                                                     bool
 }

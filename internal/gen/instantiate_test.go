@@ -223,7 +223,7 @@ func TestSelectionHelpers(t *testing.T) {
 
 // TestInstantiateNestedContainerTemplate covers a function template whose
 // parameter is a container of containers: the substitution produces a
-// standard-library spelling, and the recursive mapping has to recognise it after
+// standard-library spelling, and the recursive mapping has to recognize it after
 // the substitution, not only at parse time.
 func TestInstantiateNestedContainerTemplate(t *testing.T) {
 	cfg := fixtureConfig("instantiate", "instantiate.hpp")
