@@ -104,8 +104,8 @@ func TestRetainedAccessorReadsAStringThroughTheShim(t *testing.T) {
 	assert.Contains(t, goFile, "unsafe.Pointer(&cppgoData)")
 	assert.NotContains(t, goFile, "cppgoDataCell",
 		"the reentrant result's cells belong to a carrier this accessor does not use")
-	assert.NotContains(t, goFile, "cppgoHeapCell",
-		"the package pins nothing once its only pinning result is carried by the shim")
+	assert.NotContains(t, goFile, "cppgoSizeCell",
+		"only the reentrant string result declares a size cell")
 
 	carried := false
 	for _, line := range rendered.Report {

@@ -596,7 +596,7 @@ func (m *packageModel) emitConstructor(b *strings.Builder, record *recordModel, 
 		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, func() {\n", record.Size, record.Align)
 		b.WriteString("\t\tif !constructed {\n\t\t\treturn\n\t\t}\n")
 		b.WriteString("\t\tcppgo.ProbeStack()\n")
-		fmt.Fprintf(b, "\t\t%s(%s, obj.Addr())\n", record.Dtor.Trampoline, record.Dtor.SymbolVar)
+		m.emitDestroy(b, record.Dtor, "obj.Addr()", "\t\t")
 		b.WriteString("\t})\n")
 	} else {
 		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
@@ -604,16 +604,28 @@ func (m *packageModel) emitConstructor(b *strings.Builder, record *recordModel, 
 	for _, assignment := range m.blockAssignments(ctor, ctx) {
 		fmt.Fprintf(b, "\t%s\n", assignment)
 	}
-	call := ctor.Trampoline + "(" + strings.Join(m.callArgs(ctor, ctx), ", ") + ")"
-	if ctor.Status {
-		fmt.Fprintf(b, "\tif cppgoStatus := %s; cppgoStatus != 0 {\n", call)
-		b.WriteString("\t\tobj.Release()\n")
-		fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", ctor.sym.QualifiedName)
+	if ctor.Carrier == reentrant {
+		// A reentrant constructor has no trampoline to call: the frame carries
+		// its this and its arguments, and the status comes back in the frame's
+		// result word. The status test is the same one either carrier uses.
+		m.emitForeignCall(b, ctor, ctx)
+		if ctor.Status {
+			b.WriteString("\tif cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {\n")
+			b.WriteString("\t\tobj.Release()\n")
+			fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", ctor.sym.QualifiedName)
+		}
 	} else {
-		fmt.Fprintf(b, "\t%s\n", call)
-	}
-	if len(ctor.cstringKeeps) > 0 {
-		fmt.Fprintf(b, "\tcppgo.KeepAlive(%s)\n", strings.Join(ctor.cstringKeeps, ", "))
+		call := ctor.Trampoline + "(" + strings.Join(m.callArgs(ctor, ctx), ", ") + ")"
+		if ctor.Status {
+			fmt.Fprintf(b, "\tif cppgoStatus := %s; cppgoStatus != 0 {\n", call)
+			b.WriteString("\t\tobj.Release()\n")
+			fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", ctor.sym.QualifiedName)
+		} else {
+			fmt.Fprintf(b, "\t%s\n", call)
+		}
+		if len(ctor.cstringKeeps) > 0 {
+			fmt.Fprintf(b, "\tcppgo.KeepAlive(%s)\n", strings.Join(ctor.cstringKeeps, ", "))
+		}
 	}
 	if hasDtor {
 		b.WriteString("\tconstructed = true\n")
@@ -639,23 +651,35 @@ func (m *packageModel) emitClone(b *strings.Builder, record *recordModel, clone 
 		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, func() {\n", record.Size, record.Align)
 		b.WriteString("\t\tif !constructed {\n\t\t\treturn\n\t\t}\n")
 		b.WriteString("\t\tcppgo.ProbeStack()\n")
-		fmt.Fprintf(b, "\t\t%s(%s, obj.Addr())\n", record.Dtor.Trampoline, record.Dtor.SymbolVar)
+		m.emitDestroy(b, record.Dtor, "obj.Addr()", "\t\t")
 		b.WriteString("\t})\n")
 	} else {
 		fmt.Fprintf(b, "\tobj = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
 	}
 	// A copy constructor takes one argument — the object being copied — so it
 	// can never need an argument block.
-	call := clone.Trampoline + "(" + strings.Join(m.callArgs(clone, ctx), ", ") + ")"
-	if clone.Status {
-		fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
-		m.emitKeepAlive(b, clone, ctx)
-		b.WriteString("\tif cppgoStatus != 0 {\n")
-		b.WriteString("\t\tobj.Release()\n")
-		fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", clone.sym.QualifiedName)
+	if clone.Carrier == reentrant {
+		// No trampoline exists for this carrier: the frame carries the
+		// destination and the source, and the status comes back in its result
+		// word.
+		m.emitForeignCall(b, clone, ctx)
+		if clone.Status {
+			b.WriteString("\tif cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {\n")
+			b.WriteString("\t\tobj.Release()\n")
+			fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", clone.sym.QualifiedName)
+		}
 	} else {
-		fmt.Fprintf(b, "\t%s\n", call)
-		m.emitKeepAlive(b, clone, ctx)
+		call := clone.Trampoline + "(" + strings.Join(m.callArgs(clone, ctx), ", ") + ")"
+		if clone.Status {
+			fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
+			m.emitKeepAlive(b, clone, ctx)
+			b.WriteString("\tif cppgoStatus != 0 {\n")
+			b.WriteString("\t\tobj.Release()\n")
+			fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", clone.sym.QualifiedName)
+		} else {
+			fmt.Fprintf(b, "\t%s\n", call)
+			m.emitKeepAlive(b, clone, ctx)
+		}
 	}
 	if hasDtor {
 		b.WriteString("\tconstructed = true\n")
@@ -749,25 +773,7 @@ func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx c
 		m.emitRetained(b, binding, ctx)
 		return
 	}
-	for _, arg := range binding.Wire {
-		if arg.callable != nil {
-			m.emitCallbackRegistration(b, binding, arg, true)
-		}
-	}
-	// A Go pointer the callee reads — or writes — is a pinned heap copy, made
-	// before the frame is filled: a callback may grow this goroutine's stack,
-	// and the original may live in the frame that moves.
-	m.emitPinDecls(b, binding)
-	if binding.OutObject != nil {
-		// The wire word for a by-value record result is the storage's address,
-		// so the object exists before the frame is filled: the shim constructs
-		// the callee's result into it.
-		m.emitObjectStorage(b, binding.OutObject)
-	}
-	m.emitFrameAndCall(b, binding, ctx, nil)
-	m.emitKeepAlive(b, binding, ctx)
-	b.WriteString("\tif cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {\n\t\tpanic(cppgoPanic.Value)\n\t}\n")
-	m.emitPinAfter(b, binding)
+	m.emitForeignCall(b, binding, ctx)
 	if binding.OutObject != nil {
 		// A record returned by value always carries a status: the copy the shim
 		// makes into Go's storage can throw whatever the declaration promises.
@@ -799,6 +805,38 @@ func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx c
 		return
 	}
 	b.WriteString("\treturn nil\n")
+}
+
+// emitForeignCall writes the call a callback-capable binding makes: the Go
+// functions its signature takes are registered in the callback table, every Go
+// pointer is copied into a pinned heap object, the argument frame is filled from
+// the wire words, the call enters C through runtime.cgocall, the panic a
+// callback raised is re-raised on this goroutine, and the copies go back into
+// the caller's values.
+//
+// It is the body every reentrant call shares, ordinary bindings and special
+// members alike: that carrier emits no assembly trampoline, so nothing else can
+// make the call.
+func (m *packageModel) emitForeignCall(b *strings.Builder, binding *binding, ctx callContext) {
+	for _, arg := range binding.Wire {
+		if arg.callable != nil {
+			m.emitCallbackRegistration(b, binding, arg, true)
+		}
+	}
+	// A Go pointer the callee reads — or writes — is a pinned heap copy, made
+	// before the frame is filled: a callback may grow this goroutine's stack,
+	// and the original may live in the frame that moves.
+	m.emitPinDecls(b, binding)
+	if binding.OutObject != nil {
+		// The wire word for a by-value record result is the storage's address,
+		// so the object exists before the frame is filled: the shim constructs
+		// the callee's result into it.
+		m.emitObjectStorage(b, binding.OutObject)
+	}
+	m.emitFrameAndCall(b, binding, ctx, nil)
+	m.emitKeepAlive(b, binding, ctx)
+	b.WriteString("\tif cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {\n\t\tpanic(cppgoPanic.Value)\n\t}\n")
+	m.emitPinAfter(b, binding)
 }
 
 // emitRetained writes a call whose callback the callee keeps: the Go function
@@ -1281,6 +1319,26 @@ func (m *packageModel) emitLengthChecks(b *strings.Builder, binding *binding) {
 	}
 }
 
+// emitDestroy writes one call to a record's destructor at the address `addr`.
+//
+// A destructor the library exports is called through its trampoline, which is
+// the same call the interface type's Close makes. One the shim carries — and
+// every destructor of a package generated with -retain is, because the whole
+// package is callback-capable — is called through runtime.cgocall instead: a
+// reentrant binding emits no trampoline, so the name the shim path would use
+// does not exist. Either way the call reaches the same thunk, which is what
+// records the message cppgoCloseError reads.
+func (m *packageModel) emitDestroy(b *strings.Builder, dtor *binding, addr, indent string) {
+	if dtor.Carrier == reentrant {
+		// The frame's one word is the receiver: the thunk's only parameter.
+		fmt.Fprintf(b, "%svar cppgoDestroyFrame cppgo.Args\n", indent)
+		fmt.Fprintf(b, "%scppgoDestroyFrame.I[0] = uintptr(%s)\n", indent, addr)
+		fmt.Fprintf(b, "%scppgo.CallReentrant(%s, &cppgoDestroyFrame)\n", indent, dtor.SymbolVar)
+		return
+	}
+	fmt.Fprintf(b, "%s%s(%s, %s)\n", indent, dtor.Trampoline, dtor.SymbolVar, addr)
+}
+
 // emitObjectResult writes the delivery of a record Go cannot mirror that the
 // callee returns by value. The object is Go's: its storage is allocated here,
 // the shim constructs the value into it through the out-pointer, and the
@@ -1304,7 +1362,7 @@ func (m *packageModel) emitObjectStorage(b *strings.Builder, record *recordModel
 		fmt.Fprintf(b, "\tcppgoObject = cppgo.NewObject(%d, %d, func() {\n", record.Size, record.Align)
 		b.WriteString("\t\tif !constructed {\n\t\t\treturn\n\t\t}\n")
 		b.WriteString("\t\tcppgo.ProbeStack()\n")
-		fmt.Fprintf(b, "\t\t%s(%s, cppgoObject.Addr())\n", record.Dtor.Trampoline, record.Dtor.SymbolVar)
+		m.emitDestroy(b, record.Dtor, "cppgoObject.Addr()", "\t\t")
 		b.WriteString("\t})\n")
 	} else {
 		// A record with no declared destructor needs none: the storage is the
@@ -1572,8 +1630,7 @@ func (m *packageModel) emitContainerValue(b *strings.Builder, container *goType,
 		b.WriteString("\t\t\tcppgo.ProbeStack()\n")
 		if record.Dtor != nil {
 			b.WriteString("\t\t\tfor cppgo_i := 0; cppgo_i < cppgoCount; cppgo_i++ {\n")
-			fmt.Fprintf(b, "\t\t\t\t%s(%s, uintptr(%s)+uintptr(cppgo_i)*%d)\n",
-				record.Dtor.Trampoline, record.Dtor.SymbolVar, data, record.Size)
+			m.emitDestroy(b, record.Dtor, fmt.Sprintf("uintptr(%s)+uintptr(cppgo_i)*%d", data, record.Size), "\t\t\t\t")
 			b.WriteString("\t\t\t}\n")
 		}
 		fmt.Fprintf(b, "\t\t\tcppgoFree(cppgoFreeSym, %s)\n", data)
