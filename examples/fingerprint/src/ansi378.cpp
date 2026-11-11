@@ -81,6 +81,8 @@
 #include <string>
 #include <vector>
 
+#include "log.hpp"
+
 namespace fingerprint {
 namespace {
 
@@ -142,6 +144,10 @@ double decodeAngle(std::uint8_t units) {
 
 std::vector<std::uint8_t> toAnsi378(const TemplateRecord &record) {
     if (record.minutiae.size() > 0xFFFF) {
+        // A state no frame of this pipeline can reach: the count field is what
+        // would lie, so the record is refused and the level says it is a bug
+        // rather than a bad frame.
+        detail::logger()->critical("toAnsi378: {} minutiae do not fit the count field", record.minutiae.size());
         throw std::invalid_argument("more minutiae than the count field holds");
     }
     std::vector<Minutia> minutiae = record.minutiae;

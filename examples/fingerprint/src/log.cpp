@@ -1,28 +1,32 @@
 // The spdlog sink that carries the library's records to the Go side.
 //
 // The sink is an spdlog sink like any other — it formats the record with its
-// pattern and does something with it — and what it does is:
+// pattern and does something with it — and what it does is call the function
+// pointer the caller stored with set_log_callback, with the record's level and
+// the formatted line.
 //
-//   1. append the formatted line to a buffer the drain_log() binding reads;
-//   2. call the registered C function pointer with the record's level and the
-//      number of records now pending.
+// The pointer is stored, and that is why `cppgo gen` is told `-retain`: a C++
+// function pointer says nothing about how long the callee keeps it, so the
+// generator cannot infer it and the manifest states it. Everything the retention
+// rules promise follows from that one word —
 //
-// The callback crosses into Go, so it may only be called on a thread that is
-// already inside a call made from Go. The library starts no thread and logs
-// from none: every record in this example is written from inside `enroll()`,
-// `Trigger::evaluate()` or `emit_log_samples()`, which are the calls Go made.
-// A future background thread would have to forward its records through a queue
-// this library drains on the next call, because the Go runtime cannot accept a
-// callback on a thread it has never seen.
+//   * the Go function is kept alive after the registering call returns;
+//   * every binding of the package enters C++ through the reentrant carrier,
+//     because any call may now deliver a record;
+//   * a call that may run a Go callback works on its own copy of the Go values
+//     it hands to C++, so a stack growth inside the callback cannot move them.
+//
+// The callback crosses into Go, so it may only be called on a thread already
+// inside a call made from Go. The library starts no thread and logs from none:
+// every record in this example is written from inside `enroll()` or
+// `Trigger::evaluate()`, which are calls Go made, on the goroutine that made
+// them. A background thread would have to hand its records to the next call
+// instead, because the runtime cannot accept a callback on a thread it has
+// never seen.
 //
 // The callback is called while the sink's own mutex is held (base_sink takes it
-// around sink_it_). The Go handler therefore must not log: a record emitted
-// from inside the handler would re-enter this mutex and deadlock. The handler
-// this example installs only counts, which is what the delivery signal is for.
-//
-// Which callback is called is per call and per thread: `RecordScope` installs
-// one for the duration of a call, and a call that installs none buffers only.
-// See fingerprint.hpp for why the callback cannot be registered once and kept.
+// around sink_it_). The Go handler therefore must not log: a record emitted from
+// inside the handler would re-enter this mutex and deadlock.
 
 #include "log.hpp"
 
@@ -33,7 +37,6 @@
 #include <mutex>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <spdlog/details/log_msg.h>
 #include <spdlog/sinks/base_sink.h>
@@ -41,100 +44,51 @@
 namespace fingerprint {
 namespace {
 
-using LogCallbackFunction = void (*)(std::int32_t level, std::int32_t pending);
-
-// The callback this thread's current call installed, if any. A thread_local is
-// the whole of the state: the library starts no thread, and a call's records
-// are written on the thread that made it.
-thread_local LogCallbackFunction current_callback = nullptr;
-
 class CallbackSink final : public spdlog::sinks::base_sink<std::mutex> {
 public:
-    void set_callback(LogCallbackFunction fn) noexcept {
+    // Stores fn, replacing whatever was stored. It is a plain pointer write
+    // under the callback's own mutex: the sink's mutex is held only for the
+    // duration of a record, and a registration is not a record.
+    void set_callback(LogCallback fn) noexcept {
         std::lock_guard<std::mutex> lock(callback_mutex_);
         callback_ = fn;
     }
 
-    // The callback in force for the sink: the one this thread's call installed,
-    // else the one registered on the sink (kept for a call that wants a
-    // process-wide default).
-    LogCallbackFunction callback_for_call() const {
-        if (current_callback != nullptr) {
-            return current_callback;
-        }
-        std::lock_guard<std::mutex> lock(callback_mutex_);
-        return callback_;
-    }
-
 protected:
     void sink_it_(const spdlog::details::log_msg &msg) override {
+        LogCallback fn = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(callback_mutex_);
+            fn = callback_;
+        }
+        if (fn == nullptr) {
+            return;
+        }
         spdlog::memory_buf_t formatted;
         formatter_->format(msg, formatted);
-        std::string line(formatted.data(), formatted.size());
-        // The formatter's output ends with the newline the next consumer would
-        // write; the buffer holds one line per record, so it is not kept.
-        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-            line.pop_back();
+        // The formatter ends the line with the newline its next consumer would
+        // write; a record is one line, so it does not travel with one.
+        std::size_t length = formatted.size();
+        while (length > 0 && (formatted.data()[length - 1] == '\n' || formatted.data()[length - 1] == '\r')) {
+            --length;
         }
-        const std::int32_t level = static_cast<std::int32_t>(msg.level);
-
-        std::int32_t pending = 0;
-        {
-            std::lock_guard<std::mutex> lock(buffer_mutex_);
-            lines_.push_back(std::move(line));
-            levels_.push_back(level);
-            pending = static_cast<std::int32_t>(lines_.size());
-        }
-
-        const LogCallbackFunction fn = callback_for_call();
-        if (fn != nullptr) {
-            fn(level, pending);
-        }
+        const std::string line(formatted.data(), length);
+        fn(static_cast<std::int32_t>(msg.level), line.c_str());
     }
 
     void flush_() override {}
 
-public:
-    std::string take() {
-        std::lock_guard<std::mutex> lock(buffer_mutex_);
-        std::string joined;
-        for (std::size_t i = 0; i < lines_.size(); ++i) {
-            if (i != 0) {
-                joined.push_back('\n');
-            }
-            joined += lines_[i];
-        }
-        lines_.clear();
-        levels_.clear();
-        return joined;
-    }
-
-    // deliver replays what is buffered through the caller's function without
-    // consuming it: the record has already been written, and the text is read
-    // separately.
-    std::size_t deliver(LogCallbackFunction fn) {
-        if (fn == nullptr) {
-            return 0;
-        }
-        std::lock_guard<std::mutex> lock(buffer_mutex_);
-        for (std::size_t i = 0; i < levels_.size(); ++i) {
-            fn(levels_[i], static_cast<std::int32_t>(i + 1));
-        }
-        return levels_.size();
-    }
-
 private:
-    mutable std::mutex callback_mutex_;
-    std::mutex buffer_mutex_;
-    LogCallbackFunction callback_ = nullptr;
-    std::vector<std::string> lines_;
-    std::vector<std::int32_t> levels_;
+    std::mutex callback_mutex_;
+    LogCallback callback_ = nullptr;
 };
 
 std::shared_ptr<CallbackSink> sink() {
     static const std::shared_ptr<CallbackSink> instance = [] {
         auto created = std::make_shared<CallbackSink>();
-        created->set_pattern("[%l] %v");
+        // The level travels as the callback's first argument, so the pattern is
+        // the message alone: a "[debug] " prefix would say it twice.
+        created->set_pattern("%v");
         return created;
     }();
     return instance;
@@ -156,23 +110,8 @@ std::shared_ptr<spdlog::logger> logger() {
     return instance;
 }
 
-std::string take_buffered_log() { return sink()->take(); }
-
-RecordScope::RecordScope(Callback callback) noexcept : previous_(current_callback) { current_callback = callback; }
-
-RecordScope::~RecordScope() { current_callback = previous_; }
-
-} // namespace detail
-
-std::string drain_log() { return detail::take_buffered_log(); }
-
-std::size_t deliver_log(void (*on_record)(std::int32_t level, std::int32_t pending)) {
-    return sink()->deliver(on_record);
-}
-
-void emit_log_samples(void (*on_record)(std::int32_t level, std::int32_t pending)) {
-    const detail::RecordScope scope(on_record);
-    const auto log = detail::logger();
+void write_log_samples() {
+    const auto log = logger();
     log->trace("trace sample");
     log->debug("debug sample");
     log->info("info sample");
@@ -183,5 +122,13 @@ void emit_log_samples(void (*on_record)(std::int32_t level, std::int32_t pending
     // assert the formatted text and not only the level.
     log->info("frame {}x{} at ({}, {}) with {} minutiae", 640, 480, 12, 34, 7);
 }
+
+} // namespace detail
+
+void set_log_callback(LogCallback fn) noexcept { sink()->set_callback(fn); }
+
+// The library's own log samples are a diagnostic of the sink, not part of the
+// surface a caller crosses: the pipeline's own records are what the Go side
+// sees. The C++ tests are what call this.
 
 } // namespace fingerprint

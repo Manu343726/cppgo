@@ -60,8 +60,13 @@ HEADER := include/fingerprint/fingerprint.hpp
 # The exact generation command, with paths relative to this directory, so the
 # command in the generated file's banner is one a reader can copy. The flags for
 # the header come from the CMake compilation database.
+# -retain is a statement about the C++ side that no signature can carry: the
+# sink *stores* the function pointer it is handed, so the Go function must stay
+# registered after the registering call returns, and every binding of the package
+# enters C++ through the reentrant carrier because any call may deliver a record.
 GEN_ARGS := -header $(HEADER) -package fingerprint -library $(LIB) \
-            -compile-commands $(BUILD)/compile_commands.json -out ./$(GEN)
+            -compile-commands $(BUILD)/compile_commands.json -out ./$(GEN) \
+            -retain 'fingerprint::set_log_callback'
 
 HAVE_CONAN  := $(shell command -v $(CONAN) 2>/dev/null)
 HAVE_CMAKE  := $(shell command -v $(CMAKE) 2>/dev/null)

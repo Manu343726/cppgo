@@ -22,7 +22,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync"
 
 	fingerprint "github.com/Manu343726/cppgo/examples/fingerprint/gen"
 )
@@ -49,86 +48,33 @@ func libraryPath() string {
 	return defaultLibrary
 }
 
-// sink is the Go end of the library's spdlog sink.
-//
-// The C++ sink calls the function once per record, with the record's level and
-// the number of records its buffer now holds. The function is the argument of
-// the call that produced the records — not a registration kept across calls —
-// because a callback only exists for the duration of the call that passes it
-// and only a reentrant call can deliver one (see the README).
-//
-// The text itself is not an argument: this build's callback carrier carries
-// scalars, so a C string cannot cross as one. The records are read with
-// DrainLog when the call returns, which is also the cheaper shape — one
-// crossing for a burst of records instead of one per record.
-type sink struct {
-	mu      sync.Mutex
-	records int64
-	levels  [6]int64
-	pumped  int64
-}
-
-func (l *sink) record(level int32, pending int32) {
-	l.mu.Lock()
-	if level >= 0 && level < int32(len(l.levels)) {
-		l.levels[level]++
-	}
-	l.records++
-	l.mu.Unlock()
-}
-
-// pump reads the buffered records and writes them when asked to. It is called
-// after every call that can log, so the buffer never grows across a stream.
-func (l *sink) pump(out io.Writer, verbose bool) {
-	l.mu.Lock()
-	total := l.records
-	changed := total != l.pumped
-	l.pumped = total
-	l.mu.Unlock()
-	if !changed {
-		return
-	}
-	text, err := fingerprint.DrainLog()
-	if err != nil {
-		fmt.Fprintf(out, "fingerprint: reading the C++ log: %v\n", err)
-		return
-	}
-	if verbose && text != "" {
-		fmt.Fprint(out, text)
-		if text[len(text)-1] != '\n' {
-			fmt.Fprintln(out)
-		}
-	}
-}
-
-// summary is the per-level count of the records delivered through the callback.
-func (l *sink) summary() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	names := []string{"trace", "debug", "info", "warn", "error", "critical"}
-	out := ""
-	for i, name := range names {
-		if l.levels[i] == 0 {
-			continue
-		}
-		if out != "" {
-			out += ", "
-		}
-		out += fmt.Sprintf("%s %d", name, l.levels[i])
-	}
-	if out == "" {
-		return "no records"
-	}
-	return out
-}
-
 // openBinding loads the shim and the library.
-func openBinding() error {
+func openBinding(verbose bool) error {
 	fingerprint.CppgoLibraryPath = libraryPath()
 	if err := fingerprint.Open(shimPath()); err != nil {
 		return fmt.Errorf("opening the generated binding: %w", err)
 	}
 	return nil
+}
+
+// withLogs loads the binding, registers the library's sink for the duration of
+// the command, and hands the caller the counter the summary reads. The sink is
+// cleared and the registration released when the command returns, in that
+// order: the C++ side holds a raw pointer and must forget it first.
+func withLogs(verbose bool, out io.Writer) (*bindingLog, func(), error) {
+	logs := newBindingLog(out, verbose)
+	if err := openBinding(verbose); err != nil {
+		return nil, nil, err
+	}
+	stop, err := logs.install()
+	if err != nil {
+		return nil, nil, err
+	}
+	return logs, func() {
+		if err := stop(); err != nil {
+			fmt.Fprintf(out, "fingerprint: releasing the C++ log sink: %v\n", err)
+		}
+	}, nil
 }
 
 // flagsFirst reorders a command line so the flag package sees every flag before
@@ -174,19 +120,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		usage(stderr)
 		return flag.ErrHelp
 	}
-	// One record counter per invocation: the C++ side buffers, and this is what
-	// reads what it wrote. It lives on the command's stack, not the package's:
-	// two runs in one process (which is what a test is) do not share it.
-	logs := &sink{}
 	switch args[0] {
 	case "enroll":
-		return runEnroll(args[1:], logs, stdout, stderr)
+		return runEnroll(args[1:], stdout, stderr)
 	case "dump":
-		return runDump(args[1:], logs, stdout, stderr)
+		return runDump(args[1:], stdout, stderr)
 	case "watch":
-		return runWatch(args[1:], logs, stdout, stderr)
+		return runWatch(args[1:], stdout, stderr)
 	case "version":
-		return runVersion(args[1:], logs, stdout, stderr)
+		return runVersion(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		usage(stdout)
 		return nil
@@ -215,32 +157,28 @@ func usage(w io.Writer) {
 `)
 }
 
-func runEnroll(args []string, logs *sink, stdout, stderr io.Writer) error {
+func runEnroll(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("enroll", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	out := flags.String("out", "template.ansi", "where to write the template")
-	verbose := flags.Bool("v", false, "print the C++ library's log records")
+	verbose := flags.Bool("v", false, "print the C++ library's records at every level")
 	if err := flags.Parse(flagsFirst(args, map[string]bool{"-v": true, "--v": true})); err != nil {
 		return err
 	}
 	if flags.NArg() != 1 {
 		return errors.New("enroll takes exactly one photo")
 	}
-	if err := openBinding(); err != nil {
+	logs, stop, err := withLogs(*verbose, stderr)
+	if err != nil {
 		return err
 	}
+	defer stop()
 	photo, err := os.ReadFile(flags.Arg(0))
 	if err != nil {
 		return err
 	}
 
 	enrollment, err := fingerprint.Enroll(photo)
-	// Delivering is the second step: the call above buffered its records, and
-	// this one hands them to the callback. Both happen before the text is read.
-	if _, deliverErr := fingerprint.DeliverLog(logs.record); deliverErr != nil {
-		return deliverErr
-	}
-	logs.pump(stderr, *verbose)
 	if err != nil {
 		return fmt.Errorf("enrolling %s: %w", flags.Arg(0), err)
 	}
@@ -266,44 +204,51 @@ func runEnroll(args []string, logs *sink, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func runDump(args []string, logs *sink, stdout, stderr io.Writer) error {
+func runDump(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("dump", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	verbose := flags.Bool("v", false, "print the C++ library's log records")
+	verbose := flags.Bool("v", false, "print the C++ library's records at every level")
 	if err := flags.Parse(flagsFirst(args, map[string]bool{"-v": true, "--v": true})); err != nil {
 		return err
 	}
 	if flags.NArg() != 1 {
 		return errors.New("dump takes exactly one template")
 	}
-	if err := openBinding(); err != nil {
+	logs, stop, err := withLogs(*verbose, stderr)
+	if err != nil {
 		return err
 	}
+	defer stop()
 	bytes, err := os.ReadFile(flags.Arg(0))
 	if err != nil {
 		return err
 	}
 	text, err := fingerprint.DumpAnsi378(bytes)
-	logs.pump(stderr, *verbose)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", flags.Arg(0), err)
+	}
+	// The listing is the command's output and stays parseable: what the library
+	// wrote goes to the error stream, and only when the caller asked for it.
+	if *verbose {
+		fmt.Fprintf(stderr, "C++ log records: %s\n", logs.summary())
 	}
 	fmt.Fprint(stdout, text)
 	return nil
 }
 
-func runVersion(args []string, logs *sink, stdout, stderr io.Writer) error {
+func runVersion(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("version", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	verbose := flags.Bool("v", false, "emit one log record per level and print them")
-	if err := flags.Parse(args); err != nil {
+	verbose := flags.Bool("v", false, "print the C++ library's records at every level")
+	if err := flags.Parse(flagsFirst(args, map[string]bool{"-v": true, "--v": true})); err != nil {
 		return err
 	}
-	if err := openBinding(); err != nil {
+	logs, stop, err := withLogs(*verbose, stderr)
+	if err != nil {
 		return err
 	}
+	defer stop()
 	version, err := fingerprint.Version()
-	logs.pump(stderr, *verbose)
 	if err != nil {
 		return err
 	}
@@ -315,13 +260,10 @@ func runVersion(args []string, logs *sink, stdout, stderr io.Writer) error {
 	}
 	defer trigger.Close()
 	fmt.Fprintf(stdout, "trigger: %dx%d working image\n", trigger.Width(), trigger.Height())
-
-	if *verbose {
-		if err := fingerprint.EmitLogSamples(logs.record); err != nil {
-			return err
-		}
-		logs.pump(stdout, true)
-		fmt.Fprintf(stdout, "C++ log records: %s\n", logs.summary())
+	// Neither call writes a record; the summary appears only if something did,
+	// so a version report is not padded with "no records".
+	if summary := logs.summary(); summary != "no records" {
+		fmt.Fprintf(stdout, "C++ log records: %s\n", summary)
 	}
 	return nil
 }

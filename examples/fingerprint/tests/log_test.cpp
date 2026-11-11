@@ -1,9 +1,11 @@
-// The log sink's assertions: the records arrive in Go through the callback,
-// carry their level, and their text is read from the buffer the sink fills.
+// The sink's assertions: every level reaches the caller's function, the text is
+// the formatted line, a null pointer stops delivery, and the pipeline's own
+// records arrive while the call that writes them is still running.
 
 #include "harness.hpp"
 
 #include "fingerprint/fingerprint.hpp"
+#include "log.hpp" // detail::write_log_samples: the sink's diagnostic, not bound
 
 #include <cstdint>
 #include <fstream>
@@ -16,13 +18,31 @@ namespace {
 
 using namespace fingerprint;
 
-std::vector<std::pair<std::int32_t, std::int32_t>> deliveries;
+std::vector<std::pair<std::int32_t, std::string>> deliveries;
 
-void record(std::int32_t level, std::int32_t pending) { deliveries.emplace_back(level, pending); }
+void record(std::int32_t level, const char *message) { deliveries.emplace_back(level, std::string(message)); }
 
 std::vector<std::uint8_t> readFile(const std::string &name) {
     std::ifstream file(harness::fixturePath(name), std::ios::binary);
     return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+bool sawLevel(std::int32_t level) {
+    for (const auto &delivery : deliveries) {
+        if (delivery.first == level) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string textOf(std::int32_t level) {
+    for (const auto &delivery : deliveries) {
+        if (delivery.first == level) {
+            return delivery.second;
+        }
+    }
+    return "";
 }
 
 } // namespace
@@ -30,75 +50,92 @@ std::vector<std::uint8_t> readFile(const std::string &name) {
 void logTests() {
     SECTION("one record per level reaches the callback, with its spdlog level");
     deliveries.clear();
-    drain_log(); // start from an empty buffer
-    emit_log_samples(&record);
+    set_log_callback(&record);
+    detail::write_log_samples();
     CHECK(deliveries.size() == 7);
     for (std::int32_t level = 0; level < 6; ++level) {
         CHECK(deliveries[static_cast<std::size_t>(level)].first == level);
     }
     CHECK(deliveries[6].first == 2); // info
-    CHECK(deliveries[6].second == 7);
 
-    SECTION("the text of each record, including the one with several arguments");
-    const std::string text = drain_log();
-    CHECK(text.find("[trace] trace sample") != std::string::npos);
-    CHECK(text.find("[debug] debug sample") != std::string::npos);
-    CHECK(text.find("[info] info sample") != std::string::npos);
-    CHECK(text.find("[warning] warn sample") != std::string::npos);
-    CHECK(text.find("[error] error sample") != std::string::npos);
-    CHECK(text.find("[critical] critical sample") != std::string::npos);
-    CHECK(text.find("frame 640x480 at (12, 34) with 7 minutiae") != std::string::npos);
-    // A drain empties the buffer.
-    CHECK(drain_log().empty());
+    SECTION("the text is the formatted line, the arguments already substituted");
+    CHECK(deliveries[0].second == "trace sample");
+    CHECK(deliveries[1].second == "debug sample");
+    CHECK(deliveries[2].second == "info sample");
+    CHECK(deliveries[3].second == "warn sample");
+    CHECK(deliveries[4].second == "error sample");
+    CHECK(deliveries[5].second == "critical sample");
+    CHECK(deliveries[6].second == "frame 640x480 at (12, 34) with 7 minutiae");
+    // One line per record: no trailing newline travels with it.
+    CHECK(deliveries[0].second.find('\n') == std::string::npos);
 
-    SECTION("a call with no callback delivers nothing, and the buffer keeps filling");
+    SECTION("a null pointer stops delivery, and the library keeps working");
+    set_log_callback(nullptr);
     deliveries.clear();
-    emit_log_samples(nullptr);
+    detail::write_log_samples();
     CHECK(deliveries.empty());
-    CHECK(!drain_log().empty());
-    // The scope ends with the call: the next one that passes a callback
-    // delivers again, and a plain one does not.
-    deliveries.clear();
-    emit_log_samples(&record);
-    CHECK(deliveries.size() == 7);
-    deliveries.clear();
-    emit_log_samples(nullptr);
-    CHECK(deliveries.empty());
-    drain_log();
-
-    SECTION("the pipeline's own records arrive through the same sink");
-    deliveries.clear();
-    drain_log();
     const std::vector<std::uint8_t> photo = readFile("print.png");
     const Enrollment enrollment = enroll(photo.data(), photo.size());
     CHECK(enrollment.minutiae > 0);
-    // Enrolling takes no callback: what it wrote is buffered, and nothing was
-    // delivered while it ran.
     CHECK(deliveries.empty());
-    // Delivering is the second step, and it is the call that takes the
-    // callback: one call per buffered record, in order, with its level.
-    // Three records: the decoded size, the region, and the enrolment itself.
-    const std::size_t delivered = deliver_log(&record);
-    CHECK(delivered == 3);
-    CHECK(deliveries.size() == 3);
-    CHECK(deliveries[0].first == 1); // debug: the decoded size
-    CHECK(deliveries[1].first == 1); // debug: the region
-    CHECK(deliveries[2].first == 2); // info: the frame and the minutiae
-    const std::string pipelineLog = drain_log();
-    CHECK(pipelineLog.find("enroll: decoded 320x320") != std::string::npos);
-    CHECK(pipelineLog.find("minutiae") != std::string::npos);
-    CHECK(pipelineLog.find("[info] enroll: 320x320 frame") != std::string::npos);
-    CHECK(pipelineLog.find("\n\n") == std::string::npos); // one line per record
-    // A null callback delivers nothing and reports nothing.
-    CHECK(deliver_log(nullptr) == 0);
-    // The trigger is the call that takes no callback: its records are buffered
-    // and drained, and no delivery is attempted (its call is not reentrant).
+
+    SECTION("the pipeline's records arrive during the call that writes them");
+    set_log_callback(&record);
     deliveries.clear();
+    const Enrollment second = enroll(photo.data(), photo.size());
+    CHECK(second.minutiae == enrollment.minutiae);
+    // debug (the decoded frame), debug (the region), info (the enrolment) and
+    // trace (the per-stage times), in the order the pipeline reached them.
+    CHECK(deliveries.size() == 4);
+    if (deliveries.size() == 4) {
+        CHECK(deliveries[0].first == 1);
+        CHECK(deliveries[0].second == "enroll: decoded 320x320 (3642 bytes)");
+        CHECK(deliveries[1].first == 1);
+        CHECK(deliveries[1].second == "enroll: roi 219x301 at (51, 10)");
+        CHECK(deliveries[2].first == 2);
+        CHECK(deliveries[2].second == "enroll: 320x320 frame, roi 219x301, 33 minutiae");
+        CHECK(deliveries[3].first == 0);
+        CHECK(deliveries[3].second.find("enroll: decode ") == 0);
+    }
+
+    SECTION("a frame with no finger is a warning, and one that does not decode an error");
+    deliveries.clear();
+    const std::vector<std::uint8_t> desk = readFile("frame-background.png");
+    CHECK_THROWS(enroll(desk.data(), desk.size()), std::invalid_argument);
+    CHECK(deliveries.size() == 2); // the decode's debug line, then the warning
+    CHECK(sawLevel(3));
+    CHECK(textOf(3) == "enroll: no finger was found in the 640x480 frame");
+
+    deliveries.clear();
+    const std::vector<std::uint8_t> garbage{1, 2, 3, 4, 5, 6, 7, 8};
+    CHECK_THROWS(enroll(garbage.data(), garbage.size()), std::invalid_argument);
+    CHECK(deliveries.size() == 1);
+    CHECK(sawLevel(4));
+    CHECK(textOf(4) == "enroll: the frame did not decode (8 bytes)");
+
+    deliveries.clear();
+    CHECK_THROWS(enroll(nullptr, 0), std::invalid_argument);
+    CHECK(sawLevel(4));
+
+    SECTION("a second registration replaces the first");
+    deliveries.clear();
+    set_log_callback([](std::int32_t, const char *) {});
+    detail::write_log_samples();
+    CHECK(deliveries.empty());
+    // ...and the first one still receives once it is stored again.
+    set_log_callback(&record);
+    detail::write_log_samples();
+    CHECK(deliveries.size() == 7);
+
+    SECTION("the trigger's records arrive through the same sink");
+    set_log_callback(&record);
+    deliveries.clear();
+    const std::vector<std::uint8_t> broken{0, 1, 2, 3};
     Trigger trigger;
     const TriggerState state = initial_trigger_state();
-    const std::vector<std::uint8_t> fingerprint = readFile("frame-background.png");
-    const TriggerOutcome outcome = trigger.evaluate(fingerprint.data(), fingerprint.size(), state);
-    CHECK(outcome.verdict.fire == false);
-    CHECK(deliveries.empty());
-    drain_log();
+    const TriggerOutcome outcome = trigger.evaluate(broken.data(), broken.size(), state);
+    CHECK(outcome.verdict.reason == DECODE_FAILED);
+    CHECK(deliveries.size() == 1);
+    CHECK(sawLevel(3)); // a warning: the decoder refused the frame
+    set_log_callback(nullptr);
 }
