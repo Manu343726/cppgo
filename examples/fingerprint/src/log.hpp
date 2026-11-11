@@ -1,12 +1,12 @@
 #pragma once
 
 // The library's logger, internal to the C++ side. It is spdlog with one sink:
-// the callback sink in log.cpp, which formats each record, buffers it for
-// drain_log(), and tells the Go side that a record arrived.
+// the callback sink in log.cpp, which formats each record and hands it to the
+// function pointer the caller stored with set_log_callback.
 //
 // This header is not part of the bound surface and is never included by
-// fingerprint.hpp: a caller of the library gets the records through the three
-// functions that header declares, not through spdlog.
+// fingerprint.hpp: a caller of the library gets the records through the one
+// function that header declares, not through spdlog.
 
 #include <cstdint>
 #include <memory>
@@ -21,25 +21,14 @@ namespace detail {
 // the process's lifetime. Never null.
 std::shared_ptr<spdlog::logger> logger();
 
-// The records buffered since the last call, one per line, as a joined string.
-std::string take_buffered_log();
-
-// RecordScope installs the callback the sink delivers to for as long as the
-// object lives — one call, on the thread that made it. A null callback means
-// "buffer only", which is what a call whose signature takes no callback gets.
-class RecordScope {
-public:
-    using Callback = void (*)(std::int32_t level, std::int32_t pending);
-
-    explicit RecordScope(Callback callback) noexcept;
-    ~RecordScope();
-
-    RecordScope(const RecordScope &) = delete;
-    RecordScope &operator=(const RecordScope &) = delete;
-
-private:
-    Callback previous_;
-};
+// One record per spdlog level plus one record with several arguments, written
+// through the same sink the pipeline uses. It is not bound: the records the Go
+// side sees are the pipeline's own, and this is how the C++ tests prove that
+// the sink carries every level, including the one no pipeline path deserves.
+void write_log_samples();
 
 } // namespace detail
+
+// set_log_callback is declared in fingerprint.hpp, where a caller finds it.
+
 } // namespace fingerprint

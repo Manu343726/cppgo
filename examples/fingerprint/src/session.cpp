@@ -1,11 +1,18 @@
-// The two calls the Go program makes, over the pipeline the other files
-// implement: `enroll` and `dump_ansi378`, plus the library's version.
+// The calls the Go program makes, over the pipeline the other files implement:
+// `enroll` and `dump_ansi378`, plus the library's version.
 //
 // Everything a caller sees crosses here: the bytes of an encoded frame go in,
 // the pipeline runs — decode, segment, normalise, enhance, binarise, thin,
 // extract, serialise — and the bytes of an ANSI/INCITS 378 subset come out,
 // with the timing of each stage beside them. No `cv::Mat`, no minutia and no
 // template field leaves this file except as an opaque string.
+//
+// This is also where the example's records are written, one per stage of one
+// enrolment: trace for the timings, debug for the frame and the region, info for
+// the enrolment, warn for a frame with no finger in it and error for one that
+// does not decode. They reach the Go side through the sink the caller stored,
+// while this call is running — see log.cpp for why that is the only moment a
+// record may cross.
 
 #include "fingerprint/fingerprint.hpp"
 
@@ -36,6 +43,7 @@ double micros(Clock::time_point from, Clock::time_point to) {
 Enrollment enroll(const std::uint8_t *encoded, std::size_t length) {
     const auto log = detail::logger();
     if (encoded == nullptr || length == 0) {
+        log->error("enroll: there are no bytes to decode");
         throw std::invalid_argument("there are no bytes to decode");
     }
 
@@ -46,6 +54,7 @@ Enrollment enroll(const std::uint8_t *encoded, std::size_t length) {
     const cv::Mat photo = cv::imdecode(view, cv::IMREAD_COLOR);
     const Clock::time_point decoded = Clock::now();
     if (photo.empty()) {
+        log->error("enroll: the frame did not decode ({} bytes)", length);
         throw std::invalid_argument("the frame did not decode");
     }
     log->debug("enroll: decoded {}x{} ({} bytes)", photo.cols, photo.rows, length);
@@ -54,6 +63,7 @@ Enrollment enroll(const std::uint8_t *encoded, std::size_t length) {
     const Clock::time_point segmented = Clock::now();
     const Region roi = largestRegion(mask);
     if (roi.width <= 0 || roi.height <= 0) {
+        log->warn("enroll: no finger was found in the {}x{} frame", photo.cols, photo.rows);
         throw std::invalid_argument("no finger was found in the frame");
     }
     log->debug("enroll: roi {}x{} at ({}, {})", roi.width, roi.height, roi.x, roi.y);
@@ -86,6 +96,10 @@ Enrollment enroll(const std::uint8_t *encoded, std::size_t length) {
     record.minutiae = std::move(minutiae);
     const std::vector<std::uint8_t> bytes = toAnsi378(record);
     const Clock::time_point encodedAt = Clock::now();
+    log->trace("enroll: decode {:.2f} ms, segment {:.2f} ms, enhance {:.2f} ms, extract {:.2f} ms, encode {:.2f} ms",
+               micros(start, decoded) / 1000.0, micros(decoded, segmented) / 1000.0,
+               micros(segmented, enhancedAt) / 1000.0, micros(enhancedAt, extracted) / 1000.0,
+               micros(extracted, encodedAt) / 1000.0);
 
     Enrollment result{};
     result.template_bytes.assign(bytes.begin(), bytes.end());

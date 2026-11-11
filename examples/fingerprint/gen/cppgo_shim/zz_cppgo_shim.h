@@ -115,29 +115,29 @@ int32_t cppgo_thunk_4447c7679308(void * self);
 /* cppgo_thunk_1919a848c3e1: fingerprint::Trigger::evaluate(const std::uint8_t *, std::size_t, const TriggerState &) */
 int32_t cppgo_thunk_1919a848c3e1(void * self, const uint8_t * encoded, size_t length, const void * state, void * cppgo_result);
 
-/* cppgo_thunk_96c34c3716d5: fingerprint::Trigger::evaluate_yuyv(const std::uint8_t *, std::size_t, std::int32_t, std::int32_t, const TriggerState &) */
-int32_t cppgo_thunk_96c34c3716d5(void * cppgo_block, void * cppgo_result);
+/* cppgo_thunk_c8342ec78f9d: fingerprint::Trigger::evaluate_yuyv(const std::uint8_t *, std::size_t, FrameSize, const TriggerState &) */
+int32_t cppgo_thunk_c8342ec78f9d(void * self, const uint8_t * frame, size_t length, void * size, const void * state, void * cppgo_result);
+
+/* cppgo_thunk_13db59f3d4e8: fingerprint::Trigger::height() const noexcept */
+int32_t cppgo_thunk_13db59f3d4e8(const void * self);
+
+/* cppgo_thunk_209a7497cb8f: fingerprint::Trigger::width() const noexcept */
+int32_t cppgo_thunk_209a7497cb8f(const void * self);
 
 /* cppgo_thunk_bc707754d55c: fingerprint::Trigger::~Trigger() */
 int32_t cppgo_thunk_bc707754d55c(void * self);
 
-/* cppgo_thunk_a7a1d7082286: fingerprint::deliver_log(void (*)(std::int32_t, std::int32_t)) */
-int32_t cppgo_thunk_a7a1d7082286(void * on_record, uint64_t * cppgo_result);
-
-/* cppgo_thunk_8ec22b51fd11: fingerprint::drain_log() */
-int32_t cppgo_thunk_8ec22b51fd11(void ** cppgo_out_data, size_t * cppgo_out_size);
-
 /* cppgo_thunk_ca0068b080ea: fingerprint::dump_ansi378(const std::uint8_t *, std::size_t) */
 int32_t cppgo_thunk_ca0068b080ea(const uint8_t * bytes, size_t length, void ** cppgo_out_data, size_t * cppgo_out_size);
-
-/* cppgo_thunk_66c3d7c54926: fingerprint::emit_log_samples(void (*)(std::int32_t, std::int32_t)) */
-int32_t cppgo_thunk_66c3d7c54926(void * on_record);
 
 /* cppgo_thunk_69a12e4cf6d0: fingerprint::enroll(const std::uint8_t *, std::size_t) */
 int32_t cppgo_thunk_69a12e4cf6d0(const uint8_t * encoded, size_t length, void * cppgo_result);
 
 /* cppgo_thunk_f28f9e9f46eb: fingerprint::initial_trigger_state() noexcept */
 void cppgo_thunk_f28f9e9f46eb(void * cppgo_result);
+
+/* cppgo_thunk_dcb345989c34: fingerprint::set_log_callback(LogCallback) noexcept */
+void cppgo_thunk_dcb345989c34(void * fn);
 
 /* cppgo_thunk_d47e59d319fa: fingerprint::version() */
 int32_t cppgo_thunk_d47e59d319fa(void ** cppgo_out_data, size_t * cppgo_out_size);

@@ -30,19 +30,26 @@ TriggerOutcome Trigger::evaluate(const std::uint8_t *encoded, std::size_t length
 Enrollment enroll(const std::uint8_t *encoded, std::size_t length);
 ```
 
-Both take the frame's bytes as a `(pointer, length)` pair, which is the one
-shape the binding passes **without copying**: the Go slice is the C++ pointer,
-valid for the call. `enroll` returns an `Enrollment` whose fields are counts, a
-region, its per-stage microseconds and the template's bytes (a `std::string`).
-Nothing on the Go side can see what is inside those bytes.
+Both take the frame's bytes as a `(pointer, length)` pair. `enroll` returns an
+`Enrollment` whose fields are counts, a region, its per-stage microseconds and
+the template's bytes (a `std::string`). Nothing on the Go side can see what is
+inside those bytes.
 
-Copies per frame, said plainly:
+Copies, said plainly — and one of them is the price of the log sink:
 
-- the trigger: **none** on the way in. The decoder allocates its own output —
-  the one allocation per frame the image-codec API does not let us supply — and
-  everything after it is written into buffers the `Trigger` object owns;
-- an enrolment: one copy of the template's bytes on the way out, into the block
-  the generated binding hands to Go. The encoded frame is still borrowed.
+- **the frame is copied in, once per call.** The package registers a retained
+  callback (§ *The log sink*), so every binding enters C++ through the reentrant
+  carrier, and a call that may run a Go callback works on its own **pinned copy**
+  of every Go value it hands over: the callee reads the same bytes whether or not
+  the callback moved the goroutine's stack. Measured on a 16 KB MJPEG frame, the
+  copy and the pinning are inside the benchmark's noise — 1.305 ms/frame, and the
+  allocations the benchmark reports per trigger call (16.8 KB, 5 allocations)
+  are that copy;
+- the decoder allocates its own output — the one allocation per frame the
+  image-codec API does not let us supply — and everything after it is written
+  into buffers the `Trigger` object owns;
+- an enrolment copies the template's bytes once on the way out, into the
+  `std::string` the binding hands to Go.
 
 The header includes no OpenCV and no spdlog. `include/fingerprint/pipeline.hpp`
 is the C++ half — the same stages over `cv::Mat` — and it is what the C++ tests
@@ -223,41 +230,77 @@ fmt/*:header_only=True
 (`conan.lock` pins the recipe revisions; the header-only package has no
 compiler-specific binary in it, so the lockfile is portable across machines.)
 
-The sink is an `spdlog::sinks::base_sink` that formats each record, appends it to
-a buffer, and calls a registered C function pointer with the record's level. On
-the Go side that function is `bindingLogs.record`, and the text is read with
-`DrainLog`.
+The sink is an `spdlog::sinks::base_sink` that formats each record and calls the
+function pointer the caller stored with `set_log_callback`. There is no buffer
+and no pump: a record reaches Go where it is written.
 
-**The threading rule, and why the callback is a parameter rather than a
-registration.** Three properties of this build decide the shape, and each was
-measured rather than assumed:
+### The retained registration
 
-1. the Go runtime accepts a callback only inside a call it entered through
-   `cgocall`. A binding is routed that way when its signature takes a function
-   pointer. A record delivered from a call that does not is a crash —
-   `fatal error: morestack on g0`, reproduced from a worker goroutine;
-2. the generated binding registers the Go function for the duration of the call
-   that hands it over and **releases it when that call returns**, so a sink
-   registered once and kept names a slot that is no longer the callback's: the
-   next delivery is a jump through `0xfffffffffffffff8`. A registered-and-kept
-   sink cannot exist in this build;
-3. a binding that takes a callback may take **nothing but scalars** beside it —
-   "a pointer into Go memory would move when the callback grows the stack" — so
-   the call that delivers records cannot also be the call that carries the
-   frame's bytes, and the callback's argument cannot be a string.
+`set_log_callback` *stores* its argument, which no C++ signature can say, so the
+Makefile states it:
 
-Hence the two steps, and only two:
-
-```go
-enrollment, err := fingerprint.Enroll(photo)          // buffers its records
-fingerprint.DeliverLog(bindingLogs.record)            // delivers them, one call per record
-text, err := fingerprint.DrainLog()                   // reads the text
+```console
+$ grep retain -A1 examples/fingerprint/Makefile
+            -retain 'fingerprint::set_log_callback'
 ```
 
-`SetLogCallback` as a registration therefore does not exist here, and the
-generator's refusal of the shape the tutorial would like is recorded below. The
-library starts no thread: every record is written from inside a call Go made, on
-the goroutine that made it.
+That one word is what makes the generated Go binding return a registration whose
+lifetime is the caller's:
+
+```go
+func SetLogCallback(fn func(level int32, message string)) (*CallbackRegistration, error)
+func (r *CallbackRegistration) Close() error
+```
+
+and the CLI uses exactly that, once per invocation:
+
+```go
+logs, stop, err := withLogs(verbose, stderr)   // registers, and returns the release
+if err != nil {
+	return err
+}
+defer stop()                                    // SetLogCallback(nil), then Close
+```
+
+The release does the two steps in the documented order: **clear the C++ side
+first** (`SetLogCallback(nil)`, which returns no registration), **then close the
+registration**. Delivering after a `Close` without clearing is the released
+slot's panic in Go — measured, and asserted by a test — because the C++ side
+holds a raw pointer that nothing tells it about.
+
+The records go to `log/slog`: the callback maps spdlog's six levels onto slog's
+and writes the message, which is the text spdlog formatted (the pattern is `%v`,
+so the level is not written twice). `-v` lowers the handler to show the trace and
+debug records the pipeline writes; the summary line beside a run's numbers counts
+every record the callback received, whatever the handler printed.
+
+### The threading rule
+
+- the library starts no thread and writes from none: every record is written
+  inside a call made from Go, and the callback runs there — on the goroutine
+  that made the call, while it is still inside it;
+- a worker goroutine's calls deliver on the worker's own stack, to the same
+  registration (there is one sink per process; the last registration wins, which
+  a test pins);
+- the callback must not log: it runs while the C++ sink holds its mutex, and a
+  record written from inside the handler would re-enter it and deadlock;
+- a library that delivered from a thread of its own could not be bound this way:
+  the runtime has no goroutine there to run the callback on.
+
+### What it cost to get here
+
+The first version of this example could not use a retained sink: the generator's
+reentrant carrier emitted uncompilable Go for a class with a destructor, for a
+record with a `std::string` member, and for a record returned by value. That is
+issue #142, fixed in `9aee1cd`; the example's three shapes are what it was
+missing, and `internal/gen/testdata/retained/shapes.hpp` is the fixture that now
+holds them.
+
+One API consequence stayed: with every binding reentrant, a call's arguments must
+fit the register file, and `evaluate_yuyv(const std::uint8_t *, std::size_t,
+std::int32_t width, std::int32_t height, const TriggerState &)` needs seven
+words. `the callback call needs 7 INTEGER and 0 SSE words, past the register file`.
+The geometry crosses as an 8-byte `FrameSize` record instead, which is one word.
 
 ## Commands
 
@@ -284,17 +327,15 @@ The measured numbers above come from:
 
 ```console
 $ make bench
-BenchmarkTrigger-16         	    1760	   1326790 ns/op	     208 B/op	       1 allocs/op
-BenchmarkFullPipeline-16    	      60	  39512113 ns/op	     210 B/op	       3 allocs/op
+BenchmarkTrigger-16         	     868	   1305474 ns/op	   16848 B/op	       5 allocs/op
+BenchmarkFullPipeline-16    	      30	  40064333 ns/op	   16802 B/op	       7 allocs/op
 $ ./build/fingerprint_tests testdata
-243 checks, 0 failed
+252 checks, 0 failed
 ```
 
-The CI image carries no Python and no Conan until #135 publishes the recipe that
-adds them; until then every target prints why it is skipping and exits zero, so
-`scripts/build-examples.sh` stays green, and the example is verified on a host
-with Conan and in a local image built from the pinned recipe plus Python 3 and
-Conan 2.28.1.
+The recipe the gate runs is `cppgo-ci:recipe-5fd24d63715d`, which carries Python
+3, Conan 2.28.1 and the headless OpenCV modules: `scripts/build-examples.sh`
+builds this example there and does not skip it.
 
 ## The fixtures, and what the tests assert
 
@@ -302,7 +343,7 @@ Conan 2.28.1.
 byte: a desk, a hand, one finger, two fingers, a print with deliberate ridge
 breaks, a JPEG of the finger frame, and a hand-drawn one-pixel skeleton.
 
-The C++ tests (243 checks) assert values, not the absence of a crash:
+The C++ tests (252 checks) assert values, not the absence of a crash:
 
 | Test | Assertion |
 |---|---|
@@ -314,42 +355,27 @@ The C++ tests (243 checks) assert values, not the absence of a crash:
 | **minutiae** | the drawn skeleton's four minutiae at exactly (60,60) ending, (140,60) bifurcation, (200,60) ending, (140,160) ending — by position, type and order |
 | **the template** | the exact 44 bytes of a known three-minutia record; the fields that survive the round trip; a byte-for-byte re-encode; four refusals; the canonical order |
 | the trigger | which of six deterministic sequences fires, at which index: an empty stream never, a hand never (and says `LOW_CONTRAST`), a finger entering at 5, a steady finger from 2, a finger leaving through 10 and not 11, one convincing frame never, two fingers in one region-pair |
-| the log sink | one record per level with its level and count, the multi-argument text, a call with no callback delivering nothing, and the pipeline's own records delivered afterwards |
+| the log sink | one record per level with its level and its text, the arguments already formatted, a null pointer stopping delivery, a second registration replacing the first, and the pipeline's own records arriving during the call that wrote them |
 
 The Go tests add the loop: the entering and leaving sequences again, the
 accounting (`fired == processed + dropped`), one template per processed frame,
 a peak in flight of one, a missing camera skipping cleanly, and the cost ratio.
 
-## What the generator refused, and the shape it forced
+## What the generator needed
 
-Three declarations the application wanted are not bindable in this build. Each
-is reported here with the generator's own message, and none is worked around by
-hand-writing a binding:
+Two things this example asked of `cppgo` were not there when it was written, and
+both are in now:
 
-```
-cppgo: warning: fingerprint::set_log_callback(void (*)(std::int32_t, const char *)) noexcept is not bound:
-  parameter fn: "char *" is not a scalar or a known record; use a scalar element type at the C++ boundary
+- **a retained callback** (#139): a `set_log_callback` whose pointer the callee
+  stores. The Makefile's `-retain` is the declaration, the generated call returns
+  a registration, and every binding of the package enters C++ through the
+  reentrant carrier, because any call may deliver a record;
+- **the reentrant carrier's three missing shapes** (#142): a class with a
+  destructor, a record with a `std::string` member, and a record returned by
+  value did not compile in a `-retain` package. The example is what needed them —
+  the trigger owns its buffers and the enrolment is a record with the template's
+  bytes in it.
 
-cppgo: warning: fingerprint::enroll(const std::vector<std::uint8_t> &,
-  void (*)(std::int32_t, std::int32_t)) is not bound:
-  the parameter "encoded" of a callback binding is a []uint8;
-  pass a scalar: a pointer into Go memory would move when the callback grows the stack
-```
-
-- **a callback argument cannot be a C string**, so `SetLogCallback(func(level
-  int32, message string))` — the shape the tutorial wants — cannot be generated.
-  The record's text travels through `DrainLog` and the callback carries its
-  level;
-- **a callback binding may take nothing but scalars**, so the frame's bytes and
-  the record callback cannot be parameters of one call. Delivering is its own
-  call (`DeliverLog`), which is why the pipeline's records are buffered by
-  `enroll` and delivered after it;
-- **a registered-and-kept callback does not exist**: the generated binding
-  releases the Go function when the registering call returns, and a delivery
-  afterwards is a call through a released address (measured: `morestack on g0`
-  from a worker goroutine). The callback is therefore a parameter of the call
-  that fires it.
-
-A `using LogCallback = void (*)(...)` alias is refused too — `"LogCallback" is a
-void pointer; expose a typed pointer at the C++ boundary` — so the function
-pointer is spelled out at each use.
+What remains is a limit, not a gap: `-retain` puts every call on the register
+file, so a signature with more than six INTEGER words is refused and the
+geometry crosses as a `FrameSize` record.

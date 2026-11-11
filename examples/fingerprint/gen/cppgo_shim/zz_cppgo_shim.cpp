@@ -209,29 +209,10 @@ extern "C" int32_t cppgo_thunk_1919a848c3e1(void * self, const uint8_t * encoded
 	}
 }
 
-// cppgoArgs_96c34c3716d5 is the argument block cppgo_thunk_96c34c3716d5 unpacks: the words the register
-// file cannot hold, in the order the declaration names them.
-struct cppgoArgs_96c34c3716d5 {
-	uintptr_t self;
-	void * frame;
-	uint64_t length;
-	int64_t width;
-	int64_t height;
-	void * state;
-};
-static_assert(sizeof(cppgoArgs_96c34c3716d5) == 48, "cppgo: the argument block of fingerprint::Trigger::evaluate_yuyv is the size the Go side asserts");
-static_assert(offsetof(cppgoArgs_96c34c3716d5, self) == 0, "cppgo: the argument block of fingerprint::Trigger::evaluate_yuyv has the offset the Go side asserts");
-static_assert(offsetof(cppgoArgs_96c34c3716d5, frame) == 8, "cppgo: the argument block of fingerprint::Trigger::evaluate_yuyv has the offset the Go side asserts");
-static_assert(offsetof(cppgoArgs_96c34c3716d5, length) == 16, "cppgo: the argument block of fingerprint::Trigger::evaluate_yuyv has the offset the Go side asserts");
-static_assert(offsetof(cppgoArgs_96c34c3716d5, width) == 24, "cppgo: the argument block of fingerprint::Trigger::evaluate_yuyv has the offset the Go side asserts");
-static_assert(offsetof(cppgoArgs_96c34c3716d5, height) == 32, "cppgo: the argument block of fingerprint::Trigger::evaluate_yuyv has the offset the Go side asserts");
-static_assert(offsetof(cppgoArgs_96c34c3716d5, state) == 40, "cppgo: the argument block of fingerprint::Trigger::evaluate_yuyv has the offset the Go side asserts");
-
-extern "C" int32_t cppgo_thunk_96c34c3716d5(void * cppgo_block, void * cppgo_result) {
-	const cppgoArgs_96c34c3716d5 *cppgo_args = static_cast<const cppgoArgs_96c34c3716d5 *>(cppgo_block);
+extern "C" int32_t cppgo_thunk_c8342ec78f9d(void * self, const uint8_t * frame, size_t length, void * size, const void * state, void * cppgo_result) {
 	cppgo_error_message.clear();
 	try {
-		*static_cast<::fingerprint::TriggerOutcome *>(cppgo_result) = static_cast<::fingerprint::Trigger *>(reinterpret_cast<void *>(cppgo_args->self))->evaluate_yuyv(reinterpret_cast<const std::uint8_t *>(reinterpret_cast<const uint8_t *>(cppgo_args->frame)), static_cast<size_t>(cppgo_args->length), static_cast<int32_t>(cppgo_args->width), static_cast<int32_t>(cppgo_args->height), *static_cast<const ::fingerprint::TriggerState *>(reinterpret_cast<const void *>(cppgo_args->state)));
+		*static_cast<::fingerprint::TriggerOutcome *>(cppgo_result) = static_cast<::fingerprint::Trigger *>(self)->evaluate_yuyv(reinterpret_cast<const std::uint8_t *>(frame), length, *static_cast<const ::fingerprint::FrameSize *>(size), *static_cast<const ::fingerprint::TriggerState *>(state));
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();
@@ -240,45 +221,20 @@ extern "C" int32_t cppgo_thunk_96c34c3716d5(void * cppgo_block, void * cppgo_res
 		cppgo_error_message = "unknown C++ exception";
 		return 1;
 	}
+}
+
+extern "C" int32_t cppgo_thunk_13db59f3d4e8(const void * self) {
+	return static_cast<const ::fingerprint::Trigger *>(self)->height();
+}
+
+extern "C" int32_t cppgo_thunk_209a7497cb8f(const void * self) {
+	return static_cast<const ::fingerprint::Trigger *>(self)->width();
 }
 
 extern "C" int32_t cppgo_thunk_bc707754d55c(void * self) {
 	cppgo_error_message.clear();
 	try {
 		static_cast<::fingerprint::Trigger *>(self)->~Trigger();
-		return 0;
-	} catch (const std::exception &error) {
-		cppgo_error_message = error.what();
-		return 1;
-	} catch (...) {
-		cppgo_error_message = "unknown C++ exception";
-		return 1;
-	}
-}
-
-extern "C" int32_t cppgo_thunk_a7a1d7082286(void * on_record, uint64_t * cppgo_result) {
-	cppgo_error_message.clear();
-	try {
-		*cppgo_result = ::fingerprint::deliver_log(reinterpret_cast<void (*)(int32_t, int32_t)>(on_record));
-		return 0;
-	} catch (const std::exception &error) {
-		cppgo_error_message = error.what();
-		return 1;
-	} catch (...) {
-		cppgo_error_message = "unknown C++ exception";
-		return 1;
-	}
-}
-
-extern "C" int32_t cppgo_thunk_8ec22b51fd11(void ** cppgo_out_data, size_t * cppgo_out_size) {
-	cppgo_error_message.clear();
-	try {
-		auto cppgo_value = ::fingerprint::drain_log();
-		const size_t cppgo_size = cppgo_value.size();
-		char *cppgo_copy = static_cast<char *>(::operator new[](cppgo_size == 0 ? 1 : cppgo_size));
-		if (cppgo_size != 0) { std::memcpy(cppgo_copy, cppgo_value.data(), cppgo_size); }
-		*cppgo_out_data = cppgo_copy;
-		*cppgo_out_size = cppgo_size;
 		return 0;
 	} catch (const std::exception &error) {
 		cppgo_error_message = error.what();
@@ -308,20 +264,6 @@ extern "C" int32_t cppgo_thunk_ca0068b080ea(const uint8_t * bytes, size_t length
 	}
 }
 
-extern "C" int32_t cppgo_thunk_66c3d7c54926(void * on_record) {
-	cppgo_error_message.clear();
-	try {
-		::fingerprint::emit_log_samples(reinterpret_cast<void (*)(int32_t, int32_t)>(on_record));
-		return 0;
-	} catch (const std::exception &error) {
-		cppgo_error_message = error.what();
-		return 1;
-	} catch (...) {
-		cppgo_error_message = "unknown C++ exception";
-		return 1;
-	}
-}
-
 extern "C" int32_t cppgo_thunk_69a12e4cf6d0(const uint8_t * encoded, size_t length, void * cppgo_result) {
 	cppgo_error_message.clear();
 	try {
@@ -338,6 +280,10 @@ extern "C" int32_t cppgo_thunk_69a12e4cf6d0(const uint8_t * encoded, size_t leng
 
 extern "C" void cppgo_thunk_f28f9e9f46eb(void * cppgo_result) {
 	*static_cast<::fingerprint::TriggerState *>(cppgo_result) = ::fingerprint::initial_trigger_state();
+}
+
+extern "C" void cppgo_thunk_dcb345989c34(void * fn) {
+	::fingerprint::set_log_callback(reinterpret_cast<void (*)(int32_t, const char *)>(fn));
 }
 
 extern "C" int32_t cppgo_thunk_d47e59d319fa(void ** cppgo_out_data, size_t * cppgo_out_size) {

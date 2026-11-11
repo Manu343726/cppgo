@@ -147,11 +147,10 @@ type segSlot struct {
 	outDir  string
 	verbose bool
 	out     io.Writer
-	logs    *sink
 }
 
-func newSegSlot(stats *watchStats, outDir string, verbose bool, out io.Writer, logs *sink) *segSlot {
-	return &segSlot{wake: make(chan struct{}, 1), stats: stats, outDir: outDir, verbose: verbose, out: out, logs: logs}
+func newSegSlot(stats *watchStats, outDir string, verbose bool, out io.Writer) *segSlot {
+	return &segSlot{wake: make(chan struct{}, 1), stats: stats, outDir: outDir, verbose: verbose, out: out}
 }
 
 // offer hands a frame to the worker. If a frame is already pending it is
@@ -229,13 +228,7 @@ func (s *segSlot) process(frame Frame) {
 
 	started := time.Now()
 	enrollment, err := fingerprint.Enroll(frame.Data)
-	// The call buffered its records; this one delivers them, and it is the call
-	// that takes the callback because only a reentrant call may deliver one.
-	if _, deliverErr := fingerprint.DeliverLog(s.logs.record); deliverErr != nil && err == nil {
-		err = deliverErr
-	}
 	elapsed := time.Since(started)
-	s.logs.pump(s.out, s.verbose)
 	if err != nil {
 		// The pipeline found no finger in a frame the trigger selected. The
 		// hold window is why: it keeps a stream alive across a few frames after
@@ -404,11 +397,11 @@ func (s watchReport) report(out io.Writer) {
 
 // --- the command -----------------------------------------------------------
 
-func runWatch(args []string, logs *sink, stdout, stderr io.Writer) error {
-	return watchCommand(args, logs, stdout, stderr)
+func runWatch(args []string, stdout, stderr io.Writer) error {
+	return watchCommand(args, stdout, stderr)
 }
 
-func watchCommand(args []string, logs *sink, stdout, stderr io.Writer) error {
+func watchCommand(args []string, stdout, stderr io.Writer) error {
 	stdout = &syncWriter{w: stdout}
 	stderr = &syncWriter{w: stderr}
 	flags := newWatchFlags(stderr)
@@ -432,9 +425,11 @@ func watchCommand(args []string, logs *sink, stdout, stderr io.Writer) error {
 	}
 	defer source.Close()
 
-	if err := openBinding(); err != nil {
+	logs, stop, err := withLogs(flags.verbose, stderr)
+	if err != nil {
 		return err
 	}
+	defer stop()
 	if flags.outDir != "" {
 		if err := os.MkdirAll(flags.outDir, 0o755); err != nil {
 			return err
@@ -443,7 +438,7 @@ func watchCommand(args []string, logs *sink, stdout, stderr io.Writer) error {
 
 	var stats watchStats
 	started := time.Now()
-	slot := newSegSlot(&stats, flags.outDir, flags.verbose, stdout, logs)
+	slot := newSegSlot(&stats, flags.outDir, flags.verbose, stdout)
 	worker := make(chan struct{})
 	go func() {
 		defer close(worker)
@@ -474,12 +469,12 @@ func watchCommand(args []string, logs *sink, stdout, stderr io.Writer) error {
 		callStarted := time.Now()
 		var outcome fingerprint.TriggerOutcome
 		if frame.YUYV {
-			outcome, err = trigger.EvaluateYuyv(frame.Data, int32(frame.Width), int32(frame.Height), &state)
+			outcome, err = trigger.EvaluateYuyv(
+				frame.Data, fingerprint.FrameSize{Width: int32(frame.Width), Height: int32(frame.Height)}, &state)
 		} else {
 			outcome, err = trigger.Evaluate(frame.Data, &state)
 		}
 		elapsed := time.Since(callStarted)
-		logs.pump(stderr, flags.verbose)
 		if err != nil {
 			slot.finish()
 			<-worker
@@ -507,9 +502,7 @@ func watchCommand(args []string, logs *sink, stdout, stderr io.Writer) error {
 	stats.WallMicros = float64(time.Since(started).Microseconds())
 	snapshot := stats.snapshot()
 	snapshot.report(stdout)
-	if flags.verbose {
-		fmt.Fprintf(stdout, "C++ log records: %s\n", logs.summary())
-	}
+	fmt.Fprintf(stdout, "C++ log records: %s\n", logs.summary())
 	return nil
 }
 

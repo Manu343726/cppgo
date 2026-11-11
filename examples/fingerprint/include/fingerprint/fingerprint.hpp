@@ -96,6 +96,15 @@ inline constexpr std::int32_t kTriggerHeight = 120;
 // The state of a stream that has not started.
 TriggerState initial_trigger_state() noexcept;
 
+// The pixel size of a raw (unencoded) frame, as the camera answered it. It is a
+// record rather than two parameters because the call that carries it has only
+// the six registers the ABI gives an integer argument, and a raw frame already
+// spends two of them on its pointer and its length.
+struct FrameSize {
+    std::int32_t width;
+    std::int32_t height;
+};
+
 // What the trigger saw in one frame.
 struct TriggerVerdict {
     bool fire;                  // whether the frame is worth the full pipeline
@@ -160,8 +169,7 @@ public:
     // out when it has no MJPEG): the YUV-to-BGR conversion is this library's
     // work, not the frame source's, and `state` carries across the two forms so
     // a stream may switch between them.
-    TriggerOutcome evaluate_yuyv(const std::uint8_t *frame, std::size_t length, std::int32_t width, std::int32_t height,
-                                 const TriggerState &state);
+    TriggerOutcome evaluate_yuyv(const std::uint8_t *frame, std::size_t length, FrameSize size, const TriggerState &state);
 
 private:
     struct Impl;
@@ -192,17 +200,13 @@ struct Enrollment {
 };
 
 // The whole pipeline on one encoded frame: decode, segment, normalise,
-// enhance, binarise, thin, extract, serialise. Throws std::invalid_argument
-// when the frame does not decode or holds no finger — the Go side gets an
-// error and the reason is in the log.
+// enhance, binarise, thin, extract, serialise. It reports each stage to the log
+// sink — trace for the per-stage times, debug for the decoded size and the
+// region, info for the enrolment itself, warn when the frame holds no finger,
+// error when it does not decode — and throws std::invalid_argument in the last
+// two cases, so the Go side gets an error and the record explains it.
 //
-// `on_record` is where the call's log records go while it runs; see the sink's
-// section above for why it is a parameter. The records are buffered whether or
-// not a callback is passed.
-//
-// The encoder's bytes are borrowed for the duration of the call, as the
-// trigger's are. The call takes no callback (see the sink above): its records
-// are buffered, and deliver_log() hands them to a caller's function afterwards.
+// The frame's bytes are read for the duration of the call and nothing is kept.
 Enrollment enroll(const std::uint8_t *encoded, std::size_t length);
 
 // A textual listing of a template: the header's fields, then one line per
@@ -211,56 +215,30 @@ std::string dump_ansi378(const std::uint8_t *bytes, std::size_t length);
 
 // --- the log sink -----------------------------------------------------------
 
-// The library's logger is spdlog, and its records reach the caller through a
-// function pointer passed to the call that produces them: `on_record` on
-// `enroll` and on `emit_log_samples`. It receives the record's spdlog level
-// (trace 0, debug 1, info 2, warn 3, err 4, critical 5) and the number of
-// records the buffer now holds; the text is read with drain_log().
-//
-// The parameter is the mechanism and not a convenience, for three reasons that
-// are properties of this build and are stated here because they decide the
-// shape of the API:
-//
-//   * the Go runtime accepts a callback only inside a call it entered through
-//     cgocall, and a binding is routed that way when its signature takes a
-//     function pointer. A record delivered from a call that does not is a
-//     crash, measured: the runtime's re-entry runs on a thread it cannot
-//     account for;
-//   * the generated binding registers the Go function for the duration of the
-//     call that hands it over and releases it when that call returns, so a
-//     registered-and-kept sink cannot exist: the pointer kept beyond the call
-//     names a slot that no longer belongs to it;
-//   * a binding that takes a callback may take nothing but scalars beside it —
-//     "a pointer into Go memory would move when the callback grows the stack" —
-//     so the call that delivers records cannot also be the call that carries the
-//     frame's bytes.
-//
-// Hence two steps, and only two: the library *buffers* every record as it is
-// written, and a call that takes a callback *delivers* the buffered ones. The
-// text is read with drain_log().
-//
-// The callback runs on the thread that made the call and only while it is
-// inside it: the library starts no thread, and a record written from one would
-// be delivered on a thread the runtime has never seen.
+// A record from the library's logger. `level` is spdlog's ordering: trace 0,
+// debug 1, info 2, warn 3, err 4, critical 5. `message` is the formatted line,
+// UTF-8 and NUL-terminated, and it belongs to the library: the Go side copies
+// it into a string for the duration of the callback.
+using LogCallback = void (*)(std::int32_t level, const char *message);
 
-// The records buffered since the last drain, one per line, and clears the
-// buffer.
-std::string drain_log();
-
-// Delivers every buffered record to `on_record`, in order: the callback is
-// called once per record with the record's spdlog level and its position, one
-// based. The buffer is left alone — drain_log() still returns the same text —
-// so a caller can both be told that a record arrived and read it.
+// Stores `fn` as the library's sink, replacing whatever was stored; a null
+// pointer turns delivery off. Every record the library writes from then on goes
+// through it, for as long as it is stored.
 //
-// A null pointer delivers nothing and returns zero.
-std::size_t deliver_log(void (*on_record)(std::int32_t level, std::int32_t pending));
-
-// One record per spdlog level plus one record with several arguments: the call
-// that writes records at every level, so a test can assert the levels, the text
-// and the count. Its own records go to `on_record` as they are written (the
-// call is reentrant, so it may deliver), and they are buffered either way; a
-// null pointer is legal and delivers nothing.
-void emit_log_samples(void (*on_record)(std::int32_t level, std::int32_t pending));
+// The library starts no thread and writes from none: a record is written inside
+// a call made from Go, and the callback runs there — on the goroutine that made
+// that call, while it is still inside it. That is the whole threading rule, and
+// it is a limit rather than a choice: a C++ background thread that reached this
+// callback would enter the Go runtime on a thread it has never seen, and the
+// process would die.
+//
+// The pointer is *stored*, which a C++ signature cannot say. `cppgo gen` is told
+// so with `-retain 'fingerprint::set_log_callback'`: the generated Go call
+// keeps the function registered after it returns, hands back a registration the
+// caller closes, and routes every binding of the package through the reentrant
+// carrier, because any call may deliver a record. See the README for the
+// lifetime rules the Go side follows.
+void set_log_callback(LogCallback fn) noexcept;
 
 // The library's own version line, with the OpenCV build it links against.
 std::string version();

@@ -282,7 +282,8 @@ void triggerTests() {
         TriggerState state = initial_trigger_state();
         std::vector<int> fires;
         for (int i = 0; i < 6; ++i) {
-            const TriggerOutcome out = trigger.evaluate_yuyv(bytes.data(), bytes.size(), bgr.cols, bgr.rows, state);
+            const TriggerOutcome out =
+                trigger.evaluate_yuyv(bytes.data(), bytes.size(), FrameSize{bgr.cols, bgr.rows}, state);
             state = out.state;
             if (out.verdict.fire) {
                 fires.push_back(i);
@@ -301,6 +302,7 @@ void triggerTests() {
         // A truncated frame is refused, and a fresh state names the decode as
         // the reason (an established stream would spend its hold instead).
         const TriggerState fresh = initial_trigger_state();
-        CHECK(trigger.evaluate_yuyv(bytes.data(), 8, bgr.cols, bgr.rows, fresh).verdict.reason == DECODE_FAILED);
+        CHECK(trigger.evaluate_yuyv(bytes.data(), 8, FrameSize{bgr.cols, bgr.rows}, fresh).verdict.reason ==
+              DECODE_FAILED);
     }
 }

@@ -95,7 +95,18 @@ add_executable(fingerprint_tests
 target_link_libraries(fingerprint_tests PRIVATE fingerprint
                                                 ${FINGERPRINT_OPENCV_core} ${FINGERPRINT_OPENCV_imgproc}
                                                 ${FINGERPRINT_OPENCV_imgcodecs})
+# The tests include the library's internal log header, which includes spdlog:
+# the header-only target contributes its include directory and nothing to link.
+if(TARGET spdlog::spdlog_header_only)
+    target_link_libraries(fingerprint_tests PRIVATE spdlog::spdlog_header_only)
+else()
+    target_link_libraries(fingerprint_tests PRIVATE spdlog::spdlog)
+endif()
+# `src` is on the tests' path for the library's internal headers: the sink's
+# diagnostic (detail::write_log_samples) is what proves every level the sink
+# carries, and it is deliberately not part of the bound surface.
 target_include_directories(fingerprint_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                    ${CMAKE_CURRENT_SOURCE_DIR}/src
                                                     ${FINGERPRINT_OPENCV_INCLUDE_DIR})
 target_compile_options(fingerprint_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME fingerprint COMMAND fingerprint_tests ${CMAKE_CURRENT_SOURCE_DIR}/testdata)

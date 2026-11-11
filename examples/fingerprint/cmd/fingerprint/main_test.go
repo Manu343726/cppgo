@@ -138,29 +138,33 @@ func TestVersion(t *testing.T) {
 	}
 }
 
-func TestVersionLogs(t *testing.T) {
+// TestCLIRecordsReachSlog is the CLI's end of the sink: an enrolment's records
+// arrive through the retained callback and are written by slog, and the run
+// reports how many of each level it received.
+func TestCLIRecordsReachSlog(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "template.ansi")
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"version", "-v"}, &stdout, &stderr); err != nil {
-		t.Fatalf("version -v: %v", err)
+	if err := run([]string{"enroll", "-v", "-out", out, filepath.Join(testPath("testdata"), "print.png")}, &stdout, &stderr); err != nil {
+		t.Fatalf("enroll -v: %v\n%s", err, stderr.String())
 	}
-	text := stdout.String()
-	// One record per level, delivered through the callback, and their text read
-	// with DrainLog.
 	for _, want := range []string{
-		"[trace] trace sample",
-		"[debug] debug sample",
-		"[info] info sample",
-		"[warning] warn sample",
-		"[error] error sample",
-		"[critical] critical sample",
-		"frame 640x480 at (12, 34) with 7 minutiae",
+		"msg=\"enroll: decoded 320x320 (3642 bytes)\"",
+		"msg=\"enroll: roi 219x301 at (51, 10)\"",
+		"msg=\"enroll: 320x320 frame, roi 219x301, 33 minutiae\"",
+		"msg=\"enroll: decode ",
 	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the log record %q did not reach Go:\n%s", want, text)
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("the record %q did not reach slog:\n%s", want, stderr.String())
 		}
 	}
-	if !strings.Contains(text, "C++ log records: trace 1, debug 1, info 2, warn 1, error 1, critical 1") {
-		t.Errorf("the per-level counts are not reported:\n%s", text)
+	if !strings.Contains(stdout.String(), "C++ log records: trace 1, debug 2, info 1") {
+		t.Errorf("the per-level counts are not reported:\n%s", stdout.String())
+	}
+	// The registration is released when the command returns: a second run
+	// registers again, which is what proves the first one was cleared.
+	stderr.Reset()
+	if err := run([]string{"dump", out}, &stdout, &stderr); err != nil {
+		t.Fatalf("dump after enroll: %v", err)
 	}
 }
 

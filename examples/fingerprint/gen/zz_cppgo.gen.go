@@ -125,26 +125,22 @@ var (
 	cppgoSym_4447c7679308 uintptr
 	// cppgo_thunk_1919a848c3e1
 	cppgoSym_1919a848c3e1 uintptr
-	// cppgo_thunk_96c34c3716d5
-	cppgoSym_96c34c3716d5 uintptr
-	// _ZNK11fingerprint7Trigger6heightEv
+	// cppgo_thunk_c8342ec78f9d
+	cppgoSym_c8342ec78f9d uintptr
+	// cppgo_thunk_13db59f3d4e8
 	cppgoSym_13db59f3d4e8 uintptr
-	// _ZNK11fingerprint7Trigger5widthEv
+	// cppgo_thunk_209a7497cb8f
 	cppgoSym_209a7497cb8f uintptr
 	// cppgo_thunk_bc707754d55c
 	cppgoSym_bc707754d55c uintptr
-	// cppgo_thunk_a7a1d7082286
-	cppgoSym_a7a1d7082286 uintptr
-	// cppgo_thunk_8ec22b51fd11
-	cppgoSym_8ec22b51fd11 uintptr
 	// cppgo_thunk_ca0068b080ea
 	cppgoSym_ca0068b080ea uintptr
-	// cppgo_thunk_66c3d7c54926
-	cppgoSym_66c3d7c54926 uintptr
 	// cppgo_thunk_69a12e4cf6d0
 	cppgoSym_69a12e4cf6d0 uintptr
 	// cppgo_thunk_f28f9e9f46eb
 	cppgoSym_f28f9e9f46eb uintptr
+	// cppgo_thunk_dcb345989c34
+	cppgoSym_dcb345989c34 uintptr
 	// cppgo_thunk_d47e59d319fa
 	cppgoSym_d47e59d319fa uintptr
 	// cppgo_free
@@ -250,16 +246,14 @@ func cppgoLoad(shimPath string) (*cppgoLibraries, error) {
 		{name: "cppgo_thunk_b243fcfddbf5", addr: &cppgoSym_b243fcfddbf5, shim: true},
 		{name: "cppgo_thunk_4447c7679308", addr: &cppgoSym_4447c7679308, shim: true},
 		{name: "cppgo_thunk_1919a848c3e1", addr: &cppgoSym_1919a848c3e1, shim: true},
-		{name: "cppgo_thunk_96c34c3716d5", addr: &cppgoSym_96c34c3716d5, shim: true},
-		{name: "_ZNK11fingerprint7Trigger6heightEv", addr: &cppgoSym_13db59f3d4e8, shim: false},
-		{name: "_ZNK11fingerprint7Trigger5widthEv", addr: &cppgoSym_209a7497cb8f, shim: false},
+		{name: "cppgo_thunk_c8342ec78f9d", addr: &cppgoSym_c8342ec78f9d, shim: true},
+		{name: "cppgo_thunk_13db59f3d4e8", addr: &cppgoSym_13db59f3d4e8, shim: true},
+		{name: "cppgo_thunk_209a7497cb8f", addr: &cppgoSym_209a7497cb8f, shim: true},
 		{name: "cppgo_thunk_bc707754d55c", addr: &cppgoSym_bc707754d55c, shim: true},
-		{name: "cppgo_thunk_a7a1d7082286", addr: &cppgoSym_a7a1d7082286, shim: true},
-		{name: "cppgo_thunk_8ec22b51fd11", addr: &cppgoSym_8ec22b51fd11, shim: true},
 		{name: "cppgo_thunk_ca0068b080ea", addr: &cppgoSym_ca0068b080ea, shim: true},
-		{name: "cppgo_thunk_66c3d7c54926", addr: &cppgoSym_66c3d7c54926, shim: true},
 		{name: "cppgo_thunk_69a12e4cf6d0", addr: &cppgoSym_69a12e4cf6d0, shim: true},
 		{name: "cppgo_thunk_f28f9e9f46eb", addr: &cppgoSym_f28f9e9f46eb, shim: true},
+		{name: "cppgo_thunk_dcb345989c34", addr: &cppgoSym_dcb345989c34, shim: true},
 		{name: "cppgo_thunk_d47e59d319fa", addr: &cppgoSym_d47e59d319fa, shim: true},
 		{name: "cppgo_free", addr: &cppgoFreeSym, shim: true},
 	} {
@@ -315,6 +309,28 @@ func cppgoCloseError(symbol string) error {
 	return nil
 }
 
+// cppgoCString copies s into a NUL-terminated byte slice for a C++ char *
+// parameter, and returns the pointer and the slice to keep alive. A Go string
+// is immutable and not NUL-terminated, so the callee never sees Go's bytes.
+func cppgoCString(s string) (unsafe.Pointer, []byte) {
+	cppgoBytes := make([]byte, len(s)+1)
+	copy(cppgoBytes, s)
+	return unsafe.Pointer(&cppgoBytes[0]), cppgoBytes
+}
+
+// cppgoGoString copies a NUL-terminated C string into a Go string. The pointer
+// belongs to the library and is only read here, before the call returns.
+func cppgoGoString(p unsafe.Pointer) string {
+	if p == nil {
+		return ""
+	}
+	n := 0
+	for *(*byte)(unsafe.Add(p, n)) != 0 {
+		n++
+	}
+	return string(unsafe.Slice((*byte)(p), n))
+}
+
 // cppgoHeapCell returns a zero value of T in a heap cell. It is a function and
 // not new(T) at the use site because the allocation site is what decides
 // whether the cell is a stack object: a cell that only ever reaches a uintptr
@@ -350,6 +366,59 @@ func cppgoPinSlice[T any](cppgoPin *runtime.Pinner, s []T) []T {
 		cppgoPin.Pin(&copyOf[0])
 	}
 	return copyOf
+}
+
+// CallbackRegistration is one retained callback: a Go function the C++ side
+// stores after the registering call returns and calls again, during later calls
+// made from Go, until the caller closes the registration.
+//
+// The registration keeps the Go function alive and holds its slot in the
+// callback table, which is why a callback does not have to be re-registered for
+// every call. Close releases the slot, and waits for the calls already inside
+// the function to return, so nothing of it runs afterwards.
+//
+// A function the callee stored may only be called while C++ is inside a call
+// made from Go: a C++ thread that Go never started must not deliver a record,
+// and there is no state in which the runtime could accept it. Tell the C++ side
+// to forget the callback before Close — pass a nil function to the registering
+// call — because a call after Close reaches the released slot and panics with
+// the slot's number rather than delivering a record.
+type CallbackRegistration struct {
+	mu   sync.Mutex
+	fn   any
+	code uintptr
+	done bool
+}
+
+// cppgoRetain is the registration a retained binding returns. The closure is
+// kept here as well as in the callback table: the table is what C calls, and
+// this value is what keeps the function reachable for as long as the caller
+// holds the registration.
+func cppgoRetain(code uintptr, fn any) *CallbackRegistration {
+	return &CallbackRegistration{fn: fn, code: code}
+}
+
+// Close releases the registration. A second Close, or a Close on a nil
+// registration, reports cppgo.ErrClosed.
+func (r *CallbackRegistration) Close() error {
+	if r == nil {
+		return cppgo.ErrClosed
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.done {
+		return cppgo.ErrClosed
+	}
+	r.done = true
+	r.fn = nil
+	return cppgo.ReleaseCallback(r.code)
+}
+
+// cppgoWord is the pointer a word of the argument frame holds. The frame is
+// the C argument registers, so a pointer arrives there as an integer; reading
+// it back is spelled here, once, instead of at every conversion.
+func cppgoWord(word uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&word))
 }
 
 // Enrollment is fingerprint::Enrollment (sizeof 120). The object belongs to this Go value: obj is where it lives, Close releases the storage and runs no C++ destructor, and a value obtained by value is a copy the shim constructed here.
@@ -862,6 +931,31 @@ func (e *Enrollment) SetTotalMicros(total_micros float64) {
 	cppgo.KeepAlive(e)
 }
 
+// FrameSize is fingerprint::FrameSize: a POD, 8 bytes, Width at offset 0, Height at offset 4.
+type FrameSize struct {
+	Width  int32
+	Height int32
+}
+
+// The C++ layout is proven at compile time: a wrong size, alignment or
+// field offset does not compile.
+var _ [8]byte = [unsafe.Sizeof(FrameSize{})]byte{}
+var _ [4]byte = [unsafe.Alignof(FrameSize{})]byte{}
+var _ [0]byte = [unsafe.Offsetof(FrameSize{}.Width)]byte{}
+var _ [4]byte = [unsafe.Offsetof(FrameSize{}.Height)]byte{}
+
+// NewFrameSize returns a zero FrameSize.
+func NewFrameSize() (*FrameSize, error) { return &FrameSize{}, nil }
+
+// Clone copies the value.
+func (f *FrameSize) Clone() (*FrameSize, error) {
+	if f == nil {
+		return nil, cppgo.ErrClosed
+	}
+	clone := *f
+	return &clone, nil
+}
+
 // Trigger is fingerprint::Trigger (sizeof 8). The object belongs to this Go value: obj is where it lives, Close destroys it, and a value obtained by value is a copy the shim constructed here.
 type Trigger struct {
 	obj *cppgo.Object
@@ -883,7 +977,7 @@ func (t *Trigger) cppgoAddr() uintptr {
 
 // NewTrigger constructs a fingerprint::Trigger.
 //
-// C++: fingerprint::Trigger::Trigger(), _ZN11fingerprint7TriggerC1Ev (thunk cppgo_thunk_4447c7679308, not noexcept: an exception would unwind into Go), verified against libfingerprint.so
+// C++: fingerprint::Trigger::Trigger(), _ZN11fingerprint7TriggerC1Ev (reentrant cppgo_thunk_4447c7679308, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
 func NewTrigger() (*Trigger, error) {
 	if err := cppgoOpen(""); err != nil {
 		return nil, err
@@ -896,9 +990,18 @@ func NewTrigger() (*Trigger, error) {
 			return
 		}
 		cppgo.ProbeStack()
-		cppgoCall_bc707754d55c(cppgoSym_bc707754d55c, obj.Addr())
+		var cppgoDestroyFrame cppgo.Args
+		cppgoDestroyFrame.I[0] = uintptr(obj.Addr())
+		cppgo.CallReentrant(cppgoSym_bc707754d55c, &cppgoDestroyFrame)
 	})
-	if cppgoStatus := cppgoCall_4447c7679308(cppgoSym_4447c7679308, obj.Addr()); cppgoStatus != 0 {
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(obj.Addr())
+	cppgo.CallReentrant(cppgoSym_4447c7679308, &cppgoFrame)
+	cppgo.KeepAlive(obj)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		panic(cppgoPanic.Value)
+	}
+	if cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {
 		obj.Release()
 		return nil, cppgoCallError("fingerprint::Trigger::Trigger")
 	}
@@ -908,7 +1011,7 @@ func NewTrigger() (*Trigger, error) {
 
 // Close destroys the object. It returns cppgo.ErrClosed when the receiver has no live object.
 //
-// C++: fingerprint::Trigger::~Trigger(), _ZN11fingerprint7TriggerD1Ev (thunk cppgo_thunk_bc707754d55c, not noexcept: an exception would unwind into Go), verified against libfingerprint.so
+// C++: fingerprint::Trigger::~Trigger(), _ZN11fingerprint7TriggerD1Ev (reentrant cppgo_thunk_bc707754d55c, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
 func (t *Trigger) Close() error {
 	if t == nil || t.obj == nil {
 		return cppgo.ErrClosed
@@ -921,7 +1024,7 @@ func (t *Trigger) Close() error {
 
 // Width calls fingerprint::Trigger::width.
 //
-// C++: fingerprint::Trigger::width() const noexcept, _ZNK11fingerprint7Trigger5widthEv (direct, noexcept, not virtual, register class; the library exports the symbol), verified against libfingerprint.so
+// C++: fingerprint::Trigger::width() const noexcept, _ZNK11fingerprint7Trigger5widthEv (reentrant cppgo_thunk_209a7497cb8f, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
 func (t *Trigger) Width() int32 {
 	if t == nil || t.obj == nil {
 		panic("cppgo: fingerprint::Trigger::width() const noexcept on a closed Trigger")
@@ -930,14 +1033,19 @@ func (t *Trigger) Width() int32 {
 		panic(err)
 	}
 	cppgo.ProbeStack()
-	cppgoRet := cppgoCall_209a7497cb8f(cppgoSym_209a7497cb8f, t.cppgoAddr())
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(t.cppgoAddr())
+	cppgo.CallReentrant(cppgoSym_209a7497cb8f, &cppgoFrame)
 	cppgo.KeepAlive(t)
-	return int32(cppgoRet)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		panic(cppgoPanic.Value)
+	}
+	return int32(cppgoFrame.Ret)
 }
 
 // Height calls fingerprint::Trigger::height.
 //
-// C++: fingerprint::Trigger::height() const noexcept, _ZNK11fingerprint7Trigger6heightEv (direct, noexcept, not virtual, register class; the library exports the symbol), verified against libfingerprint.so
+// C++: fingerprint::Trigger::height() const noexcept, _ZNK11fingerprint7Trigger6heightEv (reentrant cppgo_thunk_13db59f3d4e8, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
 func (t *Trigger) Height() int32 {
 	if t == nil || t.obj == nil {
 		panic("cppgo: fingerprint::Trigger::height() const noexcept on a closed Trigger")
@@ -946,14 +1054,19 @@ func (t *Trigger) Height() int32 {
 		panic(err)
 	}
 	cppgo.ProbeStack()
-	cppgoRet := cppgoCall_13db59f3d4e8(cppgoSym_13db59f3d4e8, t.cppgoAddr())
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(t.cppgoAddr())
+	cppgo.CallReentrant(cppgoSym_13db59f3d4e8, &cppgoFrame)
 	cppgo.KeepAlive(t)
-	return int32(cppgoRet)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		panic(cppgoPanic.Value)
+	}
+	return int32(cppgoFrame.Ret)
 }
 
 // Evaluate calls fingerprint::Trigger::evaluate.
 //
-// C++: fingerprint::Trigger::evaluate(const std::uint8_t *, std::size_t, const TriggerState &), _ZN11fingerprint7Trigger8evaluateEPKhmRKNS_12TriggerStateE (thunk cppgo_thunk_1919a848c3e1, a record passed or returned by value: the thunk copies it), verified against libfingerprint.so
+// C++: fingerprint::Trigger::evaluate(const std::uint8_t *, std::size_t, const TriggerState &), _ZN11fingerprint7Trigger8evaluateEPKhmRKNS_12TriggerStateE (reentrant cppgo_thunk_1919a848c3e1, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
 func (t *Trigger) Evaluate(encoded []uint8, state *TriggerState) (TriggerOutcome, error) {
 	if t == nil || t.obj == nil {
 		return TriggerOutcome{}, cppgo.ErrClosed
@@ -962,19 +1075,40 @@ func (t *Trigger) Evaluate(encoded []uint8, state *TriggerState) (TriggerOutcome
 		return TriggerOutcome{}, err
 	}
 	cppgo.ProbeStack()
-	var cppgoResult TriggerOutcome
-	cppgoStatus := cppgoCall_1919a848c3e1(cppgoSym_1919a848c3e1, t.cppgoAddr(), cppgo.Ptr(encoded), uint64(len(encoded)), unsafe.Pointer(state), unsafe.Pointer(&cppgoResult))
-	cppgo.KeepAlive(t, encoded, state, &cppgoResult)
-	if cppgoStatus != 0 {
+	cppgoPin := new(runtime.Pinner)
+	defer cppgoPin.Unpin()
+	cppgoResult := cppgoHeapCell[TriggerOutcome]()
+	cppgoPin.Pin(cppgoResult)
+	cppgoPinArg0 := cppgoPinSlice(cppgoPin, encoded)
+	var cppgoPinArg0Ptr unsafe.Pointer
+	if len(cppgoPinArg0) != 0 {
+		cppgoPinArg0Ptr = unsafe.Pointer(&cppgoPinArg0[0])
+	}
+	var cppgoPinArg1 *TriggerState
+	if state != nil {
+		cppgoPinArg1 = cppgoPinValue(cppgoPin, *state)
+	}
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(t.cppgoAddr())
+	cppgoFrame.I[1] = uintptr(cppgoPinArg0Ptr)
+	cppgoFrame.I[2] = uintptr(uint64(len(encoded)))
+	cppgoFrame.I[3] = uintptr(unsafe.Pointer(cppgoPinArg1))
+	cppgoFrame.I[4] = uintptr(unsafe.Pointer(cppgoResult))
+	cppgo.CallReentrant(cppgoSym_1919a848c3e1, &cppgoFrame)
+	cppgo.KeepAlive(t, encoded, cppgoPinArg1, cppgoResult)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		panic(cppgoPanic.Value)
+	}
+	if cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {
 		return TriggerOutcome{}, cppgoCallError("fingerprint::Trigger::evaluate")
 	}
-	return cppgoResult, nil
+	return *cppgoResult, nil
 }
 
 // EvaluateYuyv calls fingerprint::Trigger::evaluate_yuyv.
 //
-// C++: fingerprint::Trigger::evaluate_yuyv(const std::uint8_t *, std::size_t, std::int32_t, std::int32_t, const TriggerState &), _ZN11fingerprint7Trigger13evaluate_yuyvEPKhmiiRKNS_12TriggerStateE (thunk cppgo_thunk_96c34c3716d5, more than 6 INTEGER or 8 SSE arguments: the thunk takes an argument block and unpacks it), verified against libfingerprint.so
-func (t *Trigger) EvaluateYuyv(frame []uint8, width int32, height int32, state *TriggerState) (TriggerOutcome, error) {
+// C++: fingerprint::Trigger::evaluate_yuyv(const std::uint8_t *, std::size_t, FrameSize, const TriggerState &), _ZN11fingerprint7Trigger13evaluate_yuyvEPKhmNS_9FrameSizeERKNS_12TriggerStateE (reentrant cppgo_thunk_c8342ec78f9d, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
+func (t *Trigger) EvaluateYuyv(frame []uint8, size FrameSize, state *TriggerState) (TriggerOutcome, error) {
 	if t == nil || t.obj == nil {
 		return TriggerOutcome{}, cppgo.ErrClosed
 	}
@@ -982,20 +1116,35 @@ func (t *Trigger) EvaluateYuyv(frame []uint8, width int32, height int32, state *
 		return TriggerOutcome{}, err
 	}
 	cppgo.ProbeStack()
-	var cppgoBlock cppgoArgs_96c34c3716d5
-	cppgoBlock.self = t.cppgoAddr()
-	cppgoBlock.frame = cppgo.Ptr(frame)
-	cppgoBlock.length = uint64(len(frame))
-	cppgoBlock.width = int64(width)
-	cppgoBlock.height = int64(height)
-	cppgoBlock.state = unsafe.Pointer(state)
-	var cppgoResult TriggerOutcome
-	cppgoStatus := cppgoCall_96c34c3716d5(cppgoSym_96c34c3716d5, unsafe.Pointer(&cppgoBlock), unsafe.Pointer(&cppgoResult))
-	cppgo.KeepAlive(t, &cppgoBlock, &cppgoResult, frame, state)
-	if cppgoStatus != 0 {
+	cppgoPin := new(runtime.Pinner)
+	defer cppgoPin.Unpin()
+	cppgoResult := cppgoHeapCell[TriggerOutcome]()
+	cppgoPin.Pin(cppgoResult)
+	cppgoPinArg0 := cppgoPinSlice(cppgoPin, frame)
+	var cppgoPinArg0Ptr unsafe.Pointer
+	if len(cppgoPinArg0) != 0 {
+		cppgoPinArg0Ptr = unsafe.Pointer(&cppgoPinArg0[0])
+	}
+	var cppgoPinArg1 *TriggerState
+	if state != nil {
+		cppgoPinArg1 = cppgoPinValue(cppgoPin, *state)
+	}
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(t.cppgoAddr())
+	cppgoFrame.I[1] = uintptr(cppgoPinArg0Ptr)
+	cppgoFrame.I[2] = uintptr(uint64(len(frame)))
+	cppgoFrame.I[3] = uintptr(unsafe.Pointer(&size))
+	cppgoFrame.I[4] = uintptr(unsafe.Pointer(cppgoPinArg1))
+	cppgoFrame.I[5] = uintptr(unsafe.Pointer(cppgoResult))
+	cppgo.CallReentrant(cppgoSym_c8342ec78f9d, &cppgoFrame)
+	cppgo.KeepAlive(t, frame, size, cppgoPinArg1, cppgoResult)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		panic(cppgoPanic.Value)
+	}
+	if cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {
 		return TriggerOutcome{}, cppgoCallError("fingerprint::Trigger::evaluate_yuyv")
 	}
-	return cppgoResult, nil
+	return *cppgoResult, nil
 }
 
 // TriggerOutcome is fingerprint::TriggerOutcome: a POD, 208 bytes, State at offset 0, Verdict at offset 100, DecodeMicros at offset 192, PrefilterMicros at offset 200.
@@ -1132,95 +1281,38 @@ const (
 	TriggerReasonBELOWTHRESHOLD TriggerReason = 8
 )
 
-// cppgoArgs_96c34c3716d5 is the argument block of fingerprint::Trigger::evaluate_yuyv(const std::uint8_t *, std::size_t, std::int32_t, std::int32_t, const TriggerState &): the 6 argument words the
-// register file cannot hold, in declaration order. The shim declares the same
-// fields and asserts every offset.
-type cppgoArgs_96c34c3716d5 struct {
-	self   uintptr
-	frame  unsafe.Pointer
-	length uint64
-	width  int64
-	height int64
-	state  unsafe.Pointer
-}
-
-var _ [48]byte = [unsafe.Sizeof(cppgoArgs_96c34c3716d5{})]byte{}
-var _ [0]byte = [unsafe.Offsetof(cppgoArgs_96c34c3716d5{}.self)]byte{}
-var _ [8]byte = [unsafe.Offsetof(cppgoArgs_96c34c3716d5{}.frame)]byte{}
-var _ [16]byte = [unsafe.Offsetof(cppgoArgs_96c34c3716d5{}.length)]byte{}
-var _ [24]byte = [unsafe.Offsetof(cppgoArgs_96c34c3716d5{}.width)]byte{}
-var _ [32]byte = [unsafe.Offsetof(cppgoArgs_96c34c3716d5{}.height)]byte{}
-var _ [40]byte = [unsafe.Offsetof(cppgoArgs_96c34c3716d5{}.state)]byte{}
-
-// DeliverLog calls fingerprint::deliver_log.
+// DumpAnsi378 calls fingerprint::dump_ansi378.
 //
-// C++: fingerprint::deliver_log(void (*)(std::int32_t, std::int32_t)), _ZN11fingerprint11deliver_logEPFviiE (reentrant cppgo_thunk_a7a1d7082286, callback: the call enters C through runtime.cgocall, so C++ may call back into Go), verified against libfingerprint.so
-func DeliverLog(on_record func(int32, int32)) (uint64, error) {
+// C++: fingerprint::dump_ansi378(const std::uint8_t *, std::size_t), _ZN11fingerprint12dump_ansi378B5cxx11EPKhm (reentrant cppgo_thunk_ca0068b080ea, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
+func DumpAnsi378(bytes []uint8) (string, error) {
+	cppgoDataCell := cppgoHeapCell[unsafe.Pointer]()
+	cppgoSizeCell := cppgoHeapCell[uint64]()
 	if err := cppgoOpen(""); err != nil {
-		return 0, err
+		return "", err
 	}
 	cppgo.ProbeStack()
-	cppgoCallback0, cppgoCallbackErr := cppgo.RegisterCallback(func(cppgoFrame *cppgo.Args) {
-		on_record(int32(cppgoFrame.I[0]), int32(cppgoFrame.I[1]))
-	})
-	if cppgoCallbackErr != nil {
-		return 0, cppgoCallbackErr
-	}
-	defer cppgo.ReleaseCallback(cppgoCallback0)
 	cppgoPin := new(runtime.Pinner)
 	defer cppgoPin.Unpin()
-	cppgoResult := cppgoHeapCell[uint64]()
-	cppgoPin.Pin(cppgoResult)
+	cppgoPin.Pin(cppgoDataCell)
+	cppgoPin.Pin(cppgoSizeCell)
+	cppgoPinArg0 := cppgoPinSlice(cppgoPin, bytes)
+	var cppgoPinArg0Ptr unsafe.Pointer
+	if len(cppgoPinArg0) != 0 {
+		cppgoPinArg0Ptr = unsafe.Pointer(&cppgoPinArg0[0])
+	}
 	var cppgoFrame cppgo.Args
-	cppgoFrame.I[0] = uintptr(cppgoCallback0)
-	cppgoFrame.I[1] = uintptr(unsafe.Pointer(cppgoResult))
-	cppgo.CallReentrant(cppgoSym_a7a1d7082286, &cppgoFrame)
-	cppgo.KeepAlive(cppgoResult)
+	cppgoFrame.I[0] = uintptr(cppgoPinArg0Ptr)
+	cppgoFrame.I[1] = uintptr(uint64(len(bytes)))
+	cppgoFrame.I[2] = uintptr(unsafe.Pointer(cppgoDataCell))
+	cppgoFrame.I[3] = uintptr(unsafe.Pointer(cppgoSizeCell))
+	cppgo.CallReentrant(cppgoSym_ca0068b080ea, &cppgoFrame)
+	cppgo.KeepAlive(bytes, cppgoDataCell, cppgoSizeCell)
 	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
 		panic(cppgoPanic.Value)
 	}
+	cppgoData := *cppgoDataCell
+	cppgoSize := *cppgoSizeCell
 	if cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {
-		return 0, cppgoCallError("fingerprint::deliver_log")
-	}
-	return *cppgoResult, nil
-}
-
-// DrainLog calls fingerprint::drain_log.
-//
-// C++: fingerprint::drain_log(), _ZN11fingerprint9drain_logB5cxx11Ev (thunk cppgo_thunk_8ec22b51fd11, standard-library type: the thunk constructs, copies and destroys it), verified against libfingerprint.so
-func DrainLog() (string, error) {
-	var cppgoData unsafe.Pointer
-	var cppgoSize uint64
-	if err := cppgoOpen(""); err != nil {
-		return "", err
-	}
-	cppgo.ProbeStack()
-	cppgoStatus := cppgoCall_8ec22b51fd11(cppgoSym_8ec22b51fd11, unsafe.Pointer(&cppgoData), unsafe.Pointer(&cppgoSize))
-	cppgo.KeepAlive(&cppgoData, &cppgoSize)
-	if cppgoStatus != 0 {
-		return "", cppgoCallError("fingerprint::drain_log")
-	}
-	var cppgoResult string
-	if cppgoSize != 0 {
-		cppgoResult = string(unsafe.Slice((*byte)(cppgoData), int(cppgoSize)))
-	}
-	cppgoFree(cppgoFreeSym, cppgoData)
-	return cppgoResult, nil
-}
-
-// DumpAnsi378 calls fingerprint::dump_ansi378.
-//
-// C++: fingerprint::dump_ansi378(const std::uint8_t *, std::size_t), _ZN11fingerprint12dump_ansi378B5cxx11EPKhm (thunk cppgo_thunk_ca0068b080ea, standard-library type: the thunk constructs, copies and destroys it), verified against libfingerprint.so
-func DumpAnsi378(bytes []uint8) (string, error) {
-	var cppgoData unsafe.Pointer
-	var cppgoSize uint64
-	if err := cppgoOpen(""); err != nil {
-		return "", err
-	}
-	cppgo.ProbeStack()
-	cppgoStatus := cppgoCall_ca0068b080ea(cppgoSym_ca0068b080ea, cppgo.Ptr(bytes), uint64(len(bytes)), unsafe.Pointer(&cppgoData), unsafe.Pointer(&cppgoSize))
-	cppgo.KeepAlive(bytes, &cppgoData, &cppgoSize)
-	if cppgoStatus != 0 {
 		return "", cppgoCallError("fingerprint::dump_ansi378")
 	}
 	var cppgoResult string
@@ -1231,45 +1323,33 @@ func DumpAnsi378(bytes []uint8) (string, error) {
 	return cppgoResult, nil
 }
 
-// EmitLogSamples calls fingerprint::emit_log_samples.
-//
-// C++: fingerprint::emit_log_samples(void (*)(std::int32_t, std::int32_t)), _ZN11fingerprint16emit_log_samplesEPFviiE (reentrant cppgo_thunk_66c3d7c54926, callback: the call enters C through runtime.cgocall, so C++ may call back into Go), verified against libfingerprint.so
-func EmitLogSamples(on_record func(int32, int32)) error {
-	if err := cppgoOpen(""); err != nil {
-		return err
-	}
-	cppgo.ProbeStack()
-	cppgoCallback0, cppgoCallbackErr := cppgo.RegisterCallback(func(cppgoFrame *cppgo.Args) {
-		on_record(int32(cppgoFrame.I[0]), int32(cppgoFrame.I[1]))
-	})
-	if cppgoCallbackErr != nil {
-		return cppgoCallbackErr
-	}
-	defer cppgo.ReleaseCallback(cppgoCallback0)
-	var cppgoFrame cppgo.Args
-	cppgoFrame.I[0] = uintptr(cppgoCallback0)
-	cppgo.CallReentrant(cppgoSym_66c3d7c54926, &cppgoFrame)
-	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
-		panic(cppgoPanic.Value)
-	}
-	if cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {
-		return cppgoCallError("fingerprint::emit_log_samples")
-	}
-	return nil
-}
-
 // Enroll calls fingerprint::enroll. The returned Enrollment is Go-owned: the shim constructs it from the callee's result, Close releases the storage and runs no C++ destructor, and the type's own copy semantics decide what the copy shares with its source.
 //
-// C++: fingerprint::enroll(const std::uint8_t *, std::size_t), _ZN11fingerprint6enrollEPKhm (thunk cppgo_thunk_69a12e4cf6d0, a record passed or returned by value: the thunk copies it; the by-value copy runs in the shim, which catches a throwing copy), verified against libfingerprint.so
+// C++: fingerprint::enroll(const std::uint8_t *, std::size_t), _ZN11fingerprint6enrollEPKhm (reentrant cppgo_thunk_69a12e4cf6d0, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall; the by-value copy runs in the shim, which catches a throwing copy), verified against libfingerprint.so
 func Enroll(encoded []uint8) (*Enrollment, error) {
 	if err := cppgoOpen(""); err != nil {
 		return nil, err
 	}
 	cppgo.ProbeStack()
+	cppgoPin := new(runtime.Pinner)
+	defer cppgoPin.Unpin()
+	cppgoPinArg0 := cppgoPinSlice(cppgoPin, encoded)
+	var cppgoPinArg0Ptr unsafe.Pointer
+	if len(cppgoPinArg0) != 0 {
+		cppgoPinArg0Ptr = unsafe.Pointer(&cppgoPinArg0[0])
+	}
 	var cppgoObject *cppgo.Object
 	cppgoObject = cppgo.NewObject(120, 8, nil)
-	cppgoStatus := cppgoCall_69a12e4cf6d0(cppgoSym_69a12e4cf6d0, cppgo.Ptr(encoded), uint64(len(encoded)), cppgoObject.Addr())
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(cppgoPinArg0Ptr)
+	cppgoFrame.I[1] = uintptr(uint64(len(encoded)))
+	cppgoFrame.I[2] = uintptr(cppgoObject.Addr())
+	cppgo.CallReentrant(cppgoSym_69a12e4cf6d0, &cppgoFrame)
 	cppgo.KeepAlive(encoded, cppgoObject)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		panic(cppgoPanic.Value)
+	}
+	cppgoStatus := int32(cppgoFrame.Ret)
 	if cppgoStatus != 0 {
 		cppgoObject.Release()
 		return nil, cppgoCallError("fingerprint::enroll")
@@ -1279,31 +1359,84 @@ func Enroll(encoded []uint8) (*Enrollment, error) {
 
 // InitialTriggerState calls fingerprint::initial_trigger_state.
 //
-// C++: fingerprint::initial_trigger_state() noexcept, _ZN11fingerprint21initial_trigger_stateEv (thunk cppgo_thunk_f28f9e9f46eb, a record passed or returned by value: the thunk copies it), verified against libfingerprint.so
+// C++: fingerprint::initial_trigger_state() noexcept, _ZN11fingerprint21initial_trigger_stateEv (reentrant cppgo_thunk_f28f9e9f46eb, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
 func InitialTriggerState() TriggerState {
 	if err := cppgoOpen(""); err != nil {
 		panic(err)
 	}
 	cppgo.ProbeStack()
-	var cppgoResult TriggerState
-	cppgoCall_f28f9e9f46eb(cppgoSym_f28f9e9f46eb, unsafe.Pointer(&cppgoResult))
-	cppgo.KeepAlive(&cppgoResult)
-	return cppgoResult
+	cppgoPin := new(runtime.Pinner)
+	defer cppgoPin.Unpin()
+	cppgoResult := cppgoHeapCell[TriggerState]()
+	cppgoPin.Pin(cppgoResult)
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(unsafe.Pointer(cppgoResult))
+	cppgo.CallReentrant(cppgoSym_f28f9e9f46eb, &cppgoFrame)
+	cppgo.KeepAlive(cppgoResult)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		panic(cppgoPanic.Value)
+	}
+	return *cppgoResult
+}
+
+// SetLogCallback calls fingerprint::set_log_callback. The C++ side stores the function and calls it again during later calls made from Go, until Close releases the registration; a C++ thread that Go did not start must not call it. Pass a nil function to clear the callee's callback, and close the registration after the callee has been told to forget it. The text the callback receives is copied into a Go string for the duration of the callback.
+//
+// C++: fingerprint::set_log_callback(LogCallback) noexcept, _ZN11fingerprint16set_log_callbackEPFviPKcE (reentrant cppgo_thunk_dcb345989c34, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
+func SetLogCallback(fn func(int32, string)) (*CallbackRegistration, error) {
+	if err := cppgoOpen(""); err != nil {
+		return nil, err
+	}
+	cppgo.ProbeStack()
+	if fn == nil {
+		var cppgoFrame cppgo.Args
+		cppgoFrame.I[0] = uintptr(0)
+		cppgo.CallReentrant(cppgoSym_dcb345989c34, &cppgoFrame)
+		if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+			panic(cppgoPanic.Value)
+		}
+		return nil, nil
+	}
+	cppgoCallback0, cppgoCallbackErr := cppgo.RegisterCallback(func(cppgoFrame *cppgo.Args) {
+		fn(int32(cppgoFrame.I[0]), cppgoGoString(cppgoWord(cppgoFrame.I[1])))
+	})
+	if cppgoCallbackErr != nil {
+		return nil, cppgoCallbackErr
+	}
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(cppgoCallback0)
+	cppgo.CallReentrant(cppgoSym_dcb345989c34, &cppgoFrame)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		cppgo.ReleaseCallback(cppgoCallback0)
+		panic(cppgoPanic.Value)
+	}
+	return cppgoRetain(cppgoCallback0, fn), nil
 }
 
 // Version calls fingerprint::version.
 //
-// C++: fingerprint::version(), _ZN11fingerprint7versionB5cxx11Ev (thunk cppgo_thunk_d47e59d319fa, standard-library type: the thunk constructs, copies and destroys it), verified against libfingerprint.so
+// C++: fingerprint::version(), _ZN11fingerprint7versionB5cxx11Ev (reentrant cppgo_thunk_d47e59d319fa, a retained callback is registered for this package: any call made from Go may deliver it, so the call enters C through runtime.cgocall), verified against libfingerprint.so
 func Version() (string, error) {
-	var cppgoData unsafe.Pointer
-	var cppgoSize uint64
+	cppgoDataCell := cppgoHeapCell[unsafe.Pointer]()
+	cppgoSizeCell := cppgoHeapCell[uint64]()
 	if err := cppgoOpen(""); err != nil {
 		return "", err
 	}
 	cppgo.ProbeStack()
-	cppgoStatus := cppgoCall_d47e59d319fa(cppgoSym_d47e59d319fa, unsafe.Pointer(&cppgoData), unsafe.Pointer(&cppgoSize))
-	cppgo.KeepAlive(&cppgoData, &cppgoSize)
-	if cppgoStatus != 0 {
+	cppgoPin := new(runtime.Pinner)
+	defer cppgoPin.Unpin()
+	cppgoPin.Pin(cppgoDataCell)
+	cppgoPin.Pin(cppgoSizeCell)
+	var cppgoFrame cppgo.Args
+	cppgoFrame.I[0] = uintptr(unsafe.Pointer(cppgoDataCell))
+	cppgoFrame.I[1] = uintptr(unsafe.Pointer(cppgoSizeCell))
+	cppgo.CallReentrant(cppgoSym_d47e59d319fa, &cppgoFrame)
+	cppgo.KeepAlive(cppgoDataCell, cppgoSizeCell)
+	if cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {
+		panic(cppgoPanic.Value)
+	}
+	cppgoData := *cppgoDataCell
+	cppgoSize := *cppgoSizeCell
+	if cppgoStatus := int32(cppgoFrame.Ret); cppgoStatus != 0 {
 		return "", cppgoCallError("fingerprint::version")
 	}
 	var cppgoResult string
@@ -1410,36 +1543,3 @@ func cppgoCall_6a3ada191d21(fn uintptr, this uintptr) float64
 
 // cppgoCall_b243fcfddbf5 is the NOSPLIT trampoline for cppgo_thunk_b243fcfddbf5.
 func cppgoCall_b243fcfddbf5(fn uintptr, this uintptr, a1 float64)
-
-// cppgoCall_4447c7679308 is the NOSPLIT trampoline for cppgo_thunk_4447c7679308.
-func cppgoCall_4447c7679308(fn uintptr, this uintptr) int32
-
-// cppgoCall_1919a848c3e1 is the NOSPLIT trampoline for cppgo_thunk_1919a848c3e1.
-func cppgoCall_1919a848c3e1(fn uintptr, this uintptr, a1 unsafe.Pointer, a2 uint64, a3 unsafe.Pointer, out unsafe.Pointer) int32
-
-// cppgoCall_96c34c3716d5 is the NOSPLIT trampoline for cppgo_thunk_96c34c3716d5.
-func cppgoCall_96c34c3716d5(fn uintptr, block unsafe.Pointer, out unsafe.Pointer) int32
-
-// cppgoCall_13db59f3d4e8 is the NOSPLIT trampoline for _ZNK11fingerprint7Trigger6heightEv.
-func cppgoCall_13db59f3d4e8(fn uintptr, this uintptr) int64
-
-// cppgoCall_209a7497cb8f is the NOSPLIT trampoline for _ZNK11fingerprint7Trigger5widthEv.
-func cppgoCall_209a7497cb8f(fn uintptr, this uintptr) int64
-
-// cppgoCall_bc707754d55c is the NOSPLIT trampoline for cppgo_thunk_bc707754d55c.
-func cppgoCall_bc707754d55c(fn uintptr, this uintptr) int32
-
-// cppgoCall_8ec22b51fd11 is the NOSPLIT trampoline for cppgo_thunk_8ec22b51fd11.
-func cppgoCall_8ec22b51fd11(fn uintptr, a0 unsafe.Pointer, a1 unsafe.Pointer) int32
-
-// cppgoCall_ca0068b080ea is the NOSPLIT trampoline for cppgo_thunk_ca0068b080ea.
-func cppgoCall_ca0068b080ea(fn uintptr, a0 unsafe.Pointer, a1 uint64, a2 unsafe.Pointer, a3 unsafe.Pointer) int32
-
-// cppgoCall_69a12e4cf6d0 is the NOSPLIT trampoline for cppgo_thunk_69a12e4cf6d0.
-func cppgoCall_69a12e4cf6d0(fn uintptr, a0 unsafe.Pointer, a1 uint64, out uintptr) int32
-
-// cppgoCall_f28f9e9f46eb is the NOSPLIT trampoline for cppgo_thunk_f28f9e9f46eb.
-func cppgoCall_f28f9e9f46eb(fn uintptr, out unsafe.Pointer)
-
-// cppgoCall_d47e59d319fa is the NOSPLIT trampoline for cppgo_thunk_d47e59d319fa.
-func cppgoCall_d47e59d319fa(fn uintptr, a0 unsafe.Pointer, a1 unsafe.Pointer) int32

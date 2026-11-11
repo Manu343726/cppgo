@@ -18,10 +18,12 @@
 //     the decoder's own output, which the image-codec API does not let us
 //     supply.
 //
-// The trigger logs, but never delivers: its entry point takes no callback
-// parameter, so it is not a reentrant call, and the sink therefore buffers what
-// it writes and leaves it for drain_log(). A record delivered from here would
-// be a call into Go on a thread the runtime cannot account for.
+// The trigger writes only warnings — a frame the decoder refused — and they go
+// through the retained sink like every other record: the package registers a
+// callback that outlives its call, so every binding here enters C++ through the
+// reentrant carrier and a record is delivered while the call that wrote it is
+// still running. The hot path pays nothing for that: a frame that decides is
+// silent, and the verdict, not the log, is where its evidence goes.
 
 #include "fingerprint/fingerprint.hpp"
 
@@ -519,9 +521,11 @@ TriggerOutcome Trigger::evaluate(const std::uint8_t *encoded, std::size_t length
                          static_cast<double>(impl_->small.rows) / sourceHeight, micros(begin, afterDecode));
 }
 
-TriggerOutcome Trigger::evaluate_yuyv(const std::uint8_t *frame, std::size_t length, std::int32_t width,
-                                      std::int32_t height, const TriggerState &state) {
+TriggerOutcome Trigger::evaluate_yuyv(const std::uint8_t *frame, std::size_t length, FrameSize size,
+                                      const TriggerState &state) {
     const Clock::time_point begin = Clock::now();
+    const std::int32_t width = size.width;
+    const std::int32_t height = size.height;
     if (frame == nullptr || width <= 0 || height <= 0 ||
         length < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 2) {
         TriggerOutcome out{};
