@@ -81,3 +81,36 @@ func TestReentrantRefusals(t *testing.T) {
 	}, StdResult: true, Result: &goType{Kind: goString, Std: stdString, Param: cxx.Param{Spelling: "std::string"}}}
 	assert.NoError(t, (&builder{}).checkReentrant(safe))
 }
+
+// TestReentrantCallPastTheRegisterFileIsRefused pins the decision the register
+// file forces on a callback-capable call.
+//
+// The argument block is a shim shape: the thunk it belongs to takes one pointer
+// to the block and unpacks it in C++. A reentrant call has no such thunk to
+// travel through — it hands the shim a frame of SysV register words — so an
+// over-full signature is refused, with the message that names the shape to
+// change (fold the geometry into one POD argument) instead of passing words the
+// file cannot hold. The example this decision was taken for, fingerprint, folds
+// its search geometry into a POD.
+func TestReentrantCallPastTheRegisterFileIsRefused(t *testing.T) {
+	b := &builder{}
+	overfull := &binding{Carrier: reentrant, sym: cxx.Symbol{QualifiedName: "ns::geometry"}}
+	for i := 0; i <= maxIntRegs; i++ {
+		overfull.Wire = append(overfull.Wire, &wireArg{class: classInt, slotType: "int64"})
+	}
+	err := b.routeRegisters(overfull)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(),
+		"cppgo: ns::geometry: the callback call needs 7 INTEGER and 0 SSE words, past the register file")
+	assert.Equal(t, reentrant, overfull.Carrier, "the refusal does not move the binding to another carrier")
+	assert.Empty(t, overfull.Block, "nothing is packed: this carrier has no block to unpack")
+
+	// Inside the file the call is left exactly as it was: six INTEGER words are
+	// what the frame carries.
+	inside := &binding{Carrier: reentrant, sym: cxx.Symbol{QualifiedName: "ns::fits"}}
+	for i := 0; i < maxIntRegs; i++ {
+		inside.Wire = append(inside.Wire, &wireArg{class: classInt, slotType: "int64"})
+	}
+	require.NoError(t, b.routeRegisters(inside))
+	assert.Empty(t, inside.Block)
+}

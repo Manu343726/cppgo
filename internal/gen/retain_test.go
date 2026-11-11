@@ -2,6 +2,7 @@ package gen
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,6 +85,40 @@ func TestRetainRefusesWhatItCannotMean(t *testing.T) {
 	assert.Contains(t, err.Error(), "returns a value")
 }
 
+// TestRetainedAccessorReadsAStringThroughTheShim covers the shape the free
+// function fixture never reaches: an accessor that returns a std::string.
+//
+// The package's -retain puts every binding on the reentrant carrier while it is
+// built, and the accessor is moved to the shim afterwards. The two carriers keep
+// a result in different places — pinned heap cells whose names the reentrant
+// call reads after it returns, against locals the shim is handed the address of
+// — so the accessor's result has to be lowered again for the carrier it ends on.
+// The names are the evidence: the shim's locals are declared and the reentrant
+// carrier's cells are not.
+func TestRetainedAccessorReadsAStringThroughTheShim(t *testing.T) {
+	rendered, err := RenderResult(retainedFixtureConfig())
+	require.NoError(t, err)
+	goFile := outputNamed(t, rendered, GenFileName)
+	assert.Contains(t, goFile, "func (e *Enrollment) Label() (string, error)")
+	assert.Contains(t, goFile, "var cppgoData unsafe.Pointer\n\tvar cppgoSize uint64")
+	assert.Contains(t, goFile, "unsafe.Pointer(&cppgoData)")
+	assert.NotContains(t, goFile, "cppgoDataCell",
+		"the reentrant result's cells belong to a carrier this accessor does not use")
+	assert.NotContains(t, goFile, "cppgoSizeCell",
+		"only the reentrant string result declares a size cell")
+
+	carried := false
+	for _, line := range rendered.Report {
+		if !strings.HasPrefix(line, "retained::Enrollment::label() const noexcept") {
+			continue
+		}
+		assert.Contains(t, line, " thunk ")
+		assert.Contains(t, line, "a field accessor")
+		carried = true
+	}
+	assert.True(t, carried, "the accessor is not in the report")
+}
+
 // TestRetainedCallbackAsAStatus covers the one result a retained declaration may
 // have: a status code, which becomes the error beside the registration. Both the
 // clearing call and the registering call read it, and a failed registering call
@@ -119,4 +154,26 @@ func TestRetainedCallbackNameCollision(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CallbackRegistration")
 	assert.Contains(t, err.Error(), "-rename")
+}
+
+// TestRetainedCallPastTheRegisterFileIsRefused is the same refusal reached from
+// a header instead of a hand-built binding: with -retain every declaration is
+// callback-capable, the frame is the SysV register file, and seven INTEGER words
+// do not fit it. The declaration is left out with a warning that carries the
+// generator's message and names the shape to change — one POD argument — so
+// nothing is passed in words the frame cannot hold.
+func TestRetainedCallPastTheRegisterFileIsRefused(t *testing.T) {
+	rendered, err := RenderResult(Config{
+		Headers: []string{filepath.Join("testdata", "retained", "manyargs.hpp")},
+		Package: "retained",
+		Library: "libretained",
+		Out:     ".",
+		Retain:  []string{"retained::set_many_callback"},
+	})
+	require.NoError(t, err, "one unbound declaration does not fail the package")
+	joined := strings.Join(rendered.Warnings, "\n")
+	assert.Contains(t, joined, "retained::geometry(std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t) noexcept is not bound")
+	assert.Contains(t, joined,
+		"cppgo: retained::geometry: the callback call needs 7 INTEGER and 0 SSE words, past the register file")
+	assert.NotContains(t, outputNamed(t, rendered, GenFileName), "retained::geometry", "the refused call is not emitted")
 }

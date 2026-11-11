@@ -63,9 +63,11 @@ func TestRetainedCallbackIsDeliveredByLaterCalls(t *testing.T) {
 	ran := runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=0", "CPPGO_E2E_SHIM=" + filepath.Join(out, ShimLibraryName("retained"))},
 		"test", "-count=1", "-v", "./retained")
 	assert.Contains(t, ran, "--- PASS: TestRetained")
+	assert.Contains(t, ran, "--- PASS: TestRetainedShapes")
 	ran = runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=1", "CPPGO_E2E_SHIM=" + filepath.Join(out, ShimLibraryName("retained"))},
 		"test", "-race", "-count=1", "-v", "./retained")
 	assert.Contains(t, ran, "--- PASS: TestRetained")
+	assert.Contains(t, ran, "--- PASS: TestRetainedShapes")
 }
 
 // writerFunc adapts a closure to io.Writer, so the carrier report can be read
@@ -231,6 +233,177 @@ func TestRetained(t *testing.T) {
 	var none *CallbackRegistration
 	if err := none.Close(); !errors.Is(err, cppgo.ErrClosed) {
 		t.Fatalf("closing a nil registration = %v, want cppgo.ErrClosed", err)
+	}
+}
+
+// TestRetainedShapes is the package's record proof: a C++ record Go cannot
+// mirror, returned by value, with a std::string member reached through the
+// synthesized accessor the shim carries. Every step runs on the callback-capable
+// carrier, so nothing here may depend on a Go stack address staying put.
+func TestRetainedShapes(t *testing.T) {
+	if err := Open(os.Getenv("CPPGO_E2E_SHIM")); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	enrolment, err := Enroll("template-7", 42)
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	if enrolment == nil {
+		t.Fatal("Enroll returned no record")
+	}
+
+	// The Go value owns C++ storage: a collection and a stack growth between
+	// the call and the read may move everything Go holds, and the record's
+	// bytes are not among it.
+	runtime.GC()
+	growStack(64)
+
+	label, err := enrolment.Label()
+	if err != nil {
+		t.Fatalf("Label: %v", err)
+	}
+	if label != "template-7" {
+		t.Fatalf("Label = %q, want the bytes the C++ copy was built from", label)
+	}
+	if got := enrolment.Count(); got != 42 {
+		t.Fatalf("Count = %d, want 42", got)
+	}
+
+	// The label is a copy C++ owns, so reading it twice returns the same bytes.
+	if again, err := enrolment.Label(); err != nil || again != label {
+		t.Fatalf("the second Label = %q, %v", again, err)
+	}
+
+	if err := enrolment.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := enrolment.Close(); !errors.Is(err, cppgo.ErrClosed) {
+		t.Fatalf("a second Close = %v, want cppgo.ErrClosed", err)
+	}
+	if _, err := enrolment.Label(); !errors.Is(err, cppgo.ErrClosed) {
+		t.Fatalf("Label on a closed record = %v, want cppgo.ErrClosed", err)
+	}
+
+	// A class with a destructor: Close has to reach the C++ one through the
+	// package's callback-capable carrier, and the library's own count of live
+	// objects is the witness that it ran — once.
+	meter, err := NewMeter()
+	if err != nil {
+		t.Fatalf("NewMeter: %v", err)
+	}
+	if got := LiveMeters(); got != 1 {
+		t.Fatalf("LiveMeters = %d, want the one object NewMeter constructed", got)
+	}
+	meter.Bump()
+	meter.Bump()
+	if got := meter.Value(); got != 2 {
+		t.Fatalf("Value = %d, want 2", got)
+	}
+	runtime.GC()
+	growStack(32)
+
+	// The copy constructor is a special member like the others: under the
+	// callback-capable carrier it too is a call through runtime.cgocall, with
+	// its own storage and its own destructor.
+	clone, err := meter.Clone()
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	if got := LiveMeters(); got != 2 {
+		t.Fatalf("LiveMeters after Clone = %d, want 2", got)
+	}
+	if got := clone.Value(); got != 2 {
+		t.Fatalf("the clone's Value = %d, want the value it copied", got)
+	}
+	if err := clone.Close(); err != nil {
+		t.Fatalf("the clone's Close: %v", err)
+	}
+	if got := LiveMeters(); got != 1 {
+		t.Fatalf("LiveMeters after the clone's Close = %d, want 1", got)
+	}
+
+	if err := meter.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := LiveMeters(); got != 0 {
+		t.Fatalf("LiveMeters after Close = %d, want 0: the destructor did not run", got)
+	}
+	if err := meter.Close(); !errors.Is(err, cppgo.ErrClosed) {
+		t.Fatalf("a second Close = %v, want cppgo.ErrClosed", err)
+	}
+
+	// A non-POD record returned by value: the shim constructs the record into
+	// Go's storage, and Close destroys it through the record's own destructor.
+	made, err := MakeMeter(5)
+	if err != nil {
+		t.Fatalf("MakeMeter: %v", err)
+	}
+	if got := made.Value(); got != 5 {
+		t.Fatalf("MakeMeter(5).Value() = %d, want 5", got)
+	}
+	if got := LiveMeters(); got != 1 {
+		t.Fatalf("LiveMeters = %d, want the one copy the shim constructed in Go's storage", got)
+	}
+	if err := made.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := LiveMeters(); got != 0 {
+		t.Fatalf("LiveMeters after Close = %d, want 0", got)
+	}
+
+	// A borrowed C string member: the getter's result is copied out through an
+	// out-pointer of the accessor's own frame, and a zeroed record's null
+	// pointer is the empty string.
+	tagged, err := NewTagged()
+	if err != nil {
+		t.Fatalf("NewTagged: %v", err)
+	}
+	if got := tagged.Text(); got != "" {
+		t.Fatalf("Text on a zeroed record = %q, want the empty string", got)
+	}
+	if got := tagged.Count(); got != 0 {
+		t.Fatalf("Count = %d, want 0", got)
+	}
+	if err := tagged.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// A defaulted prefix: the call is written in C++, so it goes through the
+	// shim's own carrier, which hands C++ the pointer expression the caller
+	// gave instead of the copy the callback-capable carrier pins. The default
+	// scale is the callee's, applied by the C++ compiler.
+	value := int32(21)
+	PokeInt32Ptr(&value)
+	if got := LastPoke(); got != 42 {
+		t.Fatalf("LastPoke = %d, want 21 * the callee's default scale of 2", got)
+	}
+	Poke(&value, 3)
+	if got := LastPoke(); got != 63 {
+		t.Fatalf("LastPoke = %d, want 63", got)
+	}
+
+	// The whole package is callback-capable, so every step above ran with the
+	// carrier a callback can be delivered in. A retained callback survives a
+	// collection and a stack growth and is delivered by a later call.
+	var delivered []string
+	registration, err := SetLogCallback(func(level int32, message string) {
+		delivered = append(delivered, fmt.Sprintf("%d:%s", level, message))
+	})
+	if err != nil {
+		t.Fatalf("SetLogCallback: %v", err)
+	}
+	runtime.GC()
+	growStack(64)
+	Log(2)
+	if want := []string{"0:even", "1:odd"}; fmt.Sprint(delivered) != fmt.Sprint(want) {
+		t.Fatalf("delivered = %q, want %q", delivered, want)
+	}
+	if _, err := SetLogCallback(nil); err != nil {
+		t.Fatalf("SetLogCallback(nil): %v", err)
+	}
+	if err := registration.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
 `

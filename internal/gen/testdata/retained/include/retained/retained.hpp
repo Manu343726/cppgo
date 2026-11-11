@@ -9,6 +9,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "shapes.hpp"
+
 namespace retained {
 
 // The level is spdlog's ordering truncated to the five this library writes.

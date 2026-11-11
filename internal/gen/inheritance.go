@@ -185,6 +185,13 @@ func (b *builder) copyInherited(record *recordModel, base *baseModel, inherited 
 	copy := *inherited
 	copy.Owner = record
 	copy.base = base.Record
+	// The wire words are the copy's own: a carrier change re-lowers them in
+	// place, and the base's binding keeps its own carrier and its own shape.
+	copy.Wire = make([]*wireArg, len(inherited.Wire))
+	for i, arg := range inherited.Wire {
+		word := *arg
+		copy.Wire[i] = &word
+	}
 	// The derived pointer is not the base pointer when the base sits at a
 	// non-zero offset, and a transparent trampoline cannot adjust it: the shim's
 	// static_cast is the only place the offset exists.
@@ -241,14 +248,17 @@ func (b *builder) newBaseView(from, to *recordModel, dynamic bool) (*binding, er
 	}
 	view.castTo = to
 	view.dynamicCast = dynamic
-	view.Carrier = thunk
-	view.Reason = "a base view: the shim performs the cast, so Go never computes an offset"
-	view.fieldName = "As" + to.GoName
+	// The cast is C++'s: the shim writes it, and the carrier is the shim's
+	// whatever the declaration's own classification said. Going through
+	// forceThunk — and not a bare carrier assignment — is what re-lowers a
+	// result the reentrant carrier had prepared: the package's -retain puts
+	// every binding there, and the shim has no pinned cells to read.
+	reason := "a base view: the shim performs the cast, so Go never computes an offset"
 	if dynamic {
-		view.Reason = "a derived view: the shim performs the dynamic_cast and reports whether it succeeded"
+		reason = "a derived view: the shim performs the dynamic_cast and reports whether it succeeded"
 	}
-	view.Thunk = "cppgo_thunk_" + view.ID
-	view.Symbol = view.Thunk
+	b.forceThunk(view, reason)
+	view.fieldName = "As" + to.GoName
 	return view, nil
 }
 
