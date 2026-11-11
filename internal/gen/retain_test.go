@@ -155,3 +155,25 @@ func TestRetainedCallbackNameCollision(t *testing.T) {
 	assert.Contains(t, err.Error(), "CallbackRegistration")
 	assert.Contains(t, err.Error(), "-rename")
 }
+
+// TestRetainedCallPastTheRegisterFileIsRefused is the same refusal reached from
+// a header instead of a hand-built binding: with -retain every declaration is
+// callback-capable, the frame is the SysV register file, and seven INTEGER words
+// do not fit it. The declaration is left out with a warning that carries the
+// generator's message and names the shape to change — one POD argument — so
+// nothing is passed in words the frame cannot hold.
+func TestRetainedCallPastTheRegisterFileIsRefused(t *testing.T) {
+	rendered, err := RenderResult(Config{
+		Headers: []string{filepath.Join("testdata", "retained", "manyargs.hpp")},
+		Package: "retained",
+		Library: "libretained",
+		Out:     ".",
+		Retain:  []string{"retained::set_many_callback"},
+	})
+	require.NoError(t, err, "one unbound declaration does not fail the package")
+	joined := strings.Join(rendered.Warnings, "\n")
+	assert.Contains(t, joined, "retained::geometry(std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t) noexcept is not bound")
+	assert.Contains(t, joined,
+		"cppgo: retained::geometry: the callback call needs 7 INTEGER and 0 SSE words, past the register file")
+	assert.NotContains(t, outputNamed(t, rendered, GenFileName), "retained::geometry", "the refused call is not emitted")
+}
