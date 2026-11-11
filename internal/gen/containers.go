@@ -165,15 +165,16 @@ func (b *builder) stdVectorOutParamWire(binding *binding, p cxx.Param, mapped *g
 func (b *builder) stdVectorResultWire(binding *binding, result *goType) {
 	out := func(expr, keep, cType, cName string) *wireArg {
 		arg := &wireArg{
-			label:    "a" + itoa(len(binding.Wire)),
-			slotType: "unsafe.Pointer",
-			class:    classInt,
-			size:     8,
-			expr:     expr,
-			keep:     keep,
-			cType:    cType,
-			cName:    cName,
-			isOut:    true,
+			label:         "a" + itoa(len(binding.Wire)),
+			slotType:      "unsafe.Pointer",
+			class:         classInt,
+			size:          8,
+			expr:          expr,
+			keep:          keep,
+			cType:         cType,
+			cName:         cName,
+			isOut:         true,
+			stdResultWord: true,
 		}
 		binding.Wire = append(binding.Wire, arg)
 		return arg

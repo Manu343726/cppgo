@@ -2,6 +2,7 @@ package gen
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,6 +83,40 @@ func TestRetainRefusesWhatItCannotMean(t *testing.T) {
 	_, err = RenderResult(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "returns a value")
+}
+
+// TestRetainedAccessorReadsAStringThroughTheShim covers the shape the free
+// function fixture never reaches: an accessor that returns a std::string.
+//
+// The package's -retain puts every binding on the reentrant carrier while it is
+// built, and the accessor is moved to the shim afterwards. The two carriers keep
+// a result in different places — pinned heap cells whose names the reentrant
+// call reads after it returns, against locals the shim is handed the address of
+// — so the accessor's result has to be lowered again for the carrier it ends on.
+// The names are the evidence: the shim's locals are declared and the reentrant
+// carrier's cells are not.
+func TestRetainedAccessorReadsAStringThroughTheShim(t *testing.T) {
+	rendered, err := RenderResult(retainedFixtureConfig())
+	require.NoError(t, err)
+	goFile := outputNamed(t, rendered, GenFileName)
+	assert.Contains(t, goFile, "func (e *Enrollment) Label() (string, error)")
+	assert.Contains(t, goFile, "var cppgoData unsafe.Pointer\n\tvar cppgoSize uint64")
+	assert.Contains(t, goFile, "unsafe.Pointer(&cppgoData)")
+	assert.NotContains(t, goFile, "cppgoDataCell",
+		"the reentrant result's cells belong to a carrier this accessor does not use")
+	assert.NotContains(t, goFile, "cppgoHeapCell",
+		"the package pins nothing once its only pinning result is carried by the shim")
+
+	carried := false
+	for _, line := range rendered.Report {
+		if !strings.HasPrefix(line, "retained::Enrollment::label() const noexcept") {
+			continue
+		}
+		assert.Contains(t, line, " thunk ")
+		assert.Contains(t, line, "a field accessor")
+		carried = true
+	}
+	assert.True(t, carried, "the accessor is not in the report")
 }
 
 // TestRetainedCallbackAsAStatus covers the one result a retained declaration may

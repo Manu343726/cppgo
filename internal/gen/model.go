@@ -202,8 +202,19 @@ type wireArg struct {
 	// writes.
 	stdOffsets    string
 	stdOutOffsets string
-	// isOut marks a standard-library result's out-parameter.
+	// isOut marks a standard-library out-parameter: a result's word, or the one
+	// a standard-library parameter the callee replaces receives.
 	isOut bool
+	// stdResultWord marks the out-parameters a standard-library *result* crosses
+	// through, so a binding re-routed to the shim can drop exactly those and
+	// lower the result again for the carrier it ends on.
+	stdResultWord bool
+	// pinnedExpr and pinnedKeep are the expressions pinCall replaced with a
+	// pinned copy, empty for a word no copy was planned for. A binding that ends
+	// on a carrier which copies nothing gets them back: the copy's declaration
+	// is never emitted there.
+	pinnedExpr string
+	pinnedKeep string
 	// callable is set for a function-pointer or std::function parameter: the
 	// wire word is the callback table's address.
 	callable *callbackType
@@ -330,6 +341,11 @@ type binding struct {
 	ViewResult bool
 	// stdDecls are the Go locals the out-parameters point at.
 	stdDecls []string
+	// stdResultDecls is the index in stdDecls where the declarations the
+	// standard-library result added begin. They are a suffix (the result is
+	// lowered after the parameters), so a binding moved to the shim carrier
+	// truncates back to here and lowers them again in the shim's shape.
+	stdResultDecls int
 	// usesFree is true when the binding's result is a heap copy that the Go
 	// side must release with the cppgo_free helper.
 	usesFree bool
@@ -494,9 +510,6 @@ type builder struct {
 	// usesWord is true when a callback argument is a pointer, which the
 	// generated package turns from its frame word with one helper.
 	usesWord bool
-	// usesPin is true when a call copies a Go pointer into a pinned heap
-	// object, which makes the generated package import runtime.
-	usesPin bool
 	// retains are the -retain entries, retainMatched the ones a declaration
 	// matched, and forceReentrant is true as soon as one entry exists: a
 	// callback the callee stores may be delivered by any call made from Go, so
@@ -1445,7 +1458,6 @@ func (b *builder) newBinding(sym cxx.Symbol, owner *recordModel) (*binding, erro
 				out.keep = "cppgoResult"
 				binding.pins = append(binding.pins, pinPlan{shape: pinCell, local: "cppgoResult", elem: binding.OutLocal})
 				binding.pinned = true
-				b.usesPin = true
 			}
 			binding.Wire = append(binding.Wire, out)
 		}
@@ -1882,17 +1894,21 @@ func (b *builder) markProxy(binding *binding, from int, proxyCxx string) {
 // through, and the Go locals they aim at.
 func (b *builder) addStdResult(binding *binding) error {
 	result := binding.Result
+	// The result's declarations are appended after the parameters' own, so
+	// this is the boundary a carrier change truncates back to.
+	binding.stdResultDecls = len(binding.stdDecls)
 	out := func(expr, keep, cType, cName string) *wireArg {
 		arg := &wireArg{
-			label:    "a" + itoa(len(binding.Wire)),
-			slotType: "unsafe.Pointer",
-			class:    classInt,
-			size:     8,
-			expr:     expr,
-			keep:     keep,
-			cType:    cType,
-			cName:    cName,
-			isOut:    true,
+			label:         "a" + itoa(len(binding.Wire)),
+			slotType:      "unsafe.Pointer",
+			class:         classInt,
+			size:          8,
+			expr:          expr,
+			keep:          keep,
+			cType:         cType,
+			cName:         cName,
+			isOut:         true,
+			stdResultWord: true,
 		}
 		binding.Wire = append(binding.Wire, arg)
 		return arg
@@ -1917,7 +1933,6 @@ func (b *builder) addStdResult(binding *binding) error {
 				pinPlan{shape: pinOut, name: "cppgoSize", local: "cppgoSizeCell"},
 			)
 			binding.pinned = true
-			b.usesPin = true
 		} else {
 			binding.stdDecls = append(binding.stdDecls,
 				"var cppgoData unsafe.Pointer",
@@ -2110,17 +2125,24 @@ func (b *builder) chooseCarrier(binding *binding) {
 	}
 }
 
-// forceThunk re-routes a binding that was classified as direct to the shim. It
-// exists for the bindings whose call cannot be a transparent trampoline: a
-// static data member (the symbol is data), a field accessor (the address is a
-// member) and an inherited method (the receiver is a base subobject at an offset
-// only C++ knows).
+// forceThunk re-routes a binding to the shim. It exists for the bindings whose
+// call cannot be a transparent trampoline: a static data member (the symbol is
+// data), a field accessor (the address is a member), a defaulted prefix (the
+// callee's compiler applies the default) and an inherited method (the receiver
+// is a base subobject at an offset only C++ knows).
 //
 // The status and the out-pointer are recomputed, because a direct binding never
-// had them.
+// had them. A binding that was going to the reentrant carrier is re-lowered for
+// this one: the two disagree about where a result lives and about the copies the
+// arguments need, so neither the result's declarations nor the pins can be left
+// standing.
 func (b *builder) forceThunk(binding *binding, reason string) {
+	reentrantBefore := binding.Carrier == reentrant
 	binding.Carrier = thunk
 	binding.Reason = reason
+	if reentrantBefore {
+		b.retargetResult(binding)
+	}
 	binding.Status = !binding.sym.IsNoExcept || binding.hasStd || binding.fieldByValue
 	if !binding.Status {
 		binding.ErrorResult = false
@@ -2143,6 +2165,64 @@ func (b *builder) forceThunk(binding *binding, reason string) {
 	}
 	binding.Thunk = "cppgo_thunk_" + binding.ID
 	binding.Symbol = binding.Thunk
+}
+
+// retargetResult re-lowers a binding's result for the shim carrier after it was
+// built for the reentrant one.
+//
+// The two carriers keep a result in different places. The reentrant one hands
+// the callee pinned heap cells, because a callback may grow the goroutine's
+// stack and a stack local would move; the shim hands it locals of the call's own
+// frame, because nothing can re-enter Go while the call runs. The declarations,
+// the wire words and the pin plans of one carrier are not valid for the other:
+// the names would be undefined, and the copies the reentrant carrier planned
+// would read locals the shim's body never declares.
+func (b *builder) retargetResult(binding *binding) {
+	// The shim copies nothing: a Go pointer it is handed reaches C++ on the
+	// same stack the call runs on. Every pinned copy goes back to the expression
+	// it replaced, and the pin plans are dropped whole — they are not merely
+	// unused on this carrier, they name variables it does not emit.
+	for _, arg := range binding.Wire {
+		if arg.pinnedExpr == "" {
+			continue
+		}
+		arg.expr, arg.keep = arg.pinnedExpr, arg.pinnedKeep
+		arg.pinnedExpr, arg.pinnedKeep = "", ""
+	}
+	binding.pins = nil
+	binding.pinned = false
+	if binding.outPointer {
+		// The result was going through a pinned cell; the shim writes it into a
+		// local of the call's frame, the address is taken at the call site.
+		binding.outPointer = false
+		for _, arg := range binding.Wire {
+			if arg.label == "out" {
+				arg.expr = "unsafe.Pointer(&cppgoResult)"
+				arg.keep = "&cppgoResult"
+				break
+			}
+		}
+	}
+	if !binding.StdResult {
+		return
+	}
+	// The result's declarations are a suffix of stdDecls and its out-parameters
+	// are marked, so the reentrant shape is removed exactly and the shim's is
+	// lowered from the same result type.
+	binding.stdDecls = append([]string(nil), binding.stdDecls[:binding.stdResultDecls]...)
+	kept := make([]*wireArg, 0, len(binding.Wire))
+	for _, arg := range binding.Wire {
+		if !arg.stdResultWord {
+			kept = append(kept, arg)
+		}
+	}
+	binding.Wire = kept
+	if err := b.addStdResult(binding); err != nil {
+		// Unreachable: checkReentrant refused every standard-library result on
+		// the reentrant carrier but std::string and std::string_view, and
+		// lowering those two cannot fail.
+		panic(fmt.Sprintf("cppgo: %s: lowering the result for the shim: %v", displaySignature(binding.sym), err))
+	}
 }
 
 // retainNamed reports whether -retain names this declaration, by qualified name
@@ -2487,9 +2567,22 @@ func (b *builder) model() *packageModel {
 		usesCString:    b.usesCString,
 		usesBytes:      b.usesBytes,
 		usesWord:       b.usesWord,
-		usesPin:        b.usesPin,
+		usesPin:        b.pinsUsed(),
 		usesRetain:     b.usesRetain,
 	}
+}
+
+// pinsUsed reports whether any binding still hands C++ a pinned heap copy. A
+// binding moved to the shim carrier drops its plans, so a package whose only
+// pins were a reentrant result's does not emit the helpers — or the runtime
+// import — for copies nothing makes.
+func (b *builder) pinsUsed() bool {
+	for _, binding := range b.bindings {
+		if binding.pinned {
+			return true
+		}
+	}
+	return false
 }
 
 // warnings returns the package-level warnings, sorted for determinism.

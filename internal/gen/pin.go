@@ -135,8 +135,10 @@ func (b *builder) pinCall(binding *binding) {
 		}
 		switch plan.shape {
 		case pinSlice:
+			arg.pinnedExpr, arg.pinnedKeep = arg.expr, arg.keep
 			arg.expr = plan.local + "Ptr"
 		case pinValue:
+			arg.pinnedExpr, arg.pinnedKeep = arg.expr, arg.keep
 			arg.expr = "unsafe.Pointer(" + plan.local + ")"
 			arg.keep = plan.local
 		}
@@ -144,6 +146,5 @@ func (b *builder) pinCall(binding *binding) {
 	}
 	if len(binding.pins) > 0 {
 		binding.pinned = true
-		b.usesPin = true
 	}
 }
