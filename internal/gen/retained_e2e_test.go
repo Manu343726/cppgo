@@ -63,9 +63,11 @@ func TestRetainedCallbackIsDeliveredByLaterCalls(t *testing.T) {
 	ran := runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=0", "CPPGO_E2E_SHIM=" + filepath.Join(out, ShimLibraryName("retained"))},
 		"test", "-count=1", "-v", "./retained")
 	assert.Contains(t, ran, "--- PASS: TestRetained")
+	assert.Contains(t, ran, "--- PASS: TestRetainedShapes")
 	ran = runGoEnv(t, goTool(t), moduleDir, []string{"CGO_ENABLED=1", "CPPGO_E2E_SHIM=" + filepath.Join(out, ShimLibraryName("retained"))},
 		"test", "-race", "-count=1", "-v", "./retained")
 	assert.Contains(t, ran, "--- PASS: TestRetained")
+	assert.Contains(t, ran, "--- PASS: TestRetainedShapes")
 }
 
 // writerFunc adapts a closure to io.Writer, so the carrier report can be read
@@ -231,6 +233,56 @@ func TestRetained(t *testing.T) {
 	var none *CallbackRegistration
 	if err := none.Close(); !errors.Is(err, cppgo.ErrClosed) {
 		t.Fatalf("closing a nil registration = %v, want cppgo.ErrClosed", err)
+	}
+}
+
+// TestRetainedShapes is the package's record proof: a C++ record Go cannot
+// mirror, returned by value, with a std::string member reached through the
+// synthesized accessor the shim carries. Every step runs on the callback-capable
+// carrier, so nothing here may depend on a Go stack address staying put.
+func TestRetainedShapes(t *testing.T) {
+	if err := Open(os.Getenv("CPPGO_E2E_SHIM")); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	enrolment, err := Enroll("template-7", 42)
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	if enrolment == nil {
+		t.Fatal("Enroll returned no record")
+	}
+
+	// The Go value owns C++ storage: a collection and a stack growth between
+	// the call and the read may move everything Go holds, and the record's
+	// bytes are not among it.
+	runtime.GC()
+	growStack(64)
+
+	label, err := enrolment.Label()
+	if err != nil {
+		t.Fatalf("Label: %v", err)
+	}
+	if label != "template-7" {
+		t.Fatalf("Label = %q, want the bytes the C++ copy was built from", label)
+	}
+	if got := enrolment.Count(); got != 42 {
+		t.Fatalf("Count = %d, want 42", got)
+	}
+
+	// The label is a copy C++ owns, so reading it twice returns the same bytes.
+	if again, err := enrolment.Label(); err != nil || again != label {
+		t.Fatalf("the second Label = %q, %v", again, err)
+	}
+
+	if err := enrolment.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := enrolment.Close(); !errors.Is(err, cppgo.ErrClosed) {
+		t.Fatalf("a second Close = %v, want cppgo.ErrClosed", err)
+	}
+	if _, err := enrolment.Label(); !errors.Is(err, cppgo.ErrClosed) {
+		t.Fatalf("Label on a closed record = %v, want cppgo.ErrClosed", err)
 	}
 }
 `

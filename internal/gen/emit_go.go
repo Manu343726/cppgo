@@ -758,10 +758,23 @@ func (m *packageModel) emitReentrant(b *strings.Builder, binding *binding, ctx c
 	// before the frame is filled: a callback may grow this goroutine's stack,
 	// and the original may live in the frame that moves.
 	m.emitPinDecls(b, binding)
+	if binding.OutObject != nil {
+		// The wire word for a by-value record result is the storage's address,
+		// so the object exists before the frame is filled: the shim constructs
+		// the callee's result into it.
+		m.emitObjectStorage(b, binding.OutObject)
+	}
 	m.emitFrameAndCall(b, binding, ctx, nil)
 	m.emitKeepAlive(b, binding, ctx)
 	b.WriteString("\tif cppgoPanic := cppgo.TakeCallbackPanic(); cppgoPanic != nil {\n\t\tpanic(cppgoPanic.Value)\n\t}\n")
 	m.emitPinAfter(b, binding)
+	if binding.OutObject != nil {
+		// A record returned by value always carries a status: the copy the shim
+		// makes into Go's storage can throw whatever the declaration promises.
+		b.WriteString("\tcppgoStatus := int32(cppgoFrame.Ret)\n")
+		m.emitObjectResultTail(b, binding)
+		return
+	}
 	if !binding.Status {
 		switch {
 		case binding.Out != nil:
@@ -1275,7 +1288,16 @@ func (m *packageModel) emitLengthChecks(b *strings.Builder, binding *binding) {
 // trampoline Close uses. A call that failed constructed nothing, so the release
 // closure is told so and does not run a destructor over raw storage.
 func (m *packageModel) emitObjectResult(b *strings.Builder, binding *binding, call string, ctx callContext) {
-	record := binding.OutObject
+	m.emitObjectStorage(b, binding.OutObject)
+	fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
+	m.emitKeepAlive(b, binding, ctx)
+	m.emitObjectResultTail(b, binding)
+}
+
+// emitObjectStorage writes the storage a by-value record result is constructed
+// into, and the release closure that runs the record's destructor at Close. The
+// guard flag is declared only when there is a destructor to guard.
+func (m *packageModel) emitObjectStorage(b *strings.Builder, record *recordModel) {
 	b.WriteString("\tvar cppgoObject *cppgo.Object\n")
 	if record.Dtor != nil {
 		b.WriteString("\tconstructed := false\n")
@@ -1290,9 +1312,16 @@ func (m *packageModel) emitObjectResult(b *strings.Builder, binding *binding, ca
 		// guard flag the destructor's closure uses is not declared.
 		fmt.Fprintf(b, "\tcppgoObject = cppgo.NewObject(%d, %d, nil)\n", record.Size, record.Align)
 	}
-	fmt.Fprintf(b, "\tcppgoStatus := %s\n", call)
-	m.emitKeepAlive(b, binding, ctx)
-	fmt.Fprintf(b, "\tif cppgoStatus != 0 {\n\t\tcppgoObject.Release()\n\t\treturn nil, cppgoCallError(%q)\n\t}\n", binding.sym.QualifiedName)
+}
+
+// emitObjectResultTail writes the status test and the owning value a by-value
+// record result returns. The status is in cppgoStatus and cppgoObject is the
+// storage the callee constructed the result into.
+func (m *packageModel) emitObjectResultTail(b *strings.Builder, binding *binding) {
+	record := binding.OutObject
+	b.WriteString("\tif cppgoStatus != 0 {\n")
+	b.WriteString("\t\tcppgoObject.Release()\n")
+	fmt.Fprintf(b, "\t\treturn nil, cppgoCallError(%q)\n\t}\n", binding.sym.QualifiedName)
 	if record.Dtor != nil {
 		b.WriteString("\tconstructed = true\n")
 	}

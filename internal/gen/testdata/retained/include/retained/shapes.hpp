@@ -25,4 +25,10 @@ struct Enrollment {
     std::int32_t count;
 };
 
+// Returned by value: the Go side owns the storage, the shim constructs the
+// record into it, and Close releases it. Enrollment declares no destructor, so
+// the release is the storage alone and the record's own copy semantics decide
+// what the Go value shares with the callee's temporary.
+Enrollment enroll(const char *label, std::int32_t count) noexcept;
+
 } // namespace retained
