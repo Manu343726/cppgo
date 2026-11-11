@@ -12,7 +12,7 @@ LIBRARY = $(BUILD)/libretained.so
 
 library: $(LIBRARY)
 
-$(LIBRARY): src/retained.cpp include/retained/retained.hpp
+$(LIBRARY): src/retained.cpp include/retained/retained.hpp include/retained/shapes.hpp
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -shared -Wl,-soname,libretained.so src/retained.cpp -o $@
 
